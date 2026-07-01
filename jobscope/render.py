@@ -156,7 +156,7 @@ h1{font-size:16px; margin:0; letter-spacing:-.2px; font-weight:650}
 #q:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); width:320px}
 .kbd{position:absolute; right:9px; top:50%; transform:translateY(-50%); color:var(--mute);
   font:11px var(--mono); border:1px solid var(--border); border-radius:5px; padding:1px 5px; background:var(--bg2)}
-select#sort{background:var(--card); color:var(--fg); border:1px solid var(--border);
+select#sort, select#resume{background:var(--card); color:var(--fg); border:1px solid var(--border);
   border-radius:10px; padding:9px 10px; font-size:13px; outline:none; cursor:pointer}
 .iconbtn{background:var(--card); border:1px solid var(--border); color:var(--dim);
   width:38px;height:38px;border-radius:10px; cursor:pointer; display:grid; place-items:center; transition:.16s}
@@ -273,7 +273,9 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
     <option value="score">Sort: Score</option>
     <option value="new">Sort: Newest</option>
     <option value="company">Sort: Company</option>
+    <option value="resume">Sort: Resume</option>
   </select>
+  <select id="resume" hidden><option value="">All resumes</option></select>
   <button class="iconbtn" id="theme" title="Toggle theme">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
   </button>
@@ -288,7 +290,7 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
 const DATA = __DATA__;
 const TIERC = {Strong:'#22c55e',Good:'#3b82f6',Stretch:'#f59e0b',Skip:'#71717a'};
 const off = new Set(['Skip']);
-const q = document.getElementById('q'), sortSel = document.getElementById('sort');
+const q = document.getElementById('q'), sortSel = document.getElementById('sort'), resumeSel = document.getElementById('resume');
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const isNew = r => r.first_seen && (Date.now()-Date.parse(r.first_seen) < 864e5);
 
@@ -342,12 +344,22 @@ function card(r,i){
     <span class="chev">›</span>
   </article>`;
 }
+function resumeFilters(){
+  const bases=[...new Set(DATA.map(r=>r.base).filter(Boolean))].sort();
+  if(bases.length<2){resumeSel.hidden=true; return;}
+  resumeSel.hidden=false;
+  resumeSel.innerHTML='<option value="">All resumes</option>'+
+    bases.map(b=>`<option value="${esc(b)}">Resume: ${esc(b)}</option>`).join('');
+}
 function render(){
-  const term=q.value.trim().toLowerCase(), s=sortSel.value;
-  let items=DATA.filter(r=>!off.has(r.tier)).filter(r=>!term ||
+  const term=q.value.trim().toLowerCase(), s=sortSel.value, rez=resumeSel.value;
+  let items=DATA.filter(r=>!off.has(r.tier))
+    .filter(r=>!rez || r.base===rez)
+    .filter(r=>!term ||
     (r.title+' '+r.company+' '+(r.rationale||'')).toLowerCase().includes(term));
   if(s==='company') items=[...items].sort((a,b)=>(a.company||'').localeCompare(b.company||''));
   else if(s==='new') items=[...items].sort((a,b)=>(b.first_seen||'').localeCompare(a.first_seen||''));
+  else if(s==='resume') items=[...items].sort((a,b)=>(a.base||'').localeCompare(b.base||'')||(b.score-a.score));
   const list=document.getElementById('list');
   list.innerHTML=items.length?items.map(card).join('')
     :`<div class="empty">No matching jobs.<br><br>Run <code>jobscope scan</code> then <code>jobscope match</code>.</div>`;
@@ -394,7 +406,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='/'&&document.activeElement!==q){e.preventDefault();q.focus()}
   else if(e.key==='Escape'){ if(drawer.classList.contains('on'))closeDrawer();
     else if(document.activeElement===q){q.value='';q.blur();render()} }});
-q.oninput=render; sortSel.onchange=render;
+q.oninput=render; sortSel.onchange=render; resumeSel.onchange=render;
 DATA.forEach((r,i)=>r._i=i);
-kpis(); chips(); render();
+kpis(); chips(); resumeFilters(); render();
 </script></body></html>"""
