@@ -1,8 +1,10 @@
-"""Offline, curated company-prestige tiers for ranking (deterministic, no network).
+"""Offline, curated company-prestige and company-size tiers for ranking.
 
-Used by `match._company_score` to prioritize well-known / high-quality employers.
-Matching is token-subset based (a known name's tokens must all appear in the
-company name) so "Meta" matches "Meta Platforms" but not "Metabase". Edit freely.
+Deterministic and network-free. `company_quality` powers a prestige signal and
+`company_size` powers a headcount signal; both are consumed by
+`match._company_score`. Matching is token-subset based (a known name's tokens
+must all appear in the company name) so "Meta" matches "Meta Platforms" but not
+"Metabase". Edit the lists freely.
 """
 from __future__ import annotations
 
@@ -51,6 +53,58 @@ def company_quality(company: str) -> tuple[float, str]:
     if not ct:
         return 0.5, ""
     for score, label, namesets in _COMPILED:
+        for ns in namesets:
+            if ns and ns <= ct:
+                return score, label
+    return 0.5, ""
+
+
+# --- company size (headcount) tiers ---------------------------------------
+# Approximate employee bands for well-known employers. Used by
+# `match._company_score` when `prefer_company_size` is set. Sizes drift as
+# companies grow; this is a best-effort ranking aid, not ground truth.
+_MEGA = ["amazon", "microsoft", "apple", "google", "alphabet", "oracle", "intel",
+         "ibm", "cisco", "sap", "dell", "samsung", "sony", "siemens", "bosch",
+         "accenture", "deloitte", "capgemini", "cognizant", "infosys", "wipro",
+         "tcs", "tata consultancy services", "hcltech", "tech mahindra",
+         "jpmorgan", "bank of america", "wells fargo", "citigroup", "comcast",
+         "verizon", "walmart", "boeing", "lockheed martin", "honeywell"]
+_LARGE = ["meta", "facebook", "nvidia", "salesforce", "adobe", "qualcomm",
+          "broadcom", "vmware", "netflix", "paypal", "servicenow", "workday",
+          "tesla", "uber", "linkedin", "autodesk", "intuit", "ebay", "amd",
+          "micron", "visa", "mastercard", "ericsson", "nokia", "palo alto networks",
+          "fortinet"]
+_MID = ["crowdstrike", "zscaler", "okta", "datadog", "cloudflare", "snowflake",
+        "mongodb", "hashicorp", "elastic", "gitlab", "twilio", "coinbase",
+        "palantir", "databricks", "roblox", "pinterest", "dropbox", "doordash",
+        "robinhood", "sentinelone", "tenable", "rapid7", "proofpoint", "sailpoint",
+        "cyberark", "zoom", "docusign", "unity", "confluent", "netskope",
+        "varonis", "dynatrace", "snap", "splunk", "spotify", "atlassian",
+        "airbnb", "openai"]
+_SMALL = ["wiz", "snyk", "semgrep", "sonarsource", "1password", "orca security",
+          "aqua security", "sysdig", "lacework", "abnormal security", "vercel",
+          "netlify", "retool", "temporal", "notion", "figma", "canva", "discord",
+          "brex", "plaid", "rippling", "ramp", "airtable", "miro", "monzo",
+          "affirm", "grafana", "anthropic"]
+_STARTUP = ["mistral", "cohere", "perplexity", "hugging face", "scale ai",
+            "anduril", "cockroach labs"]
+
+# (bigness score 0-1, short band label). Bigger company -> higher score.
+_SIZE_TIERS = [(1.00, "mega", _MEGA), (0.85, "large", _LARGE), (0.65, "mid", _MID),
+               (0.45, "small", _SMALL), (0.30, "startup", _STARTUP)]
+_SIZE_COMPILED = [(score, label, [_tokens(n) for n in names])
+                  for score, label, names in _SIZE_TIERS]
+
+# ordinal for "mid"-preference distance math (startup=0 ... mega=4)
+SIZE_ORDER = {"startup": 0, "small": 1, "mid": 2, "large": 3, "mega": 4}
+
+
+def company_size(company: str) -> tuple[float, str]:
+    """Return (bigness 0-1, band label). Unknown companies get (0.5, "")."""
+    ct = _tokens(company)
+    if not ct:
+        return 0.5, ""
+    for score, label, namesets in _SIZE_COMPILED:
         for ns in namesets:
             if ns and ns <= ct:
                 return score, label

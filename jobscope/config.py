@@ -47,6 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "seniority": "mid",
         "prefer_locations": [],
         "prefer_companies": [],
+        "prefer_company_size": "any",
         "tiers": {"strong": 75, "good": 55, "stretch": 35},
         "ghost_penalty": 15,
     },

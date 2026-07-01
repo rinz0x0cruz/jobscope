@@ -11,6 +11,7 @@ import json
 import os
 from typing import Any
 
+from . import companies
 from .store import now_iso
 
 TIER_COLORS = {"Strong": "#16a34a", "Good": "#2563eb", "Stretch": "#d97706", "Skip": "#6b7280"}
@@ -45,6 +46,7 @@ def _job_record(job, enr: dict, store) -> dict[str, Any]:
         "tier": job.tier or "Skip",
         "base": job.resume_base or "",
         "salary": salary,
+        "size": companies.company_size(job.company)[1] if job.company else "",
         "industry": job.company_industry,
         "rationale": rationale,
         "blocked": "⛔" in rationale,
@@ -313,6 +315,7 @@ function chips(){
     const t=ch.dataset.tier; off.has(t)?off.delete(t):off.add(t); ch.classList.toggle('off'); render();});
 }
 function metaDots(r){const e=r.enrich||{}, d=[];
+  if(r.size) d.push('🏢 '+r.size);
   if(r.salary) d.push('💰');
   if(e.stock&&e.stock.ticker) d.push('📈 '+e.stock.ticker);
   else if(e.stock&&e.stock.public===false) d.push('🏦 Private');
@@ -368,7 +371,7 @@ function openDrawer(i){
   if(e.news&&e.news.length) b+=sec('Recent news', e.news.map(n=>`<a class="lnk" href="${n.link||'#'}" target="_blank">${esc(n.title)} ↗</a>`).join(''));
   if((r.contacts||[]).length) b+=sec('Referral leads', r.contacts.map(c=>`<a class="lnk" href="${c.url||'#'}" target="_blank">🤝 ${esc(c.name||'lead')} ↗</a>`).join(''));
   if(r.rationale) b+=sec('Why this rank',`<div class="txt">${esc(r.rationale)}</div>`);
-  const meta=[r.base?`<span class="tag">${esc(r.base)}</span> base`:'', r.posted?`Posted ${esc(r.posted)}`:''].filter(Boolean).join(' · ');
+  const meta=[r.base?`<span class="tag">${esc(r.base)}</span> base`:'', r.size?`${esc(r.size)} company`:'', r.posted?`Posted ${esc(r.posted)}`:''].filter(Boolean).join(' · ');
   drawer.innerHTML=`<div class="dw-head"><div class="dw-top">
       <div class="dw-score" style="color:${col}">${r.score}</div>
       <div><div class="dw-title">${esc(r.title)}</div><div class="dw-co">${esc(r.company||'')} · ${esc(r.location||'')}</div></div>

@@ -45,6 +45,7 @@ match:
   seniority: "senior"                 # intern/junior/mid/senior/staff/principal
   prefer_locations: []                # e.g. ["Remote", "India", "Bengaluru"] -> full location score
   prefer_companies: []                # your own must-boost employers (substring match)
+  prefer_company_size: "any"          # any | large | mid | small -> bias ranking by headcount
   tiers: {strong: 75, good: 55, stretch: 35}
   ghost_penalty: 15                   # points subtracted when scam/ghost-job signals fire
 

@@ -122,3 +122,30 @@ def test_prefer_locations_boost():
     j = Job(title="x", company="c", location="Bengaluru, India", is_remote=False)
     assert match._location_score(r, j, True, ["Bengaluru"]) == 1.0
     assert match._location_score(r, j, True, []) < 1.0             # without preference, weaker
+
+
+def test_company_size_bands():
+    from jobscope.companies import company_size
+    assert company_size("Amazon")[1] == "mega"
+    assert company_size("Wiz")[1] == "small"
+    assert company_size("Mistral AI")[1] == "startup"
+    assert company_size("Totally Unknown Co") == (0.5, "")        # neutral, no band
+
+
+def test_prefer_company_size_direction():
+    big = match._company_score(_job(company="Amazon"), {"prefer_company_size": "large"})[0]
+    small = match._company_score(_job(company="Amazon"), {"prefer_company_size": "small"})[0]
+    assert big > small                                            # mega scores high when preferring large
+    # a company with no size data is unaffected (prestige-only fallback)
+    assert match._company_score(_job(company="Obscure Widgets LLC"),
+                                {"prefer_company_size": "large"})[0] == 0.5
+
+
+def test_company_size_shifts_ranking():
+    r = Resume(skills=["python", "aws"], seniority="mid", titles=["Security Engineer"])
+    cfg = _mcfg()["match"]
+    cfg["prefer_company_size"] = "large"
+    cfg["want_remote"] = True
+    mega = _job(company="Amazon", desc="python aws " * 8)
+    tiny = _job(company="Mistral", desc="python aws " * 8)
+    assert match.score_job(mega, r, cfg)[0] > match.score_job(tiny, r, cfg)[0]

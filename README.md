@@ -99,6 +99,10 @@ nudge the ranking toward roles you actually want:
   and top security employers (FAANG, NVIDIA/OpenAI/Anthropic, Palo Alto Networks,
   CrowdStrike, Zscaler, Okta, Wiz, Stripe, Databricks, …). Unknown companies get a
   neutral score, so no one is penalized for being obscure.
+- **Company size** (`prefer_company_size`) — bias ranking by headcount. Set
+  `large` to prioritize big, established employers (FAANG-scale), `small` to favor
+  startups, `mid` for scaleups, or `any` to ignore size. Sizes come from a curated
+  headcount map; unknown companies stay neutral.
 - **Location** (`weights.location`) — list the places you prefer and matching jobs
   get the full location score:
 
@@ -106,6 +110,7 @@ nudge the ranking toward roles you actually want:
 match:
   prefer_locations: ["Remote", "India", "Bengaluru"]  # substring match -> full score
   prefer_companies: []                                # your own must-boost employers
+  prefer_company_size: "large"                        # any | large | mid | small
 ```
 
 The dashboard is master–detail: cards show only the essentials (score, title,

@@ -146,14 +146,48 @@ def _location_score(resume: Resume, job: Job, want_remote: bool, prefer: list | 
     return 0.3
 
 
+def _size_signal(company: str, prefer: str) -> tuple[float, str]:
+    """Score a company by how well its headcount matches `prefer`.
+
+    Returns (preference_score 0-1, band label). Unknown companies get a neutral
+    0.5 with an empty band so size never penalizes an unrecognized employer.
+    """
+    from . import companies
+    bigness, band = companies.company_size(company)
+    if not band:
+        return 0.5, ""
+    p = (prefer or "").strip().lower()
+    if p in ("small", "startup", "early", "smaller"):
+        return 1.0 - bigness, band
+    if p in ("mid", "medium", "midsize", "mid-size"):
+        dist = abs(companies.SIZE_ORDER.get(band, 2) - companies.SIZE_ORDER["mid"])
+        return max(0.0, 1.0 - dist / 2.0), band
+    # "large" / "big" / "enterprise" / anything else -> bigger is better
+    return bigness, band
+
+
 def _company_score(job: Job, match_cfg: dict) -> tuple[float, str]:
-    """Prestige signal: your prefer list wins, else the curated tier list."""
+    """Company desirability: your prefer list wins, else prestige + optional size.
+
+    When `prefer_company_size` is set (large/mid/small), the size preference
+    drives the score (60%) with the curated prestige tier as a tie-breaker (40%).
+    With no size preference the behaviour is prestige-only (backwards compatible).
+    """
     from . import companies
     c = (job.company or "").lower()
     for p in match_cfg.get("prefer_companies", []) or []:
         if p and p.lower() in c:
             return 1.0, "preferred"
-    return companies.company_quality(job.company)
+    prestige, tier = companies.company_quality(job.company)
+    prefer_size = (match_cfg.get("prefer_company_size") or "").strip().lower()
+    if not prefer_size or prefer_size == "any":
+        return prestige, tier
+    size_pref, band = _size_signal(job.company, prefer_size)
+    if not band:                       # no size data -> prestige alone
+        return prestige, tier
+    combined = 0.6 * size_pref + 0.4 * prestige
+    label = "/".join(x for x in (tier, band) if x) or band
+    return combined, label
 
 
 def _recency_score(job: Job) -> float:
