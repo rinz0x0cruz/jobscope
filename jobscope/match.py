@@ -32,6 +32,23 @@ GHOST_SIGNALS = [
     "earn up to", "100% remote sales", "quick money", "financial freedom",
 ]
 
+# Phrases that imply US work-authorization / security-clearance barriers.
+CLEARANCE_SIGNALS = [
+    "security clearance", "active clearance", "ts/sci", "top secret", "secret clearance",
+    "clearance required", "must have clearance", "polygraph", "public trust",
+    "us citizen", "u.s. citizen", "usc only", "citizenship required",
+    "must be a us citizen", "must be a u.s. citizen", "citizen or green card",
+]
+# Phrases that imply the employer will NOT sponsor a visa.
+NO_SPONSORSHIP_SIGNALS = [
+    "no sponsorship", "not able to sponsor", "unable to sponsor", "will not sponsor",
+    "cannot sponsor", "can not sponsor", "can't sponsor", "won't sponsor", "do not sponsor",
+    "does not provide sponsorship", "not eligible for sponsorship",
+    "without sponsorship", "no visa sponsorship", "sponsorship is not available",
+    "authorized to work in the us without", "authorized to work in the united states without",
+]
+
+
 
 def _tokens(text: str) -> set[str]:
     return set(_TOKEN_RE.findall((text or "").lower()))
@@ -201,22 +218,100 @@ def _rationale(parts: dict, skill_hits: list[str], flags: list[str]) -> str:
     return " | ".join(bits)
 
 
+def clearance_flags(job: Job) -> list[str]:
+    """Return matched clearance/citizenship phrases (US work-auth barriers)."""
+    text = f"{job.title}\n{job.description}".lower()
+    return [sig for sig in CLEARANCE_SIGNALS if sig in text]
+
+
+def no_sponsorship(job: Job) -> bool:
+    text = f"{job.title}\n{job.description}".lower()
+    return any(sig in text for sig in NO_SPONSORSHIP_SIGNALS)
+
+
+def _age_days(job: Job) -> Optional[int]:
+    d = (job.date_posted or "").strip()
+    if not d:
+        return None
+    import datetime as _dt
+    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y/%m/%d"):
+        try:
+            posted = _dt.datetime.strptime(d[: len(fmt) + 2].strip(), fmt)
+            return (_dt.datetime.now(_dt.UTC).replace(tzinfo=None) - posted).days
+        except ValueError:
+            continue
+    return None
+
+
+def apply_filters(job: Job, fcfg: dict) -> Optional[str]:
+    """Return a block reason if the job should be filtered to Skip, else None."""
+    company = (job.company or "").lower()
+    title = (job.title or "").lower()
+    blob = f"{title}\n{(job.description or '').lower()}"
+
+    for c in fcfg.get("block_companies", []):
+        if c and c.lower() in company:
+            return f"blocked company ({c})"
+    for kw in fcfg.get("block_title_keywords", []):
+        if kw and kw.lower() in title:
+            return f"blocked title keyword ({kw})"
+    for kw in fcfg.get("block_keywords", []):
+        if kw and kw.lower() in blob:
+            return f"blocked keyword ({kw})"
+    if fcfg.get("exclude_clearance"):
+        cf = clearance_flags(job)
+        if cf:
+            return f"clearance/citizenship required ({cf[0]})"
+    if fcfg.get("needs_sponsorship") and no_sponsorship(job):
+        return "no visa sponsorship"
+    max_age = fcfg.get("max_age_days", 0) or 0
+    if max_age:
+        age = _age_days(job)
+        if age is not None and age > max_age:
+            return f"older than {max_age}d ({age}d)"
+    return None
+
+
+def select_base(job: Job, resumes: list, match_cfg: dict) -> tuple[float, str, str, str]:
+    """Score the job against each base resume; return the best (score, tier, rationale, name)."""
+    best_score, best_tier, best_rat, best_name = 0.0, "Skip", "no resume", ""
+    first = True
+    for name, resume in resumes:
+        score, tier, rationale = score_job(job, resume, match_cfg)
+        if first or score > best_score:
+            best_score, best_tier, best_rat, best_name = score, tier, rationale, name
+            first = False
+    return best_score, best_tier, best_rat, best_name
+
+
 def run(cfg: dict, store) -> int:
-    """Score every stored job against the saved resume."""
-    resume = store.get_resume()
-    if resume is None:
+    """Score every stored job against your resume(s), applying filters."""
+    resumes = store.list_resumes()
+    if not resumes:
         print("  no resume found. Run `python -m jobscope resume import <path>` first.")
         return 1
     match_cfg = dict(cfg["match"])
     match_cfg["want_remote"] = cfg["search"].get("is_remote", True)
+    fcfg = cfg.get("filters", {})
+    multi = len(resumes) > 1
+
     jobs = store.jobs(order_by_score=False)
     counts = {"Strong": 0, "Good": 0, "Stretch": 0, "Skip": 0}
+    blocked = 0
     for job in jobs:
-        score, tier, rationale = score_job(job, resume, match_cfg)
-        store.update_score(job.id, score, tier, rationale)
+        score, tier, rationale, base = select_base(job, resumes, match_cfg)
+        reason = apply_filters(job, fcfg)
+        if reason:
+            tier = "Skip"
+            rationale = f"⛔ {reason} | {rationale}"
+            blocked += 1
+        store.update_score(job.id, score, tier, rationale, resume_base=base if multi else "")
         counts[tier] += 1
     store.log_run("match", len(jobs), "ok")
-    print(f"  scored {len(jobs)} jobs -> "
+    base_note = f" using {len(resumes)} base resumes" if multi else ""
+    print(f"  scored {len(jobs)} jobs{base_note} -> "
           f"Strong {counts['Strong']}, Good {counts['Good']}, "
-          f"Stretch {counts['Stretch']}, Skip {counts['Skip']}")
+          f"Stretch {counts['Stretch']}, Skip {counts['Skip']}"
+          + (f" ({blocked} filtered)" if blocked else ""))
     return 0
+

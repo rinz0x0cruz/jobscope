@@ -74,18 +74,46 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | Command | What it does |
 |---|---|
 | `init` | Scaffold `config.yaml`, `data/`, `.env` |
-| `resume import <path>` | Parse `.md`/`.json`/`.pdf`/`.txt` resume into the store |
+| `resume import <path> [--name N]` | Parse `.md`/`.json`/`.pdf`/`.txt` into a (named) base resume |
 | `scan` | Scrape jobs for your configured searches (JobSpy) |
-| `match` | Deterministic fit scoring + Strong/Good/Stretch/Skip tiers |
+| `match` | Fit scoring + tiers, **multi-resume selection**, and **filters** (clearance/sponsorship/block-list) |
 | `pipeline` | scan -> match -> enrich -> prep top picks -> digest (one shot) |
-| `enrich [--job ID]` | Comp, stock/IPO, Reddit, news, Glassdoor, referral contacts |
-| `tailor <job_id>` | Keyword-aligned resume + cover letter, rendered to PDF |
-| `prep <job_id>` | Application package (docs + pre-filled answers + link + contacts) |
+| `enrich [--job ID]` | Comp, stock/IPO, Reddit, news, Glassdoor, referral contacts, **company brief** |
+| `tailor <job_id>` | Keyword-aligned resume + cover letter (using the best base resume), rendered to PDF |
+| `prep <job_id>` | Application package (docs + pre-filled answers + link + contacts + brief) |
 | `apply <job_id> [--assist]` | Open the application; `--assist` pre-fills public ATS forms, stops before submit |
+| `brief <job_id>` | Blunt, risk-forward company brief (no marketing fluff) |
+| `gaps [--top N]` | Skill-gap learning plan: skills to learn ranked by jobs unlocked |
+| `new` | New Strong/Good jobs since you last reviewed |
 | `dashboard [--open]` / `serve` | Render / serve the local HTML dashboard |
-| `track [--set job_id=status]` | View / update application status |
+| `track [--set job_id=status]` | Application funnel, rates, and follow-up reminders |
 | `export [--format json\|csv]` | Export ranked jobs |
 | `selftest` | Offline self-tests (no network, no keys) |
+
+## Multi-resume matching
+
+Import several base resumes and jobscope auto-picks the best-fitting one per job,
+then tailors from it:
+
+```bash
+python -m jobscope resume import research.md   --name research
+python -m jobscope resume import consulting.md --name consulting
+python -m jobscope match          # each job records which base scored highest
+```
+
+## Filters (clearance / sponsorship / block-list)
+
+Set `filters` in `config.yaml` to force irrelevant jobs to `Skip` with a reason.
+Handy if you need visa sponsorship or want to avoid US-clearance-only roles:
+
+```yaml
+filters:
+  needs_sponsorship: true   # drop roles that state "no visa sponsorship"
+  exclude_clearance: true   # drop US security-clearance / citizenship-only roles
+  block_companies: ["SomeStaffingAgency"]
+  block_keywords: []
+  max_age_days: 30
+```
 
 ## Configuration
 

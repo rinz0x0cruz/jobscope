@@ -18,13 +18,14 @@ from .store import now_iso
 
 
 def run(cfg: dict, store, job_id: str) -> int:
-    resume = store.get_resume()
-    if resume is None:
-        print("  no resume found. Run `resume import <path>` first.")
-        return 1
     job = store.get_job(job_id)
     if job is None:
         print(f"  job not found: {job_id}")
+        return 1
+    # use the base resume that scored best for this job (multi-resume aware)
+    resume = store.get_named_resume(job.resume_base) if job.resume_base else store.get_resume()
+    if resume is None:
+        print("  no resume found. Run `resume import <path>` first.")
         return 1
 
     analysis = analyze(resume, job)
@@ -49,7 +50,8 @@ def run(cfg: dict, store, job_id: str) -> int:
     ))
 
     ai_used = ai.available(cfg)
-    print(f"  tailored for {job.title} @ {job.company}")
+    base_note = f" (base: {job.resume_base})" if job.resume_base else ""
+    print(f"  tailored for {job.title} @ {job.company}{base_note}")
     print(f"    ATS coverage: {analysis['coverage']}%  "
           f"(matched {len(analysis['matched'])}, gaps {len(analysis['missing'])})")
     if analysis["missing"]:

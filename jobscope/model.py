@@ -81,6 +81,7 @@ class Job:
     score: float = 0.0
     tier: str = ""                                           # Strong/Good/Stretch/Skip
     rationale: str = ""
+    resume_base: str = ""                                    # which base resume scored best
     first_seen: str = ""
     last_seen: str = ""
 

@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     score REAL DEFAULT 0,
     tier TEXT,
     rationale TEXT,
+    resume_base TEXT,
     first_seen TEXT,
     last_seen TEXT
 );
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS enrichment (
     reddit_json TEXT,
     news_json TEXT,
     glassdoor_json TEXT,
+    brief_json TEXT,
     updated TEXT
 );
 CREATE TABLE IF NOT EXISTS contacts (
@@ -74,6 +76,16 @@ CREATE TABLE IF NOT EXISTS profile (
     resume_json TEXT,
     resume_source TEXT,
     updated TEXT
+);
+CREATE TABLE IF NOT EXISTS resumes (
+    name TEXT PRIMARY KEY,
+    resume_json TEXT,
+    source TEXT,
+    updated TEXT
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
 );
 CREATE TABLE IF NOT EXISTS ai_cache (
     key TEXT PRIMARY KEY,
@@ -114,9 +126,13 @@ class Store:
         for col, ddl in (
             ("company_industry", "TEXT"),
             ("company_url", "TEXT"),
+            ("resume_base", "TEXT"),
         ):
             if col not in existing:
                 self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
+        enr = {r["name"] for r in self.conn.execute("PRAGMA table_info(enrichment)")}
+        if "brief_json" not in enr:
+            self.conn.execute("ALTER TABLE enrichment ADD COLUMN brief_json TEXT")
         self.conn.commit()
 
     def close(self) -> None:
@@ -165,10 +181,11 @@ class Store:
         self.conn.commit()
         return is_new
 
-    def update_score(self, job_id_: str, score: float, tier: str, rationale: str) -> None:
+    def update_score(self, job_id_: str, score: float, tier: str, rationale: str,
+                     resume_base: str = "") -> None:
         self.conn.execute(
-            "UPDATE jobs SET score = ?, tier = ?, rationale = ? WHERE id = ?",
-            (score, tier, rationale, job_id_),
+            "UPDATE jobs SET score = ?, tier = ?, rationale = ?, resume_base = ? WHERE id = ?",
+            (score, tier, rationale, resume_base, job_id_),
         )
         self.conn.commit()
 
@@ -192,12 +209,13 @@ class Store:
         self.conn.execute(
             """
             INSERT INTO enrichment (company, comp_json, stock_json, reddit_json,
-                news_json, glassdoor_json, updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                news_json, glassdoor_json, brief_json, updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(company) DO UPDATE SET
                 comp_json=excluded.comp_json, stock_json=excluded.stock_json,
                 reddit_json=excluded.reddit_json, news_json=excluded.news_json,
-                glassdoor_json=excluded.glassdoor_json, updated=excluded.updated
+                glassdoor_json=excluded.glassdoor_json, brief_json=excluded.brief_json,
+                updated=excluded.updated
             """,
             (
                 company,
@@ -206,6 +224,7 @@ class Store:
                 json.dumps(merged.get("reddit")),
                 json.dumps(merged.get("news")),
                 json.dumps(merged.get("glassdoor")),
+                json.dumps(merged.get("brief")),
                 now_iso(),
             ),
         )
@@ -216,7 +235,7 @@ class Store:
         if not row:
             return {}
         out: dict[str, Any] = {}
-        for section in ("comp", "stock", "reddit", "news", "glassdoor"):
+        for section in ("comp", "stock", "reddit", "news", "glassdoor", "brief"):
             raw = row[f"{section}_json"]
             out[section] = json.loads(raw) if raw else None
         out["updated"] = row["updated"]
@@ -265,25 +284,53 @@ class Store:
         )
         return [dict(r) for r in rows]
 
-    # ---- profile / resume ----------------------------------------------
-    def save_resume(self, resume: Resume) -> None:
+    # ---- profile / resumes (supports multiple named base resumes) -------
+    def save_resume(self, resume: Resume, name: str = "default") -> None:
         self.conn.execute(
             """
-            INSERT INTO profile (id, resume_json, resume_source, updated)
-            VALUES (1, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                resume_json=excluded.resume_json, resume_source=excluded.resume_source,
-                updated=excluded.updated
+            INSERT INTO resumes (name, resume_json, source, updated)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                resume_json=excluded.resume_json, source=excluded.source, updated=excluded.updated
             """,
-            (json.dumps(resume.to_dict()), resume.source_path, now_iso()),
+            (name, json.dumps(resume.to_dict()), resume.source_path, now_iso()),
         )
         self.conn.commit()
 
-    def get_resume(self) -> Optional[Resume]:
-        row = self.conn.execute("SELECT resume_json FROM profile WHERE id = 1").fetchone()
+    def get_resume(self, name: Optional[str] = None) -> Optional[Resume]:
+        """Return a named resume, or the primary (prefers 'default', else newest)."""
+        if name:
+            row = self.conn.execute(
+                "SELECT resume_json FROM resumes WHERE name = ?", (name,)).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT resume_json FROM resumes ORDER BY (name = 'default') DESC, updated DESC "
+                "LIMIT 1").fetchone()
         if not row or not row["resume_json"]:
             return None
         return Resume.from_dict(json.loads(row["resume_json"]))
+
+    def get_named_resume(self, name: str) -> Optional[Resume]:
+        return self.get_resume(name) if name else self.get_resume()
+
+    def list_resumes(self) -> list[tuple[str, Resume]]:
+        rows = self.conn.execute(
+            "SELECT name, resume_json FROM resumes ORDER BY (name = 'default') DESC, name")
+        out = []
+        for r in rows:
+            if r["resume_json"]:
+                out.append((r["name"], Resume.from_dict(json.loads(r["resume_json"]))))
+        return out
+
+    # ---- meta (key/value markers, e.g. last_review) ---------------------
+    def meta_get(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def meta_set(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+        self.conn.commit()
 
     # ---- ai cache -------------------------------------------------------
     def ai_cache_get(self, key: str) -> Optional[str]:

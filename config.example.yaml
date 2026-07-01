@@ -3,6 +3,10 @@
 
 profile:
   resume_path: "data/resume.md"      # your resume: .md / .json (JSON Resume) / .pdf / .txt
+  primary_resume: ""                  # name of your default base resume (blank = auto)
+  # Multi-resume: import several bases and matching auto-picks the best per job, e.g.
+  #   python -m jobscope resume import research.md   --name research
+  #   python -m jobscope resume import consulting.md --name consulting
   full_name: ""                       # used to pre-fill application answers
   email: ""
   phone: ""
@@ -41,6 +45,14 @@ match:
   tiers: {strong: 75, good: 55, stretch: 35}
   ghost_penalty: 15                   # points subtracted when scam/ghost-job signals fire
 
+filters:                              # jobs matching these are forced to Skip (⛔) with a reason
+  needs_sponsorship: false            # true => drop roles that state "no visa sponsorship"
+  exclude_clearance: false            # true => drop US security-clearance / citizenship-only roles
+  block_companies: []                 # substring match on company (e.g. staffing agencies)
+  block_keywords: []                  # substring match on title+description
+  block_title_keywords: []            # substring match on title only
+  max_age_days: 0                     # 0 = off; else drop postings older than N days
+
 enrich:
   compensation: true                  # JobSpy salary + Levels.fyi
   stock: true                         # yfinance price / IPO status / peer comparison (no key)
@@ -48,6 +60,7 @@ enrich:
   news: true                          # company news via RSS
   glassdoor: false                    # best-effort rating (may require the browser)
   contacts: true                      # legit-only referral leads + outreach drafts
+  brief: true                         # blunt, risk-forward company brief (no marketing fluff)
   news_feeds: []                      # optional extra RSS feed URLs
   top_n: 10                           # only enrich the top N ranked jobs
 
@@ -72,6 +85,7 @@ apply:
   assist: false                       # opt-in: assisted fill of PUBLIC ATS forms, stops before submit
   package_dir: "data/applications"
   auto_prep_top: 3                    # in `pipeline`, auto-build packages for the top N Strong/Good jobs
+  followup_days: 7                    # `track` nudges you to follow up on applications older than this
 
 output:
   db_path: "data/jobscope.db"

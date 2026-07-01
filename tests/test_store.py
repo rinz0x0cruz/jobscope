@@ -63,3 +63,36 @@ def test_ai_cache():
     store.ai_cache_put("k", "model", "prompt", "resp")
     assert store.ai_cache_get("k") == "resp"
     store.close()
+
+
+def test_named_resumes_and_default():
+    store = _store()
+    store.save_resume(Resume(full_name="R", skills=["yara"]), name="research")
+    store.save_resume(Resume(full_name="C", skills=["audit"]), name="consulting")
+    names = {n for n, _ in store.list_resumes()}
+    assert names == {"research", "consulting"}
+    assert store.get_named_resume("research").full_name == "R"
+    # get_resume() with no name returns a sensible primary
+    assert store.get_resume() is not None
+    store.save_resume(Resume(full_name="D"), name="default")
+    assert store.get_resume().full_name == "D"      # prefers 'default'
+    store.close()
+
+
+def test_meta_roundtrip():
+    store = _store()
+    assert store.meta_get("last_review") is None
+    assert store.meta_get("last_review", "x") == "x"
+    store.meta_set("last_review", "2026-07-01T00:00:00Z")
+    assert store.meta_get("last_review") == "2026-07-01T00:00:00Z"
+    store.close()
+
+
+def test_resume_base_persists():
+    store = _store()
+    j = Job(source="s", title="A", company="A", url="u1").ensure_id()
+    store.upsert_job(j)
+    store.update_score(j.id, 80, "Strong", "x", resume_base="research")
+    assert store.get_job(j.id).resume_base == "research"
+    store.close()
+

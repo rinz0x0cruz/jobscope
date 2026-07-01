@@ -13,6 +13,7 @@ from typing import Any
 DEFAULT_CONFIG: dict[str, Any] = {
     "profile": {
         "resume_path": "data/resume.md",
+        "primary_resume": "",
         "full_name": "",
         "email": "",
         "phone": "",
@@ -46,6 +47,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tiers": {"strong": 75, "good": 55, "stretch": 35},
         "ghost_penalty": 15,
     },
+    "filters": {
+        "needs_sponsorship": False,
+        "exclude_clearance": False,
+        "block_companies": [],
+        "block_keywords": [],
+        "block_title_keywords": [],
+        "max_age_days": 0,
+    },
     "enrich": {
         "compensation": True,
         "stock": True,
@@ -53,6 +62,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "news": True,
         "glassdoor": False,
         "contacts": True,
+        "brief": True,
         "news_feeds": [],
         "top_n": 10,
     },
@@ -77,6 +87,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "assist": False,
         "package_dir": "data/applications",
         "auto_prep_top": 3,
+        "followup_days": 7,
     },
     "output": {
         "db_path": "data/jobscope.db",
@@ -88,12 +99,13 @@ CONFIG_CANDIDATES = ("config.yaml", "config.yml", "config.json")
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
-    out = dict(base)
+    import copy
+    out = copy.deepcopy(base)
     for k, v in (override or {}).items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k] = _deep_merge(out[k], v)
         else:
-            out[k] = v
+            out[k] = copy.deepcopy(v)
     return out
 
 

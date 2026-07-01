@@ -77,12 +77,19 @@ def run() -> int:
 
         store.ai_cache_put("k", "m", "p", "resp")
         c.ok("ai cache round-trips", store.ai_cache_get("k") == "resp")
+
+        store.save_resume(Resume(full_name="Con", skills=["audit"]), name="consulting")
+        c.ok("named resumes list", {n for n, _ in store.list_resumes()} == {"default", "consulting"})
+        c.ok("meta round-trips", (store.meta_set("m", "v"), store.meta_get("m")) [1] == "v")
+        store.update_score(j.id, 90, "Strong", "x", resume_base="consulting")
+        c.ok("resume_base persists", store.get_job(j.id).resume_base == "consulting")
         store.close()
 
-    # --- match (deterministic scoring) -----------------------------------
+    # --- match (deterministic scoring + filters) -------------------------
     try:
         from . import match  # noqa: F401
         _selftest_match(c)
+        _selftest_filters(c)
     except ImportError:
         pass  # not yet built
 
@@ -111,6 +118,25 @@ def _selftest_match(c: "_Check") -> None:
     s_weak, _, _ = score_job(weak, resume, _default_match_cfg())
     c.ok("strong job outscores weak job", s_strong > s_weak, f"{s_strong} vs {s_weak}")
     c.ok("scores are bounded 0-100", 0 <= s_strong <= 100 and 0 <= s_weak <= 100)
+
+
+def _selftest_filters(c: "_Check") -> None:
+    from .match import apply_filters, clearance_flags, no_sponsorship, select_base
+    from .model import Job, Resume
+
+    clr = Job(title="Engineer", company="A", description="Active security clearance required")
+    c.ok("clearance detected", bool(clearance_flags(clr)))
+    c.ok("no-sponsorship detected", no_sponsorship(Job(description="we cannot sponsor visas")))
+    c.ok("filter blocks clearance",
+         apply_filters(clr, {"exclude_clearance": True}) is not None)
+    c.ok("filter blocks company",
+         apply_filters(Job(company="Acme"), {"block_companies": ["acme"]}) is not None)
+    c.ok("filter passes clean job", apply_filters(Job(company="Z", description="ok"), {}) is None)
+    r1 = Resume(skills=["yara", "malware analysis"], seniority="mid")
+    r2 = Resume(skills=["audit", "compliance"], seniority="mid")
+    job = Job(title="Malware Analyst", description="yara malware analysis " * 5)
+    _, _, _, base = select_base(job, [("research", r1), ("consulting", r2)], _default_match_cfg())
+    c.ok("select_base picks best resume", base == "research", base)
 
 
 def _default_match_cfg() -> dict:

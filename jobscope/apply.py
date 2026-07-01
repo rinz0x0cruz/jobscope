@@ -25,7 +25,7 @@ def prep(cfg: dict, store, job_id: str, notify: bool = True) -> int:
     if job is None:
         print(f"  job not found: {job_id}")
         return 1
-    resume = store.get_resume()
+    resume = store.get_named_resume(job.resume_base) if job.resume_base else store.get_resume()
     if resume is None:
         print("  no resume found. Run `resume import <path>` first.")
         return 1
@@ -44,6 +44,14 @@ def prep(cfg: dict, store, job_id: str, notify: bool = True) -> int:
     _write(pkg, "filled-answers.md", answers)
     index = _index(job, app, enr, contacts)
     _write(pkg, "application.md", index)
+
+    # blunt company brief (build on demand if enrichment hasn't yet)
+    brief_data = (enr or {}).get("brief")
+    if not brief_data:
+        from .enrich import brief as _brief
+        brief_data = _brief.build(cfg, store, job.company, job, enr or {})
+    _write(pkg, "company-brief.md",
+           f"# Company brief -- {job.company} ({job.title})\n\n{brief_data.get('text', '')}\n")
 
     # optional email summary (suppressed when driven by the pipeline digest)
     if notify:
@@ -225,7 +233,7 @@ def _index(job, app, enr, contacts) -> str:
     if news:
         lines.append(f"- **Recent news:** {news[0]['title']}")
     lines += ["", "## Files", "- tailored_resume.pdf / .md", "- cover_letter.pdf / .md",
-              "- filled-answers.md", "- analysis.md", ""]
+              "- filled-answers.md", "- company-brief.md", "- analysis.md", ""]
     if contacts:
         lines.append("## Referral leads")
         for c in contacts[:6]:

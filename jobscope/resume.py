@@ -49,7 +49,7 @@ SKILL_LEXICON = [
 ]
 
 
-def import_resume(path: str, store, cfg: dict) -> int:
+def import_resume(path: str, store, cfg: dict, name: str = "default") -> int:
     if not os.path.exists(path):
         print(f"  resume not found: {path}")
         return 1
@@ -62,8 +62,8 @@ def import_resume(path: str, store, cfg: dict) -> int:
     resume.location = resume.location or prof.get("location", "")
     if prof.get("links"):
         resume.links = {**prof["links"], **resume.links}
-    store.save_resume(resume)
-    print(f"  imported resume: {resume.full_name or '(name?)'} "
+    store.save_resume(resume, name=name)
+    print(f"  imported resume [{name}]: {resume.full_name or '(name?)'} "
           f"| {len(resume.skills)} skills | seniority={resume.seniority or '?'} "
           f"| ~{resume.years_experience:g}y exp")
     if not resume.skills:

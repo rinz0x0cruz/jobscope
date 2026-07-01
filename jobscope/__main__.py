@@ -2,16 +2,19 @@
 
 Usage:
     python -m jobscope init                       Scaffold config + data dir
-    python -m jobscope resume import <path>       Parse and store your resume
+    python -m jobscope resume import <path> [--name N]  Parse/store a (named) base resume
     python -m jobscope scan                        Scrape jobs for your searches
-    python -m jobscope match                       Score jobs against your resume
-    python -m jobscope enrich [--job ID]           Add comp/stock/reddit/news/contacts
+    python -m jobscope match                       Score jobs (multi-resume + filters)
+    python -m jobscope enrich [--job ID]           Add comp/stock/reddit/news/contacts/brief
     python -m jobscope tailor <job_id>             Tailor resume + cover letter
     python -m jobscope prep <job_id>               Build a review-ready application package
     python -m jobscope apply <job_id> [--assist]   Open the application (human submits)
+    python -m jobscope brief <job_id>              Blunt, risk-forward company brief
+    python -m jobscope gaps [--top N]              Skill-gap learning plan across your jobs
+    python -m jobscope new                          New Strong/Good jobs since last review
     python -m jobscope dashboard [--open]          Render the HTML dashboard
     python -m jobscope serve [--port 8799 --open]  Serve the dashboard locally
-    python -m jobscope track [--set job_id=status] View / update application status
+    python -m jobscope track [--set job_id=status] Funnel + follow-up reminders
     python -m jobscope export [--format json|csv]  Export ranked jobs
     python -m jobscope selftest                     Offline self-tests (no network)
 """
@@ -42,7 +45,7 @@ def cmd_init(args, cfg):
 def cmd_resume(args, cfg):
     from . import resume as _resume
     with _store(args, cfg) as store:
-        return _resume.import_resume(args.path, store, cfg)
+        return _resume.import_resume(args.path, store, cfg, name=getattr(args, "name", "default"))
 
 
 def cmd_scan(args, cfg):
@@ -106,7 +109,25 @@ def cmd_serve(args, cfg):
 def cmd_track(args, cfg):
     from . import track
     with _store(args, cfg) as store:
-        return track.run(store, set_expr=getattr(args, "set", None))
+        return track.run(store, set_expr=getattr(args, "set", None), cfg=cfg)
+
+
+def cmd_new(args, cfg):
+    from . import track
+    with _store(args, cfg) as store:
+        return track.run_new(store)
+
+
+def cmd_gaps(args, cfg):
+    from . import insights
+    with _store(args, cfg) as store:
+        return insights.run(cfg, store, top=args.top)
+
+
+def cmd_brief(args, cfg):
+    from . import brief as _brief
+    with _store(args, cfg) as store:
+        return _brief.run(cfg, store, args.job_id)
 
 
 def cmd_export(args, cfg):
@@ -132,6 +153,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("resume", help="Import your resume")
     sp.add_argument("action", choices=["import"], help="What to do")
     sp.add_argument("path", help="Path to resume (.md/.json/.pdf/.txt)")
+    sp.add_argument("--name", default="default",
+                    help="Name this base resume (e.g. research, consulting) for multi-resume matching")
     sp.set_defaults(func=cmd_resume)
 
     sub.add_parser("scan", help="Scrape jobs for your searches").set_defaults(func=cmd_scan)
@@ -171,6 +194,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("track", help="View / update application status")
     sp.add_argument("--set", default=None, help="job_id=status")
     sp.set_defaults(func=cmd_track)
+
+    sub.add_parser("new", help="Show new Strong/Good jobs since your last review").set_defaults(func=cmd_new)
+
+    sp = sub.add_parser("gaps", help="Skill-gap learning plan across your matched jobs")
+    sp.add_argument("--top", type=int, default=15)
+    sp.set_defaults(func=cmd_gaps)
+
+    sp = sub.add_parser("brief", help="Blunt, risk-forward company brief for a job")
+    sp.add_argument("job_id")
+    sp.set_defaults(func=cmd_brief)
 
     sp = sub.add_parser("export", help="Export ranked jobs")
     sp.add_argument("--format", choices=["json", "csv"], default="json")

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from . import comp, contacts, glassdoor, news, reddit, stock
+from . import brief, comp, contacts, glassdoor, news, reddit, stock
 
 
 def run(cfg: dict, store, job_id: Optional[str] = None) -> int:
@@ -43,6 +43,9 @@ def run(cfg: dict, store, job_id: Optional[str] = None) -> int:
             if ecfg.get("contacts"):
                 leads = contacts.find(company, job)
                 store.save_contacts(leads)
+            if ecfg.get("brief"):
+                b = brief.build(cfg, store, company, job, sections)
+                store.save_enrichment(company, brief=b)
             print(f"    {company}: " + _summary(sections))
         except Exception as e:  # noqa: BLE001 - keep enriching others
             print(f"    {company}: error ({e})")
