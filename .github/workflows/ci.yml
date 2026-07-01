@@ -25,4 +25,4 @@ jobs:
       - name: Offline selftest
         run: python -m jobscope selftest
       - name: Unit tests
-        run: pytest -q
+        run: python -m pytest -q
