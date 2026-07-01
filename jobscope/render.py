@@ -42,6 +42,7 @@ def _job_record(job, enr: dict, store) -> dict[str, Any]:
         "location": ("Remote" if job.is_remote else job.location) or job.location,
         "remote": bool(job.is_remote),
         "url": job.url,
+        "source": job.source,
         "score": job.score,
         "tier": job.tier or "Skip",
         "base": job.resume_base or "",
@@ -156,7 +157,7 @@ h1{font-size:16px; margin:0; letter-spacing:-.2px; font-weight:650}
 #q:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); width:320px}
 .kbd{position:absolute; right:9px; top:50%; transform:translateY(-50%); color:var(--mute);
   font:11px var(--mono); border:1px solid var(--border); border-radius:5px; padding:1px 5px; background:var(--bg2)}
-select#sort, select#resume{background:var(--card); color:var(--fg); border:1px solid var(--border);
+select#sort, select#resume, select#group{background:var(--card); color:var(--fg); border:1px solid var(--border);
   border-radius:10px; padding:9px 10px; font-size:13px; outline:none; cursor:pointer}
 .iconbtn{background:var(--card); border:1px solid var(--border); color:var(--dim);
   width:38px;height:38px;border-radius:10px; cursor:pointer; display:grid; place-items:center; transition:.16s}
@@ -242,6 +243,8 @@ main{padding:12px 24px 60px; display:grid; gap:11px}
   background:var(--accent-dim); padding:1px 7px; border-radius:6px}
 .new{font-size:10px; font-weight:700; color:var(--strong); letter-spacing:.05em;
   border:1px solid color-mix(in srgb,var(--strong) 35%,transparent); border-radius:5px; padding:0 5px}
+.dupe{font-size:10px; font-weight:700; color:var(--dim); letter-spacing:.02em;
+  border:1px solid var(--border-h); border-radius:5px; padding:0 6px}
 .enr{margin-top:11px; display:flex; gap:7px; flex-wrap:wrap}
 .pill{font-size:12px; background:var(--bg2); border:1px solid var(--border); border-radius:8px;
   padding:3px 9px; color:var(--dim); display:inline-flex; gap:5px; align-items:center; transition:.14s}
@@ -276,6 +279,10 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
     <option value="resume">Sort: Resume</option>
   </select>
   <select id="resume" hidden><option value="">All resumes</option></select>
+  <select id="group" title="Group duplicate postings of the same role">
+    <option value="on">Group: on</option>
+    <option value="off">Group: off</option>
+  </select>
   <button class="iconbtn" id="theme" title="Toggle theme">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
   </button>
@@ -290,7 +297,7 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
 const DATA = __DATA__;
 const TIERC = {Strong:'#22c55e',Good:'#3b82f6',Stretch:'#f59e0b',Skip:'#71717a'};
 const off = new Set(['Skip']);
-const q = document.getElementById('q'), sortSel = document.getElementById('sort'), resumeSel = document.getElementById('resume');
+const q = document.getElementById('q'), sortSel = document.getElementById('sort'), resumeSel = document.getElementById('resume'), groupSel = document.getElementById('group');
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const isNew = r => r.first_seen && (Date.now()-Date.parse(r.first_seen) < 864e5);
 
@@ -349,7 +356,7 @@ function card(r,i){
     <div class="mid">
       <div class="title">${esc(r.title)}</div>
       <div class="co"><span>${esc(r.company||'')}</span><span>·</span><span>${esc(r.location||'')}</span>
-        ${r.base?`<span class="base">${esc(r.base)}</span>`:''}${isNew(r)?`<span class="new">NEW</span>`:''}</div>
+        ${r.base?`<span class="base">${esc(r.base)}</span>`:''}${isNew(r)?`<span class="new">NEW</span>`:''}${dupeCount(r)>1?`<span class="dupe">×${dupeCount(r)} postings</span>`:''}</div>
       <div class="dots">${metaDots(r)}</div>
     </div>
     <span class="tierpill" style="--c:${col}"><span class="dot"></span>${r.tier}</span>
@@ -368,13 +375,28 @@ function scoped(){
   return DATA.filter(r=>!rez || r.base===rez)
     .filter(r=>!term || (r.title+' '+r.company+' '+(r.rationale||'')).toLowerCase().includes(term));
 }
+function normTitle(t){return (t||'').toLowerCase().replace(/\(.*?\)|\[.*?\]/g,' ').replace(/[^a-z0-9]+/g,' ').trim();}
+function dupeCount(r){return (groupSel.value!=='off' && r._members) ? r._members.length : 1;}
+function groupItems(items){
+  // collapse same company + normalized title into one representative (highest score)
+  const map=new Map();
+  for(const r of items){
+    const key=(r.company||'').toLowerCase().trim()+'|'+normTitle(r.title);
+    const g=map.get(key);
+    if(!g){ r._members=[r]; map.set(key,r); }
+    else { g._members.push(r); if(r.score>g.score){ r._members=g._members; map.set(key,r); } }
+  }
+  return [...map.values()];
+}
 function render(first){
   const s=sortSel.value, base=scoped();
   paintKpis(base, !!first); paintChipCounts(base);
   let items=base.filter(r=>!off.has(r.tier));
+  if(groupSel.value!=='off') items=groupItems(items);
   if(s==='company') items=[...items].sort((a,b)=>(a.company||'').localeCompare(b.company||''));
   else if(s==='new') items=[...items].sort((a,b)=>(b.first_seen||'').localeCompare(a.first_seen||''));
   else if(s==='resume') items=[...items].sort((a,b)=>(a.base||'').localeCompare(b.base||'')||(b.score-a.score));
+  else items=[...items].sort((a,b)=>b.score-a.score);
   const list=document.getElementById('list');
   list.innerHTML=items.length?items.map(card).join('')
     :`<div class="empty">No matching jobs.<br><br>Run <code>jobscope scan</code> then <code>jobscope match</code>.</div>`;
@@ -398,6 +420,11 @@ function openDrawer(i){
   if(e.news&&e.news.length) b+=sec('Recent news', e.news.map(n=>`<a class="lnk" href="${n.link||'#'}" target="_blank">${esc(n.title)} ↗</a>`).join(''));
   if((r.contacts||[]).length) b+=sec('Referral leads', r.contacts.map(c=>`<a class="lnk" href="${c.url||'#'}" target="_blank">🤝 ${esc(c.name||'lead')} ↗</a>`).join(''));
   if(r.rationale) b+=sec('Why this rank',`<div class="txt">${esc(r.rationale)}</div>`);
+  if(groupSel.value!=='off' && r._members && r._members.length>1){
+    const rows=[...r._members].sort((a,b)=>b.score-a.score).map(m=>
+      `<a class="lnk" href="${esc(m.url||'#')}" target="_blank">${esc(m.source||'link')} · ${esc(m.location||'\u2014')} · ${m.score} \u2197</a>`).join('');
+    b+=sec(`All postings (${r._members.length})`, rows);
+  }
   const meta=[r.base?`<span class="tag">${esc(r.base)}</span> base`:'', r.size?`${esc(r.size)} company`:'', r.posted?`Posted ${esc(r.posted)}`:''].filter(Boolean).join(' · ');
   drawer.innerHTML=`<div class="dw-head"><div class="dw-top">
       <div class="dw-score" style="color:${col}">${r.score}</div>
@@ -421,7 +448,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='/'&&document.activeElement!==q){e.preventDefault();q.focus()}
   else if(e.key==='Escape'){ if(drawer.classList.contains('on'))closeDrawer();
     else if(document.activeElement===q){q.value='';q.blur();render()} }});
-q.oninput=()=>render(); sortSel.onchange=()=>render(); resumeSel.onchange=()=>render();
+q.oninput=()=>render(); sortSel.onchange=()=>render(); resumeSel.onchange=()=>render(); groupSel.onchange=()=>render();
 DATA.forEach((r,i)=>r._i=i);
 buildChips(); resumeFilters(); render(true);
 </script></body></html>"""
