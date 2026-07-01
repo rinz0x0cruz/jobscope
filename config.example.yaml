@@ -30,6 +30,20 @@ search:
   distance: 50
   linkedin_fetch_description: true    # slower, but gets full description + salary
   proxies: []                         # optional ['user:pass@host:port', ...] to protect your IP on big scans
+  # Optional: run several searches in one scan. Each profile reuses the fields
+  # above and overrides only what it lists (location / is_remote / hours_old /
+  # country_indeed / results_wanted). Handy to cover BOTH remote and on-site.
+  # Leave empty for a single search from the fields above.
+  profiles: []
+  #   - name: "remote"
+  #     location: "Remote"
+  #     is_remote: true
+  #     hours_old: 168
+  #   - name: "onsite-local"
+  #     location: "India"        # or a city, e.g. "Pune, Maharashtra"
+  #     is_remote: false         # include on-site / hybrid
+  #     hours_old: 720           # last 30 days
+  #     country_indeed: "India"
 
 match:
   # Deterministic fit score = 100 * weighted sum, minus a ghost/scam penalty.

@@ -129,6 +129,30 @@ python -m jobscope resume import consulting.md --name consulting
 python -m jobscope match          # each job records which base scored highest
 ```
 
+## Search profiles (remote + on-site)
+
+A single search only covers one location/recency window, so remote-only scans miss
+on-site and hybrid roles. Add `search.profiles` to run several searches in one scan —
+each reuses your base `search` fields and overrides only what it lists:
+
+```yaml
+search:
+  # ...terms, sites, results_wanted...
+  profiles:
+    - name: "remote"          # global remote, last 7 days
+      location: "Remote"
+      is_remote: true
+      hours_old: 168
+    - name: "onsite-local"    # on-site / hybrid across India, last 30 days
+      location: "India"       # or a city, e.g. "Pune, Maharashtra"
+      is_remote: false
+      hours_old: 720
+      country_indeed: "India"
+```
+
+Results are de-duplicated by URL, so overlapping profiles won't create duplicates.
+Leave `profiles: []` for a single search from the base fields.
+
 ## Filters (clearance / sponsorship / block-list)
 
 Set `filters` in `config.yaml` to force irrelevant jobs to `Skip` with a reason.

@@ -19,9 +19,32 @@ def run(cfg: dict, store) -> int:
         print("  JobSpy is not installed. Run: pip install python-jobspy")
         return 1
 
-    s = cfg["search"]
+    base = cfg["search"]
+    # One search per profile; each profile overrides the base search (location,
+    # is_remote, hours_old, ...). No profiles -> a single search from the base
+    # (backwards compatible).
+    profiles = base.get("profiles") or [{}]
     total_new = 0
     total_seen = 0
+    for prof in profiles:
+        s = {**base, **prof}
+        label = prof.get("name") or s.get("location") or "search"
+        if len(profiles) > 1:
+            print(f"\n  == profile: {label} "
+                  f"(location={s.get('location')!r}, hours_old={s.get('hours_old')}) ==")
+        new, seen = _scan_profile(scrape_jobs, s, store, label)
+        total_new += new
+        total_seen += seen
+
+    print(f"\n  scan complete: {total_new} new / {total_seen} seen. "
+          f"Next: python -m jobscope match")
+    return 0
+
+
+def _scan_profile(scrape_jobs, s: dict, store, label: str) -> tuple[int, int]:
+    """Run every search term for one profile; returns (new, seen) counts."""
+    new_total = 0
+    seen_total = 0
     for term in s["terms"]:
         try:
             kwargs: dict[str, Any] = dict(
@@ -40,7 +63,7 @@ def run(cfg: dict, store) -> int:
             if s.get("proxies"):
                 kwargs["proxies"] = s["proxies"]
             # Indeed/LinkedIn only allow ONE of {hours_old} vs {is_remote/job_type};
-            # prefer recency and let matching handle the remote preference.
+            # prefer recency and let the location string handle remote vs on-site.
             if s.get("hours_old"):
                 kwargs["hours_old"] = s["hours_old"]
             elif s.get("is_remote"):
@@ -55,19 +78,16 @@ def run(cfg: dict, store) -> int:
                 job = _row_to_job(row)
                 if not (job.title and job.company):
                     continue
-                total_seen += 1
+                seen_total += 1
                 if store.upsert_job(job):
                     new_here += 1
-            total_new += new_here
+            new_total += new_here
             print(f"  [{term}] {len(df)} results ({new_here} new)")
-            store.log_run(f"scan:{term}", len(df), "ok")
+            store.log_run(f"scan:{label}:{term}", len(df), "ok")
         except Exception as e:  # noqa: BLE001 - keep scanning other terms
             print(f"  [{term}] error: {e}")
-            store.log_run(f"scan:{term}", 0, "error")
-
-    print(f"\n  scan complete: {total_new} new / {total_seen} seen. "
-          f"Next: python -m jobscope match")
-    return 0
+            store.log_run(f"scan:{label}:{term}", 0, "error")
+    return new_total, seen_total
 
 
 def _val(row, *names, default=None):

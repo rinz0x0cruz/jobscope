@@ -32,6 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "distance": 50,
         "linkedin_fetch_description": True,
         "proxies": [],
+        "profiles": [],
     },
     "match": {
         "weights": {
