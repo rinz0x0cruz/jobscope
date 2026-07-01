@@ -10,8 +10,9 @@ profile:
   links: {}                           # e.g. {linkedin: "...", github: "...", website: "..."}
 
 search:
-  # JobSpy sites: indeed, linkedin, zip_recruiter, google, glassdoor, bayt, naukri
-  sites: ["indeed", "linkedin", "zip_recruiter", "google"]
+  # JobSpy sites: indeed, linkedin, google, glassdoor, bayt, naukri.
+  # zip_recruiter omitted by default -- Cloudflare WAF returns 403 (re-add if you use proxies).
+  sites: ["indeed", "linkedin", "google"]
   terms:
     - "application security engineer"
     - "security engineer"

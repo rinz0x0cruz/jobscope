@@ -20,7 +20,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "links": {},
     },
     "search": {
-        "sites": ["indeed", "linkedin", "zip_recruiter", "google"],
+        "sites": ["indeed", "linkedin", "google"],
         "terms": ["software engineer"],
         "google_term": "",
         "location": "Remote",
