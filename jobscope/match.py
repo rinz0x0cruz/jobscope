@@ -48,6 +48,29 @@ NO_SPONSORSHIP_SIGNALS = [
     "authorized to work in the us without", "authorized to work in the united states without",
 ]
 
+# Discipline signals used to route a job to the best-fit resume when several are
+# imported. TECHNICAL = hands-on / read-code security work; ADVISORY = consulting
+# / GRC. Substring matched (case-insensitive); tune freely.
+TECHNICAL_SIGNALS = [
+    "reverse engineering", "reverse engineer", "malware", "exploit",
+    "vulnerability research", "vuln research", "disassembl", "decompil",
+    "debugger", "debugging", "ida pro", "ghidra", "x64dbg", "windbg",
+    "binary analysis", "shellcode", "fuzz", "detection engineering",
+    "detection engineer", "security engineer", "software engineer",
+    "product security", "application security", "appsec", "offensive security",
+    "red team", "penetration test", "pentest", "kernel", "assembly", "firmware",
+    "secure coding", "code review", "source code", "sast", "dast",
+    "threat detection", "dfir", "incident response", "yara", "sigma rule",
+    "cryptograph", "memory corruption", "low-level",
+]
+ADVISORY_SIGNALS = [
+    "consultant", "consulting", "advisory", "advisor", "grc", "governance",
+    "risk management", "risk assessment", "compliance", "audit", "auditor",
+    "assessor", "regulatory", "stakeholder", "executive", "roadmap",
+    "security posture", "posture", "third-party risk", "third party risk",
+    "vendor risk", "gap assessment", "maturity assessment", "questionnaire",
+    "attestation", "iso 27001", "soc 2", "pci dss", "program management",
+]
 
 
 def _tokens(text: str) -> set[str]:
@@ -332,16 +355,67 @@ def apply_filters(job: Job, fcfg: dict) -> Optional[str]:
     return None
 
 
+DISCIPLINE_SELECT_WEIGHT = 5.0  # nudge (points) for a matching discipline on ambiguous jobs
+LEAN_DECISIVE = 0.25            # |job lean| at/above this routes by discipline, score breaks ties
+
+
+def _lean_counts(text: str) -> tuple[int, int]:
+    t = (text or "").lower()
+    tech = sum(1 for s in TECHNICAL_SIGNALS if s in t)
+    adv = sum(1 for s in ADVISORY_SIGNALS if s in t)
+    return tech, adv
+
+
+def _lean(tech: int, adv: int) -> float:
+    """Map (technical, advisory) hit counts to a lean in [-1, +1] (+1 = technical)."""
+    total = tech + adv
+    return (tech - adv) / total if total else 0.0
+
+
+def _resume_lean(resume: Resume) -> float:
+    text = resume.raw_text or " ".join(
+        list(resume.skills) + list(resume.titles) + [resume.summary or ""])
+    return _lean(*_lean_counts(text))
+
+
+def _job_lean(job: Job) -> float:
+    tt, ta = _lean_counts(job.title)
+    dt, da = _lean_counts(job.description)
+    return _lean(2 * tt + dt, 2 * ta + da)   # title weighted heavier than description
+
+
 def select_base(job: Job, resumes: list, match_cfg: dict) -> tuple[float, str, str, str]:
-    """Score the job against each base resume; return the best (score, tier, rationale, name)."""
-    best_score, best_tier, best_rat, best_name = 0.0, "Skip", "no resume", ""
-    first = True
+    """Score the job against each base resume and pick the best-fit one.
+
+    Score and tier come from :func:`score_job`. Because the resumes usually tie
+    on skills (they saturate at ``SKILL_TARGET`` hits), a job with a clear
+    *discipline* is routed to the resume that matches it: a technical / hands-on
+    posting to the more technical resume, an advisory / GRC posting to the more
+    advisory one. Only when the job's discipline is ambiguous does the raw fit
+    score decide (with a small discipline nudge). The returned score/tier belong
+    to the resume actually chosen, so the headline reflects the resume you'd apply
+    with.
+    """
+    job_lean = _job_lean(job)
+    cand = []  # (score, tier, rationale, name, resume_lean)
     for name, resume in resumes:
         score, tier, rationale = score_job(job, resume, match_cfg)
-        if first or score > best_score:
-            best_score, best_tier, best_rat, best_name = score, tier, rationale, name
-            first = False
-    return best_score, best_tier, best_rat, best_name
+        cand.append((score, tier, rationale, name, _resume_lean(resume)))
+
+    decisive = len(resumes) > 1 and abs(job_lean) >= LEAN_DECISIVE
+    if decisive:
+        # clear discipline -> the most technical (or most advisory) resume wins,
+        # regardless of a small score gap; fit score only breaks lean ties.
+        direction = 1.0 if job_lean >= 0 else -1.0
+        cand.sort(key=lambda c: (direction * c[4], c[0]), reverse=True)
+    else:
+        # ambiguous -> best fit score, discipline is only a light aligned nudge
+        cand.sort(key=lambda c: c[0] + DISCIPLINE_SELECT_WEIGHT * job_lean * c[4], reverse=True)
+
+    score, tier, rationale, name, _ = cand[0]
+    if decisive:
+        rationale = f"{rationale} \u2192 {name} ({'technical' if job_lean > 0 else 'advisory'} role)"
+    return score, tier, rationale, name
 
 
 def run(cfg: dict, store) -> int:

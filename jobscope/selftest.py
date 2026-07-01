@@ -149,6 +149,19 @@ def _selftest_filters(c: "_Check") -> None:
     c.ok("prefer large ranks mega high", _company_score(Job(company="Amazon"), big)[0] > 0.9)
     c.ok("prefer small demotes mega",
          _company_score(Job(company="Amazon"), small)[0] < _company_score(Job(company="Amazon"), big)[0])
+    from .match import _job_lean, _resume_lean
+    c.ok("discipline: technical job leans +",
+         _job_lean(Job(title="Malware Reverse Engineer", description="ghidra exploit disassembly")) > 0.3)
+    c.ok("discipline: advisory job leans -",
+         _job_lean(Job(title="GRC Consultant", description="compliance audit risk assessment")) < -0.3)
+    tech_r = Resume(skills=["python"], titles=["Security Analyst"],
+                    raw_text="reverse engineering malware ghidra exploit")
+    adv_r = Resume(skills=["python"], titles=["Security Analyst"],
+                   raw_text="grc compliance audit advisory governance")
+    tie = [("consulting", adv_r), ("research", tech_r)]        # advisory listed first
+    tech_job = Job(title="Malware RE", description="reverse engineering exploit ghidra " * 4)
+    c.ok("discipline routes technical -> research",
+         select_base(tech_job, tie, _default_match_cfg())[3] == "research")
 
 
 def _default_match_cfg() -> dict:

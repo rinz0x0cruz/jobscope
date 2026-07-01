@@ -149,3 +149,24 @@ def test_company_size_shifts_ranking():
     mega = _job(company="Amazon", desc="python aws " * 8)
     tiny = _job(company="Mistral", desc="python aws " * 8)
     assert match.score_job(mega, r, cfg)[0] > match.score_job(tiny, r, cfg)[0]
+
+
+def test_discipline_lean_signals():
+    assert match._job_lean(_job(title="Reverse Engineer", desc="malware ghidra exploit")) > 0.5
+    assert match._job_lean(_job(title="GRC Consultant", desc="compliance audit risk assessment")) < -0.5
+    assert match._resume_lean(Resume(raw_text="ghidra ida pro reverse engineering exploit")) > 0.5
+    assert match._resume_lean(Resume(raw_text="compliance audit governance advisory")) < -0.5
+
+
+def test_discipline_breaks_exact_tie():
+    # identical skills + titles => score_job ties => discipline is the only differentiator,
+    # and it must beat the old alphabetical default ("consulting" is listed first).
+    common = dict(skills=["python", "aws"], seniority="mid", titles=["Security Analyst"])
+    tech = Resume(raw_text="reverse engineering malware ghidra exploit debugging binary analysis", **common)
+    adv = Resume(raw_text="grc risk assessment compliance audit advisory governance stakeholder", **common)
+    resumes = [("consulting", adv), ("research", tech)]        # advisory listed FIRST
+    cfg = _mcfg()["match"]
+    tech_job = _job(title="Threat Detection Role", desc="reverse engineering exploit ghidra disassembly " * 4)
+    adv_job = _job(title="Security Program Role", desc="risk assessment compliance audit governance advisory " * 4)
+    assert match.select_base(tech_job, resumes, cfg)[3] == "research"
+    assert match.select_base(adv_job, resumes, cfg)[3] == "consulting"
