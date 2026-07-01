@@ -385,16 +385,15 @@ def _job_lean(job: Job) -> float:
 
 
 def select_base(job: Job, resumes: list, match_cfg: dict) -> tuple[float, str, str, str]:
-    """Score the job against each base resume and pick the best-fit one.
+    """Pick the base resume to tailor from, and report your best fit for the job.
 
-    Score and tier come from :func:`score_job`. Because the resumes usually tie
-    on skills (they saturate at ``SKILL_TARGET`` hits), a job with a clear
-    *discipline* is routed to the resume that matches it: a technical / hands-on
-    posting to the more technical resume, an advisory / GRC posting to the more
-    advisory one. Only when the job's discipline is ambiguous does the raw fit
-    score decide (with a small discipline nudge). The returned score/tier belong
-    to the resume actually chosen, so the headline reflects the resume you'd apply
-    with.
+    You are one candidate viewed through several resume "framings", so the
+    headline score/tier is the *best* fit across those framings -- no framing is
+    under-credited just for omitting a keyword the others happen to list. The
+    returned ``base`` is which resume to tailor from: a clearly technical /
+    hands-on posting routes to the more technical resume, a clearly advisory /
+    GRC posting to the more advisory one (fit score only breaks lean ties);
+    ambiguous jobs fall back to the best-fitting resume.
     """
     job_lean = _job_lean(job)
     cand = []  # (score, tier, rationale, name, resume_lean)
@@ -402,20 +401,23 @@ def select_base(job: Job, resumes: list, match_cfg: dict) -> tuple[float, str, s
         score, tier, rationale = score_job(job, resume, match_cfg)
         cand.append((score, tier, rationale, name, _resume_lean(resume)))
 
+    # base = which resume to tailor from
     decisive = len(resumes) > 1 and abs(job_lean) >= LEAN_DECISIVE
     if decisive:
-        # clear discipline -> the most technical (or most advisory) resume wins,
+        # clear discipline -> the most technical (or most advisory) resume,
         # regardless of a small score gap; fit score only breaks lean ties.
         direction = 1.0 if job_lean >= 0 else -1.0
-        cand.sort(key=lambda c: (direction * c[4], c[0]), reverse=True)
+        routed_name = max(cand, key=lambda c: (direction * c[4], c[0]))[3]
     else:
-        # ambiguous -> best fit score, discipline is only a light aligned nudge
-        cand.sort(key=lambda c: c[0] + DISCIPLINE_SELECT_WEIGHT * job_lean * c[4], reverse=True)
+        # ambiguous -> best fit, discipline only a light aligned nudge
+        routed_name = max(cand, key=lambda c: c[0] + DISCIPLINE_SELECT_WEIGHT * job_lean * c[4])[3]
 
-    score, tier, rationale, name, _ = cand[0]
+    # headline = best fit across framings (stable ranking, nothing under-credited)
+    score, tier, rationale, best_name, _ = max(cand, key=lambda c: c[0])
     if decisive:
-        rationale = f"{rationale} \u2192 {name} ({'technical' if job_lean > 0 else 'advisory'} role)"
-    return score, tier, rationale, name
+        verb = "tailor from " if best_name != routed_name else ""
+        rationale = f"{rationale} \u2192 {verb}{routed_name} ({'technical' if job_lean > 0 else 'advisory'} role)"
+    return score, tier, rationale, routed_name
 
 
 def run(cfg: dict, store) -> int:
