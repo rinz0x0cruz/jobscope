@@ -85,10 +85,33 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `brief <job_id>` | Blunt, risk-forward company brief (no marketing fluff) |
 | `gaps [--top N]` | Skill-gap learning plan: skills to learn ranked by jobs unlocked |
 | `new` | New Strong/Good jobs since you last reviewed |
-| `dashboard [--open]` / `serve` | Render / serve the local HTML dashboard |
+| `dashboard [--open]` / `serve` | Render / serve the local HTML dashboard (click a card to expand full detail) |
 | `track [--set job_id=status]` | Application funnel, rates, and follow-up reminders |
 | `export [--format json\|csv]` | Export ranked jobs |
 | `selftest` | Offline self-tests (no network, no keys) |
+
+## Prioritization (company quality + location)
+
+Scoring blends deterministic signals into a 0–100 fit score. Two of the weights
+nudge the ranking toward roles you actually want:
+
+- **Company quality** (`weights.company`) — a curated tier list boosts prestigious
+  and top security employers (FAANG, NVIDIA/OpenAI/Anthropic, Palo Alto Networks,
+  CrowdStrike, Zscaler, Okta, Wiz, Stripe, Databricks, …). Unknown companies get a
+  neutral score, so no one is penalized for being obscure.
+- **Location** (`weights.location`) — list the places you prefer and matching jobs
+  get the full location score:
+
+```yaml
+match:
+  prefer_locations: ["Remote", "India", "Bengaluru"]  # substring match -> full score
+  prefer_companies: []                                # your own must-boost employers
+```
+
+The dashboard is master–detail: cards show only the essentials (score, title,
+company · location, a couple of intel dots), and clicking one slides open a drawer
+with the company brief, compensation, stock/IPO, Reddit, Glassdoor, news, referral
+leads, and the score rationale. Close with the ✕, the backdrop, or `Esc`.
 
 ## Multi-resume matching
 

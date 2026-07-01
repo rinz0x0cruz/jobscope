@@ -137,6 +137,9 @@ def _selftest_filters(c: "_Check") -> None:
     job = Job(title="Malware Analyst", description="yara malware analysis " * 5)
     _, _, _, base = select_base(job, [("research", r1), ("consulting", r2)], _default_match_cfg())
     c.ok("select_base picks best resume", base == "research", base)
+    from .companies import company_quality
+    c.ok("company_quality: elite", company_quality("Google")[0] == 1.0)
+    c.ok("company_quality: unknown neutral", company_quality("Obscure Widgets LLC")[0] == 0.5)
 
 
 def _default_match_cfg() -> dict:

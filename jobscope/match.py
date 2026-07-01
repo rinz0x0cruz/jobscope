@@ -123,7 +123,18 @@ def _comp_score(job: Job, min_salary: float) -> float:
     return max(0.0, top / float(min_salary))
 
 
-def _location_score(resume: Resume, job: Job, want_remote: bool) -> float:
+def _location_score(resume: Resume, job: Job, want_remote: bool, prefer: list | None = None) -> float:
+    # explicit preferred locations win (e.g. ["Remote", "India", "Bengaluru"])
+    if prefer:
+        loc = (job.location or "").lower()
+        for p in prefer:
+            pl = (p or "").lower().strip()
+            if not pl:
+                continue
+            if pl in ("remote", "anywhere") and job.is_remote:
+                return 1.0
+            if pl in loc:
+                return 1.0
     if job.is_remote:
         return 1.0 if want_remote else 0.8
     if not resume.location or not job.location:
@@ -133,6 +144,16 @@ def _location_score(resume: Resume, job: Job, want_remote: bool) -> float:
     if any(part.strip() in j for part in r.split(",") if part.strip()):
         return 0.9
     return 0.3
+
+
+def _company_score(job: Job, match_cfg: dict) -> tuple[float, str]:
+    """Prestige signal: your prefer list wins, else the curated tier list."""
+    from . import companies
+    c = (job.company or "").lower()
+    for p in match_cfg.get("prefer_companies", []) or []:
+        if p and p.lower() in c:
+            return 1.0, "preferred"
+    return companies.company_quality(job.company)
 
 
 def _recency_score(job: Job) -> float:
@@ -177,13 +198,16 @@ def score_job(job: Job, resume: Resume, match_cfg: dict) -> tuple[float, str, st
     weights = match_cfg["weights"]
     job_text = f"{job.title}\n{job.description}"
     skill, skill_hits = _skill_score(resume, job_text)
+    company_score, company_tier = _company_score(job, match_cfg)
     parts = {
         "skills": skill,
         "title": _title_score(resume, job),
         "seniority": _seniority_score(resume, job),
         "comp": _comp_score(job, match_cfg.get("min_salary", 0) or 0),
-        "location": _location_score(resume, job, match_cfg.get("want_remote", True)),
+        "location": _location_score(resume, job, match_cfg.get("want_remote", True),
+                                    match_cfg.get("prefer_locations")),
         "recency": _recency_score(job),
+        "company": company_score,
     }
     raw = sum(weights.get(k, 0.0) * v for k, v in parts.items())
     score = 100.0 * raw
@@ -203,14 +227,16 @@ def score_job(job: Job, resume: Resume, match_cfg: dict) -> tuple[float, str, st
     else:
         tier = "Skip"
 
-    rationale = _rationale(parts, skill_hits, flags)
+    rationale = _rationale(parts, skill_hits, flags, company_tier)
     return round(score, 1), tier, rationale
 
 
-def _rationale(parts: dict, skill_hits: list[str], flags: list[str]) -> str:
+def _rationale(parts: dict, skill_hits: list[str], flags: list[str], company_tier: str = "") -> str:
     ranked = sorted(parts.items(), key=lambda kv: kv[1], reverse=True)
     top = ", ".join(f"{k} {int(v * 100)}%" for k, v in ranked[:3])
     bits = [f"top: {top}"]
+    if company_tier:
+        bits.append(f"company: {company_tier}")
     if skill_hits:
         bits.append("skills matched: " + ", ".join(skill_hits[:8]))
     if flags:

@@ -183,11 +183,50 @@ select#sort{background:var(--card); color:var(--fg); border:1px solid var(--bord
 /* list */
 main{padding:12px 24px 60px; display:grid; gap:11px}
 .job{background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
-  padding:15px 18px; display:grid; grid-template-columns:64px 1fr auto; gap:16px; align-items:start;
-  transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+  padding:15px 18px; display:grid; grid-template-columns:60px 1fr auto 16px; gap:16px; align-items:center;
+  cursor:pointer; transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease;
   animation:rise .4s both}
 .job:hover{transform:translateY(-2px); border-color:var(--border-h); box-shadow:var(--shadow)}
 .job.blocked{opacity:.5}
+.dots{display:flex; gap:12px; margin-top:9px; flex-wrap:wrap}
+.dot-i{font-size:12px; color:var(--mute); display:inline-flex; gap:4px; align-items:center}
+.chev{color:var(--mute); font-size:22px; line-height:1; transition:.16s}
+.job:hover .chev{color:var(--fg); transform:translateX(2px)}
+/* detail drawer */
+#overlay{position:fixed; inset:0; background:rgba(0,0,0,.5); opacity:0; pointer-events:none;
+  transition:opacity .22s; z-index:40; backdrop-filter:blur(2px)}
+#overlay.on{opacity:1; pointer-events:auto}
+#drawer{position:fixed; top:0; right:0; height:100%; width:min(500px,94vw); z-index:50;
+  background:var(--bg2); border-left:1px solid var(--border); box-shadow:-24px 0 60px -20px rgba(0,0,0,.6);
+  transform:translateX(100%); transition:transform .26s cubic-bezier(.22,.61,.36,1); overflow-y:auto}
+#drawer.on{transform:none}
+.dw-head{position:sticky; top:0; z-index:2; padding:20px 22px 16px; border-bottom:1px solid var(--border);
+  background:color-mix(in srgb,var(--bg2) 84%,transparent); backdrop-filter:blur(10px)}
+.dw-top{display:flex; gap:12px; align-items:flex-start}
+.dw-score{font-weight:720; font-size:26px; letter-spacing:-1px; line-height:1}
+.dw-title{font-size:16px; font-weight:650; letter-spacing:-.3px}
+.dw-co{color:var(--dim); font-size:13px; margin-top:3px}
+.dw-close{margin-left:auto; background:var(--card); border:1px solid var(--border); color:var(--dim);
+  width:32px; height:32px; border-radius:9px; cursor:pointer; flex:none}
+.dw-close:hover{color:var(--fg); border-color:var(--border-h)}
+.dw-actions{display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; align-items:center}
+.btn{display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:10px; font-size:13px;
+  font-weight:600; text-decoration:none; cursor:pointer; border:1px solid var(--border)}
+.btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.dw-body{padding:18px 22px 48px}
+.sec{margin-bottom:20px}
+.sec h3{font-size:11px; text-transform:uppercase; letter-spacing:.09em; color:var(--mute); margin:0 0 8px; font-weight:650}
+.sec .txt{white-space:pre-wrap; color:var(--dim); font-size:13px; line-height:1.6}
+.sec .txt code{background:var(--card); border:1px solid var(--border); border-radius:5px; padding:1px 5px; font:12px var(--mono)}
+.kv{font-size:13px; margin:4px 0; color:var(--dim)}
+.kv b{color:var(--fg); font-weight:600}
+.lnk{display:block; color:var(--dim); font-size:13px; text-decoration:none; padding:7px 0; border-bottom:1px solid var(--border)}
+.lnk:hover{color:var(--accent)}
+.tag{font:11px var(--mono); color:var(--accent); background:var(--accent-dim); padding:1px 7px; border-radius:6px}
+@keyframes rise{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
+@media (max-width:820px){.kpis{grid-template-columns:repeat(2,1fr)} #q:focus{width:280px}
+  .job{grid-template-columns:48px 1fr auto} .chev{display:none}}
 .scorewrap{text-align:center}
 .score{font-size:23px; font-weight:720; letter-spacing:-1px; line-height:1}
 .sbar{height:3px; border-radius:3px; background:var(--border); margin-top:8px; overflow:hidden}
@@ -215,8 +254,6 @@ main{padding:12px 24px 60px; display:grid; gap:11px}
 .empty{text-align:center; color:var(--mute); padding:80px 20px}
 .empty code{background:var(--card); border:1px solid var(--border); border-radius:6px; padding:2px 7px; font:12px var(--mono)}
 footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
-@keyframes rise{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
-@media (max-width:820px){.kpis{grid-template-columns:repeat(2,1fr)} #q:focus{width:280px} .job{grid-template-columns:52px 1fr}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
 </style></head><body>
 <header>
@@ -242,6 +279,8 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
 <section class="kpis" id="kpis"></section>
 <section class="chips" id="chips"></section>
 <main id="list"></main>
+<div id="overlay"></div>
+<aside id="drawer" aria-label="Job details"></aside>
 <footer>jobscope · local dashboard · your data stays on this machine</footer>
 <script>
 const DATA = __DATA__;
@@ -273,34 +312,31 @@ function chips(){
   document.querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{
     const t=ch.dataset.tier; off.has(t)?off.delete(t):off.add(t); ch.classList.toggle('off'); render();});
 }
-function pills(r){
-  let o=''; const e=r.enrich||{};
-  if(r.salary) o+=`<span class="pill">💰 <b>${esc(r.salary)}</b></span>`;
-  if(e.stock&&e.stock.ticker){const up=(e.stock.change_pct||0)>=0;
-    o+=`<span class="pill ${up?'pos':'neg'}">📈 <b>${e.stock.ticker}</b> ${e.stock.price??''}${e.stock.change_pct!=null?` (${up?'+':''}${e.stock.change_pct}%)`:''}</span>`}
-  if(e.stock&&e.stock.public===false) o+=`<span class="pill">🏦 Private</span>`;
-  if(e.reddit&&e.reddit.sentiment){const neg=/neg/.test(e.reddit.sentiment);
-    o+=`<span class="pill ${neg?'neg':''}">👥 <b>${e.reddit.sentiment}</b></span>`}
-  if(e.glassdoor&&e.glassdoor.rating) o+=`<span class="pill">⭐ <b>${e.glassdoor.rating}</b></span>`;
-  if(e.news&&e.news.length) o+=`<span class="pill">📰 ${e.news.length}</span>`;
-  (r.contacts||[]).slice(0,2).forEach(c=>o+=`<span class="pill">🤝 <a href="${c.url||'#'}" target="_blank">${esc(c.name||'lead')}</a></span>`);
-  return o;
+function metaDots(r){const e=r.enrich||{}, d=[];
+  if(r.salary) d.push('💰');
+  if(e.stock&&e.stock.ticker) d.push('📈 '+e.stock.ticker);
+  else if(e.stock&&e.stock.public===false) d.push('🏦 Private');
+  if(e.glassdoor&&e.glassdoor.rating) d.push('⭐ '+e.glassdoor.rating);
+  if(e.reddit&&e.reddit.count) d.push('👥 '+(e.reddit.sentiment||''));
+  if((r.contacts||[]).length) d.push('🤝 '+r.contacts.length);
+  if(e.news&&e.news.length) d.push('📰 '+e.news.length);
+  return d.slice(0,5).map(x=>`<span class="dot-i">${esc(String(x))}</span>`).join('');
 }
 function card(r,i){
   const col=TIERC[r.tier];
-  return `<article class="job ${r.blocked?'blocked':''}" style="animation-delay:${Math.min(i*22,400)}ms">
+  return `<article class="job ${r.blocked?'blocked':''}" data-i="${r._i}" style="animation-delay:${Math.min(i*20,360)}ms">
     <div class="scorewrap">
       <div class="score tnum" style="color:${col}">${r.score}</div>
       <div class="sbar"><i style="width:${Math.max(3,Math.min(100,r.score))}%;background:${col}"></i></div>
     </div>
     <div class="mid">
-      <div class="title">${r.url?`<a href="${esc(r.url)}" target="_blank">${esc(r.title)}</a>`:esc(r.title)}</div>
+      <div class="title">${esc(r.title)}</div>
       <div class="co"><span>${esc(r.company||'')}</span><span>·</span><span>${esc(r.location||'')}</span>
         ${r.base?`<span class="base">${esc(r.base)}</span>`:''}${isNew(r)?`<span class="new">NEW</span>`:''}</div>
-      <div class="enr">${pills(r)}</div>
-      ${r.rationale?`<div class="rat">${esc(r.rationale)}</div>`:''}
+      <div class="dots">${metaDots(r)}</div>
     </div>
     <span class="tierpill" style="--c:${col}"><span class="dot"></span>${r.tier}</span>
+    <span class="chev">›</span>
   </article>`;
 }
 function render(){
@@ -313,13 +349,49 @@ function render(){
   list.innerHTML=items.length?items.map(card).join('')
     :`<div class="empty">No matching jobs.<br><br>Run <code>jobscope scan</code> then <code>jobscope match</code>.</div>`;
 }
+const overlay=document.getElementById('overlay'), drawer=document.getElementById('drawer');
+function sec(t,html){return html?`<div class="sec"><h3>${t}</h3>${html}</div>`:''}
+function openDrawer(i){
+  const r=DATA[i]; if(!r) return; const col=TIERC[r.tier], e=r.enrich||{}; let b='';
+  b+=sec('Company brief', r.brief?`<div class="txt">${esc(r.brief)}</div>`:'');
+  let comp='';
+  if(r.salary) comp+=`<div class="kv">Posting: <b>${esc(r.salary)}</b></div>`;
+  if(e.comp&&e.comp.levels_fyi) comp+=`<a class="lnk" href="${e.comp.levels_fyi}" target="_blank">Levels.fyi salaries ↗</a>`;
+  b+=sec('Compensation', comp);
+  if(e.stock&&e.stock.ticker){let s=`<div class="kv"><b>${e.stock.ticker}</b> ${e.stock.price??''} ${e.stock.change_pct!=null?`(${e.stock.change_pct>=0?'+':''}${e.stock.change_pct}%)`:''}</div>`;
+    if(e.stock.market_cap) s+=`<div class="kv">Market cap: <b>${e.stock.market_cap}</b></div>`;
+    if(e.stock.week52_pos_pct!=null) s+=`<div class="kv">52-wk position: <b>${e.stock.week52_pos_pct}%</b></div>`;
+    b+=sec('Stock', s);}
+  else if(e.stock&&e.stock.public===false) b+=sec('Stock','<div class="kv">Private / pre-IPO</div>');
+  if(e.reddit&&e.reddit.count) b+=sec('Reddit',`<div class="kv">Sentiment <b>${esc(e.reddit.sentiment||'')}</b> · ${e.reddit.count} mentions</div>${e.reddit.summary?`<div class="txt">${esc(e.reddit.summary)}</div>`:''}`);
+  if(e.glassdoor&&e.glassdoor.rating) b+=sec('Glassdoor',`<div class="kv">Rating <b>${e.glassdoor.rating}/5</b></div>`);
+  if(e.news&&e.news.length) b+=sec('Recent news', e.news.map(n=>`<a class="lnk" href="${n.link||'#'}" target="_blank">${esc(n.title)} ↗</a>`).join(''));
+  if((r.contacts||[]).length) b+=sec('Referral leads', r.contacts.map(c=>`<a class="lnk" href="${c.url||'#'}" target="_blank">🤝 ${esc(c.name||'lead')} ↗</a>`).join(''));
+  if(r.rationale) b+=sec('Why this rank',`<div class="txt">${esc(r.rationale)}</div>`);
+  const meta=[r.base?`<span class="tag">${esc(r.base)}</span> base`:'', r.posted?`Posted ${esc(r.posted)}`:''].filter(Boolean).join(' · ');
+  drawer.innerHTML=`<div class="dw-head"><div class="dw-top">
+      <div class="dw-score" style="color:${col}">${r.score}</div>
+      <div><div class="dw-title">${esc(r.title)}</div><div class="dw-co">${esc(r.company||'')} · ${esc(r.location||'')}</div></div>
+      <button class="dw-close" title="Close (Esc)">✕</button></div>
+      <div class="dw-actions">${r.url?`<a class="btn primary" href="${esc(r.url)}" target="_blank">Open posting ↗</a>`:''}
+      <span class="tierpill" style="--c:${col}"><span class="dot"></span>${r.tier}</span></div></div>
+    <div class="dw-body">${b||'<div class="txt">No enrichment yet — run <code>enrich</code>.</div>'}
+      ${meta?`<div class="sec"><h3>Meta</h3><div class="kv">${meta}</div></div>`:''}</div>`;
+  drawer.querySelector('.dw-close').onclick=closeDrawer;
+  overlay.classList.add('on'); drawer.classList.add('on');
+}
+function closeDrawer(){overlay.classList.remove('on'); drawer.classList.remove('on')}
+overlay.onclick=closeDrawer;
+document.getElementById('list').addEventListener('click',ev=>{const c=ev.target.closest('.job'); if(c)openDrawer(+c.dataset.i)});
 document.getElementById('theme').onclick=()=>{
   const h=document.documentElement; h.classList.toggle('light'); h.classList.toggle('dark');
   try{localStorage.setItem('js-theme',h.classList.contains('light')?'light':'dark')}catch(e){}};
 try{if(localStorage.getItem('js-theme')==='light'){document.documentElement.classList.remove('dark');document.documentElement.classList.add('light')}}catch(e){}
 document.addEventListener('keydown',e=>{
   if(e.key==='/'&&document.activeElement!==q){e.preventDefault();q.focus()}
-  else if(e.key==='Escape'&&document.activeElement===q){q.value='';q.blur();render()}});
+  else if(e.key==='Escape'){ if(drawer.classList.contains('on'))closeDrawer();
+    else if(document.activeElement===q){q.value='';q.blur();render()} }});
 q.oninput=render; sortSel.onchange=render;
+DATA.forEach((r,i)=>r._i=i);
 kpis(); chips(); render();
 </script></body></html>"""

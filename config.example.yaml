@@ -34,14 +34,17 @@ search:
 match:
   # Deterministic fit score = 100 * weighted sum, minus a ghost/scam penalty.
   weights:
-    skills: 0.40
-    title: 0.20
-    seniority: 0.15
+    skills: 0.34
+    title: 0.18
+    seniority: 0.12
     comp: 0.10
     location: 0.10
-    recency: 0.05
+    recency: 0.04
+    company: 0.12                      # prestige boost (curated FAANG/top/security tiers)
   min_salary: 0                       # drop jobs whose max salary is below this (0 = off)
   seniority: "senior"                 # intern/junior/mid/senior/staff/principal
+  prefer_locations: []                # e.g. ["Remote", "India", "Bengaluru"] -> full location score
+  prefer_companies: []                # your own must-boost employers (substring match)
   tiers: {strong: 75, good: 55, stretch: 35}
   ghost_penalty: 15                   # points subtracted when scam/ghost-job signals fire
 

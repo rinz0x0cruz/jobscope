@@ -87,3 +87,38 @@ def test_multi_resume_selects_best_base():
         assert store.get_job(re_job.id).resume_base == "research"
         assert store.get_job(grc_job.id).resume_base == "consulting"
         store.close()
+
+
+def test_company_quality_tiers():
+    from jobscope.companies import company_quality
+    assert company_quality("Google")[0] == 1.0
+    assert company_quality("Meta Platforms, Inc.")[0] == 1.0      # token subset
+    assert company_quality("Palo Alto Networks")[0] == 0.90
+    assert company_quality("Metabase")[0] == 0.5                  # not "meta"
+    assert company_quality("Some Random Startup LLC")[0] == 0.5
+
+
+def test_company_score_prefers_user_list_then_curated():
+    cfg = _mcfg()["match"]
+    cfg["prefer_companies"] = ["acme"]
+    assert match._company_score(_job(company="Acme Corp"), cfg) == (1.0, "preferred")
+    s, label = match._company_score(_job(company="Nvidia"), {"prefer_companies": []})
+    assert s == 1.0 and label == "elite"
+
+
+def test_company_boosts_ranking():
+    r = Resume(skills=["python", "aws"], seniority="mid", titles=["Security Engineer"])
+    cfg = _mcfg()["match"]
+    cfg["want_remote"] = True
+    famous = _job(company="Google", desc="python aws " * 8)
+    nobody = _job(company="Obscure Widgets LLC", desc="python aws " * 8)
+    s_famous, _, _ = match.score_job(famous, r, cfg)
+    s_nobody, _, _ = match.score_job(nobody, r, cfg)
+    assert s_famous > s_nobody
+
+
+def test_prefer_locations_boost():
+    r = Resume(skills=["python"], location="Berlin")
+    j = Job(title="x", company="c", location="Bengaluru, India", is_remote=False)
+    assert match._location_score(r, j, True, ["Bengaluru"]) == 1.0
+    assert match._location_score(r, j, True, []) < 1.0             # without preference, weaker
