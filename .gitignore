@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+
+# jobscope: user data & secrets stay local (PII off GitHub)
+.env
+config.yaml
+config.yml
+config.json
+data/*
+!data/.gitkeep
+
+# Playwright / browsers
+.cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

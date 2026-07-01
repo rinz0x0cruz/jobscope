@@ -1,0 +1,131 @@
+"""Core data models for jobscope.
+
+These are plain dataclasses used across scraping, matching, enrichment, and
+application prep. Persistence lives in :mod:`jobscope.store`; anything that needs
+to be stored is serialized to/from these shapes there.
+"""
+from __future__ import annotations
+
+import hashlib
+import re
+from dataclasses import dataclass, field, asdict
+from typing import Any, Optional
+
+
+def slugify(value: str) -> str:
+    """Lowercase, hyphenated, filesystem-safe token."""
+    value = (value or "").strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "-", value)
+    return value.strip("-") or "unknown"
+
+
+def job_id(source: str, title: str, company: str, url: str = "") -> str:
+    """Stable id for a job.
+
+    Prefer the canonical URL when present (dedupes reposts across runs); fall
+    back to a hash of site+title+company so rows are still deterministic.
+    """
+    basis = url.strip() if url else f"{source}|{title}|{company}".lower()
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass
+class Resume:
+    """Structured resume parsed from Markdown / JSON Resume / PDF."""
+
+    full_name: str = ""
+    email: str = ""
+    phone: str = ""
+    location: str = ""
+    summary: str = ""
+    skills: list[str] = field(default_factory=list)
+    titles: list[str] = field(default_factory=list)          # roles held, for title matching
+    experiences: list[dict[str, Any]] = field(default_factory=list)
+    education: list[dict[str, Any]] = field(default_factory=list)
+    links: dict[str, str] = field(default_factory=dict)
+    years_experience: float = 0.0
+    seniority: str = ""                                      # intern/junior/mid/senior/staff/principal
+    raw_text: str = ""
+    source_path: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Resume":
+        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        return cls(**{k: v for k, v in (d or {}).items() if k in known})
+
+
+@dataclass
+class Job:
+    """A single normalized job posting (superset of the JobSpy schema)."""
+
+    id: str = ""
+    source: str = ""
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    is_remote: bool = False
+    url: str = ""
+    description: str = ""
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    salary_interval: str = ""                                # yearly/monthly/hourly...
+    currency: str = ""
+    job_type: str = ""                                       # fulltime/contract/intern...
+    company_industry: str = ""
+    company_url: str = ""
+    date_posted: str = ""
+    # scoring (filled by match.py)
+    score: float = 0.0
+    tier: str = ""                                           # Strong/Good/Stretch/Skip
+    rationale: str = ""
+    first_seen: str = ""
+    last_seen: str = ""
+
+    def ensure_id(self) -> "Job":
+        if not self.id:
+            self.id = job_id(self.source, self.title, self.company, self.url)
+        return self
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Job":
+        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        return cls(**{k: v for k, v in (d or {}).items() if k in known})
+
+
+@dataclass
+class Contact:
+    """A legit-only referral lead (public data + search links; no PII harvesting)."""
+
+    id: str = ""
+    company: str = ""
+    name: str = ""
+    title: str = ""
+    source: str = ""                                         # github/team-page/search
+    profile_url: str = ""
+    search_url: str = ""
+    outreach: str = ""                                       # AI-drafted (optional)
+    first_seen: str = ""
+
+
+@dataclass
+class Application:
+    """Tracks a prepared application through review -> submit -> follow-up."""
+
+    job_id: str = ""
+    status: str = "new"                                      # new/prepared/applied/interview/rejected/offer
+    package_dir: str = ""
+    resume_path: str = ""
+    cover_path: str = ""
+    applied_at: str = ""
+    notes: str = ""
+    updated: str = ""
+
+
+# Canonical application statuses (mirrors career-ops' states.yml idea).
+STATUSES = ["new", "prepared", "applied", "interview", "rejected", "offer", "skipped"]

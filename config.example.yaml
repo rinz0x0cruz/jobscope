@@ -1,0 +1,77 @@
+# jobscope configuration. Copy to config.yaml (or run `python -m jobscope init`).
+# Secrets never live here -- put API keys / passwords in .env (see .env.example).
+
+profile:
+  resume_path: "data/resume.md"      # your resume: .md / .json (JSON Resume) / .pdf / .txt
+  full_name: ""                       # used to pre-fill application answers
+  email: ""
+  phone: ""
+  location: ""
+  links: {}                           # e.g. {linkedin: "...", github: "...", website: "..."}
+
+search:
+  # JobSpy sites: indeed, linkedin, zip_recruiter, google, glassdoor, bayt, naukri
+  sites: ["indeed", "linkedin", "zip_recruiter", "google"]
+  terms:
+    - "application security engineer"
+    - "security engineer"
+    - "product security"
+  google_term: ""                     # optional google-jobs specific phrasing
+  location: "Remote"
+  country_indeed: "USA"
+  results_wanted: 25
+  hours_old: 168                      # last 7 days
+  is_remote: true
+  distance: 50
+  linkedin_fetch_description: true    # slower, but gets full description + salary
+  proxies: []                         # optional ['user:pass@host:port', ...] to protect your IP on big scans
+
+match:
+  # Deterministic fit score = 100 * weighted sum, minus a ghost/scam penalty.
+  weights:
+    skills: 0.40
+    title: 0.20
+    seniority: 0.15
+    comp: 0.10
+    location: 0.10
+    recency: 0.05
+  min_salary: 0                       # drop jobs whose max salary is below this (0 = off)
+  seniority: "senior"                 # intern/junior/mid/senior/staff/principal
+  tiers: {strong: 75, good: 55, stretch: 35}
+  ghost_penalty: 15                   # points subtracted when scam/ghost-job signals fire
+
+enrich:
+  compensation: true                  # JobSpy salary + Levels.fyi
+  stock: true                         # yfinance price / IPO status / peer comparison (no key)
+  reddit: true                        # old.reddit JSON search (no key)
+  news: true                          # company news via RSS
+  glassdoor: false                    # best-effort rating (may require the browser)
+  contacts: true                      # legit-only referral leads + outreach drafts
+  news_feeds: []                      # optional extra RSS feed URLs
+  top_n: 10                           # only enrich the top N ranked jobs
+
+ai:
+  enabled: false                      # false => deterministic only (still fully usable)
+  provider: "groq"                    # groq | gemini | openrouter | ollama | openai
+  base_url: "https://api.groq.com/openai/v1"
+  model: "llama-3.3-70b-versatile"
+  temperature: 0.3
+  max_tokens: 1200
+  api_key_env: "JOBSCOPE_AI_API_KEY"  # set this in .env
+
+email:
+  enabled: false
+  smtp_host: "smtp.gmail.com"
+  smtp_port: 587
+  from_addr: ""
+  to_addr: ""
+  password_env: "JOBSCOPE_SMTP_PASSWORD"
+
+apply:
+  assist: false                       # opt-in: assisted fill of PUBLIC ATS forms, stops before submit
+  package_dir: "data/applications"
+  auto_prep_top: 3                    # in `pipeline`, auto-build packages for the top N Strong/Good jobs
+
+output:
+  db_path: "data/jobscope.db"
+  dashboard_path: "data/dashboard.html"
