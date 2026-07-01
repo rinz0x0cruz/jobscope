@@ -294,27 +294,39 @@ const q = document.getElementById('q'), sortSel = document.getElementById('sort'
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const isNew = r => r.first_seen && (Date.now()-Date.parse(r.first_seen) < 864e5);
 
-function counts(){const c={Strong:0,Good:0,Stretch:0,Skip:0};DATA.forEach(r=>c[r.tier]=(c[r.tier]||0)+1);return c}
+function counts(items){const c={Strong:0,Good:0,Stretch:0,Skip:0};(items||DATA).forEach(r=>c[r.tier]=(c[r.tier]||0)+1);return c}
 function animate(el,to){const t0=performance.now(),dur=650;
   (function step(t){const k=Math.min(1,(t-t0)/dur),e=1-Math.pow(1-k,3);
    el.textContent=Math.round(to*e);if(k<1)requestAnimationFrame(step)})(t0)}
-function kpis(){
-  const c=counts(), scored=DATA.filter(r=>!r.blocked&&r.score>0);
-  const avg=scored.length?scored.reduce((a,r)=>a+r.score,0)/scored.length:0;
-  const blocked=DATA.filter(r=>r.blocked).length;
-  const cards=[['Total',DATA.length,''],['Strong',c.Strong,'s'],['Good',c.Good,'g'],
-    ['Avg score',Math.round(avg),''],['Filtered',blocked,'']];
-  document.getElementById('kpis').innerHTML=cards.map(([l,v,cl])=>
-    `<div class="kpi ${cl}"><div class="lab">${l}</div><div class="val tnum" data-v="${v}">0</div><div class="bar"></div></div>`).join('');
-  document.querySelectorAll('.kpi .val').forEach(el=>animate(el,+el.dataset.v));
+function statsFor(items){
+  const c=counts(items); let sum=0,scored=0,blocked=0;
+  items.forEach(r=>{ if(r.blocked) blocked++; else if(r.score>0){ sum+=r.score; scored++; } });
+  return {c, total:items.length, avg:scored?Math.round(sum/scored):0, blocked};
 }
-function chips(){
-  const c=counts();
+function paintKpis(items, first){
+  const st=statsFor(items);
+  const cards=[['Total',st.total,''],['Strong',st.c.Strong,'s'],['Good',st.c.Good,'g'],
+    ['Avg score',st.avg,''],['Filtered',st.blocked,'']];
+  const host=document.getElementById('kpis');
+  if(first){
+    host.innerHTML=cards.map(([l,v,cl])=>
+      `<div class="kpi ${cl}"><div class="lab">${l}</div><div class="val tnum" data-v="${v}">0</div><div class="bar"></div></div>`).join('');
+    host.querySelectorAll('.val').forEach(el=>animate(el,+el.dataset.v));
+  } else {
+    const vals=host.querySelectorAll('.val');
+    cards.forEach(([l,v],i)=>{ if(vals[i]){ vals[i].textContent=v; vals[i].dataset.v=v; } });
+  }
+}
+function buildChips(){
   document.getElementById('chips').innerHTML=['Strong','Good','Stretch','Skip'].map(t=>
     `<button class="chip ${off.has(t)?'off':''}" data-tier="${t}" style="--c:${TIERC[t]}">
-       <span class="dot"></span>${t} <b class="tnum">${c[t]||0}</b></button>`).join('');
+       <span class="dot"></span>${t} <b class="tnum" data-count="${t}">0</b></button>`).join('');
   document.querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{
     const t=ch.dataset.tier; off.has(t)?off.delete(t):off.add(t); ch.classList.toggle('off'); render();});
+}
+function paintChipCounts(items){
+  const c=counts(items);
+  document.querySelectorAll('#chips .tnum').forEach(b=>{ b.textContent=c[b.dataset.count]||0; });
 }
 function metaDots(r){const e=r.enrich||{}, d=[];
   if(r.size) d.push('🏢 '+r.size);
@@ -351,12 +363,15 @@ function resumeFilters(){
   resumeSel.innerHTML='<option value="">All resumes</option>'+
     bases.map(b=>`<option value="${esc(b)}">Resume: ${esc(b)}</option>`).join('');
 }
-function render(){
-  const term=q.value.trim().toLowerCase(), s=sortSel.value, rez=resumeSel.value;
-  let items=DATA.filter(r=>!off.has(r.tier))
-    .filter(r=>!rez || r.base===rez)
-    .filter(r=>!term ||
-    (r.title+' '+r.company+' '+(r.rationale||'')).toLowerCase().includes(term));
+function scoped(){
+  const term=q.value.trim().toLowerCase(), rez=resumeSel.value;
+  return DATA.filter(r=>!rez || r.base===rez)
+    .filter(r=>!term || (r.title+' '+r.company+' '+(r.rationale||'')).toLowerCase().includes(term));
+}
+function render(first){
+  const s=sortSel.value, base=scoped();
+  paintKpis(base, !!first); paintChipCounts(base);
+  let items=base.filter(r=>!off.has(r.tier));
   if(s==='company') items=[...items].sort((a,b)=>(a.company||'').localeCompare(b.company||''));
   else if(s==='new') items=[...items].sort((a,b)=>(b.first_seen||'').localeCompare(a.first_seen||''));
   else if(s==='resume') items=[...items].sort((a,b)=>(a.base||'').localeCompare(b.base||'')||(b.score-a.score));
@@ -406,7 +421,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='/'&&document.activeElement!==q){e.preventDefault();q.focus()}
   else if(e.key==='Escape'){ if(drawer.classList.contains('on'))closeDrawer();
     else if(document.activeElement===q){q.value='';q.blur();render()} }});
-q.oninput=render; sortSel.onchange=render; resumeSel.onchange=render;
+q.oninput=()=>render(); sortSel.onchange=()=>render(); resumeSel.onchange=()=>render();
 DATA.forEach((r,i)=>r._i=i);
-kpis(); chips(); resumeFilters(); render();
+buildChips(); resumeFilters(); render(true);
 </script></body></html>"""
