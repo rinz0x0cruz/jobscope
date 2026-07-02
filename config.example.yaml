@@ -72,6 +72,7 @@ match:
   prefer_company_size: "any"          # any | large | mid | small -> bias ranking by headcount
   tiers: {strong: 75, good: 55, stretch: 35}
   ghost_penalty: 15                   # points subtracted when scam/ghost-job signals fire
+  remote_scope_strict: false          # down-rank geo-restricted remote (e.g. "Remote in Ireland") whose region isn't in your prefer_locations/country
 
 filters:                              # jobs matching these are forced to Skip (⛔) with a reason
   needs_sponsorship: false            # true => drop roles that state "no visa sponsorship"

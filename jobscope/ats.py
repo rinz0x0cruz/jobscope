@@ -17,13 +17,14 @@ import re
 from typing import Any
 
 from . import httpx
-from .model import Job
+from .model import Job, derive_remote_scope
 from .store import now_iso
 
 # Curated company -> (provider, board slug). Slugs are the board token in the
 # careers URL (usually the lowercased company name). Extend freely; unknown or
-# wrong slugs simply return nothing. Big enterprises on Workday (CrowdStrike,
-# Palo Alto, Zscaler) aren't here -- Workday has no simple public board API.
+# wrong slugs simply return nothing. Some big enterprises on Workday (CrowdStrike,
+# Palo Alto Networks, SentinelOne) aren't here -- Workday has no simple public
+# board API.
 COMPANY_BOARDS: dict[str, tuple[str, str]] = {
     "databricks": ("greenhouse", "databricks"),
     "stripe": ("greenhouse", "stripe"),
@@ -50,6 +51,27 @@ COMPANY_BOARDS: dict[str, tuple[str, str]] = {
     "ramp": ("ashby", "ramp"),
     "notion": ("ashby", "notion"),
     "openai": ("ashby", "openai"),
+    # --- data / infra / security companies (slugs validated 2026-07) ---
+    "snowflake": ("ashby", "snowflake"),
+    "datadog": ("greenhouse", "datadog"),
+    "okta": ("greenhouse", "okta"),
+    "zscaler": ("greenhouse", "zscaler"),
+    "confluent": ("ashby", "confluent"),
+    "clickhouse": ("greenhouse", "clickhouse"),
+    "fivetran": ("greenhouse", "fivetran"),
+    "vanta": ("ashby", "vanta"),
+    "netskope": ("greenhouse", "netskope"),
+    "grafanalabs": ("greenhouse", "grafanalabs"),
+    "vercel": ("greenhouse", "vercel"),
+    "abnormal": ("greenhouse", "abnormalsecurity"),
+    "drata": ("ashby", "drata"),
+    "temporal": ("ashby", "temporal"),
+    "huntress": ("greenhouse", "huntress"),
+    "semgrep": ("ashby", "semgrep"),
+    "render": ("ashby", "render"),
+    "tines": ("greenhouse", "tines"),
+    "material": ("ashby", "materialsecurity"),
+    "orca": ("greenhouse", "orcasecurity"),
 }
 
 
@@ -78,6 +100,7 @@ def _mk(company: str, title: str, location: str, url: str, desc: str, date_poste
         first_seen=now_iso(),
         last_seen=now_iso(),
     )
+    job.remote_scope = derive_remote_scope(loc, title, job.is_remote)
     return job.ensure_id()
 
 
@@ -105,6 +128,7 @@ def _lever(company: str, slug: str) -> list[Job]:
                   desc, _ms_to_date(j.get("createdAt")))
         if wt == "remote":
             job.is_remote = True
+            job.remote_scope = derive_remote_scope(job.location, job.title, True)
         out.append(job)
     return out
 
@@ -120,6 +144,7 @@ def _ashby(company: str, slug: str) -> list[Job]:
                   _strip_html(j.get("descriptionHtml", "")), "")
         if j.get("isRemote"):
             job.is_remote = True
+            job.remote_scope = derive_remote_scope(job.location, job.title, True)
         out.append(job)
     return out
 

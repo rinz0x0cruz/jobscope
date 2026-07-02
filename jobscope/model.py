@@ -29,6 +29,54 @@ def job_id(source: str, title: str, company: str, url: str = "") -> str:
     return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
 
 
+# Common country/region codes -> canonical name, for remote-scope normalization.
+_REMOTE_REGION_CODES = {
+    "in": "India", "us": "United States", "usa": "United States",
+    "uk": "United Kingdom", "ie": "Ireland", "ca": "Canada", "au": "Australia",
+    "sg": "Singapore", "de": "Germany", "fr": "France", "nl": "Netherlands",
+}
+# Acronyms that stay upper-case rather than title-cased (e.g. "remote in EMEA").
+_REMOTE_ACRONYMS = {"US", "UK", "EU", "EMEA", "APAC", "LATAM"}
+# Leading/trailing junk to peel off a captured region (punctuation, brackets, dashes).
+_REGION_STRIP = " \t.,:;/&()[]-\u2013\u2014"
+
+
+def _normalize_region(region: str) -> str:
+    """Canonicalize a raw region token: codes -> names, acronyms upper, else Title Case."""
+    region = (region or "").strip().strip(_REGION_STRIP).strip()
+    if not region:
+        return ""
+    low = region.lower()
+    if low in _REMOTE_REGION_CODES:
+        return _REMOTE_REGION_CODES[low]
+    if region.upper() in _REMOTE_ACRONYMS:
+        return region.upper()
+    return " ".join(w.upper() if w.upper() in _REMOTE_ACRONYMS else w.capitalize()
+                    for w in region.split())
+
+
+def derive_remote_scope(location: str, title: str, is_remote: bool) -> str:
+    """Classify a remote posting's reach.
+
+    Returns "" when the role is not remote/unknown, "global" for remote-anywhere,
+    or a normalized region name for geo-restricted remote. Examples:
+    "Remote in Ireland" -> "Ireland", "Remote - India" -> "India",
+    "Remote (US)" -> "United States", a bare "Remote" -> "global", and an
+    is_remote role whose location names a place ("Dublin, …, Ireland") -> "Ireland".
+    """
+    if not is_remote:
+        return ""
+    text = f"{location or ''}\n{title or ''}"
+    m = re.search(r"remote\s*(?:in|-|\u2013|\u2014|:|,|\()\s*([A-Za-z .&/]+)", text, re.I)
+    if m:
+        region = _normalize_region(m.group(1))
+        if region:
+            return region
+    if "," in (location or ""):
+        return _normalize_region(location.split(",")[-1])
+    return "global"
+
+
 @dataclass
 class Resume:
     """Structured resume parsed from Markdown / JSON Resume / PDF."""
@@ -67,6 +115,8 @@ class Job:
     company: str = ""
     location: str = ""
     is_remote: bool = False
+    remote_scope: str = ""            # "" = not remote/unknown; "global" = remote anywhere; else a region e.g. "Ireland"
+    raw_is_remote: Optional[bool] = None   # raw JobSpy flag preserved; None when not from JobSpy (e.g. ATS)
     url: str = ""
     description: str = ""
     salary_min: Optional[float] = None

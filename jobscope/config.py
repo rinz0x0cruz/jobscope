@@ -52,6 +52,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "prefer_company_size": "any",
         "tiers": {"strong": 75, "good": 55, "stretch": 35},
         "ghost_penalty": 15,
+        "remote_scope_strict": False,
     },
     "filters": {
         "needs_sponsorship": False,

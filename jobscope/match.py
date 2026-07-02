@@ -178,7 +178,17 @@ def _comp_score(job: Job, min_salary: float) -> float:
     return max(0.0, top / float(min_salary))
 
 
-def _location_score(resume: Resume, job: Job, want_remote: bool, prefer: list | None = None) -> float:
+def _location_score(resume: Resume, job: Job, want_remote: bool, prefer: list | None = None,
+                    strict: bool = False, country: str = "") -> float:
+    # opt-in: a geo-restricted remote role (e.g. "Remote in Ireland") is only
+    # "remote" for you if its region matches somewhere you'd work. Global remote
+    # and the default (strict off) are unaffected.
+    scope = job.remote_scope or ""
+    if strict and job.is_remote and scope not in ("", "global"):
+        refs = " | ".join([str(p) for p in (prefer or [])]
+                          + [resume.location or "", country or ""]).lower()
+        if scope.lower() not in refs:
+            return 0.4
     # explicit preferred locations win (e.g. ["Remote", "India", "Bengaluru"])
     if prefer:
         loc = (job.location or "").lower()
@@ -294,7 +304,9 @@ def score_job(job: Job, resume: Resume, match_cfg: dict) -> tuple[float, str, st
         "seniority": _seniority_score(resume, job),
         "comp": _comp_score(job, match_cfg.get("min_salary", 0) or 0),
         "location": _location_score(resume, job, match_cfg.get("want_remote", True),
-                                    match_cfg.get("prefer_locations")),
+                                    match_cfg.get("prefer_locations"),
+                                    strict=match_cfg.get("remote_scope_strict", False),
+                                    country=match_cfg.get("country", "")),
         "recency": _recency_score(job),
         "company": company_score,
     }
@@ -465,6 +477,7 @@ def run(cfg: dict, store) -> int:
         return 1
     match_cfg = dict(cfg["match"])
     match_cfg["want_remote"] = cfg["search"].get("is_remote", True)
+    match_cfg["country"] = cfg["search"].get("country_indeed", "")
     fcfg = cfg.get("filters", {})
     multi = len(resumes) > 1
 

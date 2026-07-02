@@ -131,6 +131,7 @@ def _job_record(job, enr: dict, store) -> dict[str, Any]:
         "company": job.company,
         "location": ("Remote" if job.is_remote else job.location) or job.location,
         "remote": bool(job.is_remote),
+        "remote_scope": job.remote_scope or "",
         "url": job.url,
         "source": job.source,
         "score": job.score,
@@ -395,6 +396,8 @@ main{padding:12px 24px 60px; display:grid; gap:11px}
   border:1px solid var(--border-h); border-radius:5px; padding:0 6px}
 .gone{font-size:10px; font-weight:700; color:#d14343; letter-spacing:.02em;
   border:1px solid color-mix(in srgb,#d14343 45%,transparent); border-radius:5px; padding:0 6px}
+.rscope{font-size:10px; font-weight:700; color:var(--accent); letter-spacing:.02em;
+  border:1px solid var(--accent-dim); background:var(--accent-dim); border-radius:5px; padding:0 6px}
 .job.closed{opacity:.62}
 .job.closed .title{text-decoration:line-through; text-decoration-color:#d14343}
 .enr{margin-top:11px; display:flex; gap:7px; flex-wrap:wrap}
@@ -429,6 +432,7 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
   <select id="place" hidden><option value="">All locations</option></select>
   <select id="workmode" hidden><option value="">All modes</option></select>
   <select id="funding" hidden><option value="">All funding</option></select>
+  <select id="scopeSel" hidden></select>
   <label class="chk" id="hideclosed-l" title="Hide postings no longer on the company board"><input type="checkbox" id="hideclosed"> Hide taken-down</label>
   <select id="group" title="Group duplicate postings of the same role">
     <option value="on">Group: on</option>
@@ -451,7 +455,7 @@ const TIERC = {Strong:'#22c55e',Good:'#3b82f6',Stretch:'#f59e0b',Skip:'#71717a'}
 const BARC = ['#7c6cff','#22c55e','#3b82f6','#f59e0b','#71717a','#e879f9'];
 const TABS = ['overview','Strong','Good','Stretch','Skip'];
 let activeTab = 'overview';
-const q = document.getElementById('q'), resumeSel = document.getElementById('resume'), countrySel = document.getElementById('country'), placeSel = document.getElementById('place'), workmodeSel = document.getElementById('workmode'), fundingSel = document.getElementById('funding'), groupSel = document.getElementById('group'), hideClosed = document.getElementById('hideclosed');
+const q = document.getElementById('q'), resumeSel = document.getElementById('resume'), countrySel = document.getElementById('country'), placeSel = document.getElementById('place'), workmodeSel = document.getElementById('workmode'), fundingSel = document.getElementById('funding'), scopeSel = document.getElementById('scopeSel'), groupSel = document.getElementById('group'), hideClosed = document.getElementById('hideclosed');
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const isNew = r => r.first_seen && (Date.now()-Date.parse(r.first_seen) < 864e5);
 
@@ -491,7 +495,7 @@ function card(r,i){
     <div class="mid">
       <div class="title">${esc(r.title)}</div>
       <div class="co"><span>${esc(r.company||'')}</span><span>·</span><span>${esc(r.location||'')}</span>
-        ${r.base?`<span class="base">${esc(r.base)}</span>`:''}${isNew(r)?`<span class="new">NEW</span>`:''}${r.status==='closed'?`<span class="gone" title="No longer listed on the company board">\u2691 Taken down</span>`:''}${dupeCount(r)>1?`<span class="dupe">×${dupeCount(r)} postings</span>`:''}</div>
+        ${r.base?`<span class="base">${esc(r.base)}</span>`:''}${isNew(r)?`<span class="new">NEW</span>`:''}${r.remote&&r.remote_scope&&r.remote_scope!=='global'?`<span class="rscope" title="Geo-restricted remote">Remote \u00b7 ${esc(r.remote_scope)}</span>`:''}${r.status==='closed'?`<span class="gone" title="No longer listed on the company board">\u2691 Taken down</span>`:''}${dupeCount(r)>1?`<span class="dupe">×${dupeCount(r)} postings</span>`:''}</div>
       <div class="dots">${metaDots(r)}</div>
     </div>
     <span class="tierpill" style="--c:${col}"><span class="dot"></span>${r.tier}</span>
@@ -512,15 +516,18 @@ function facetFilters(){
   fillSelect(placeSel,'All locations',places);
   const modes=['remote','on-site'].filter(m=>DATA.some(r=>(r.remote?'remote':'on-site')===m));
   fillSelect(workmodeSel,'All modes',modes,v=>v==='remote'?'Remote':'On-site');
+  const scopes=[...new Set(DATA.filter(r=>r.remote).map(r=>r.remote_scope).filter(Boolean))].sort();
+  fillSelect(scopeSel,'All remote scopes',scopes,v=>v==='global'?'Remote (anywhere)':'Remote in '+v);
   const order=['public','unicorn'];
   fillSelect(fundingSel,'All funding',order.filter(f=>DATA.some(r=>r.funding===f)),v=>'Funding: '+v);
 }
 function scoped(){
-  const term=q.value.trim().toLowerCase(), rez=resumeSel.value, ctry=countrySel.value, fnd=fundingSel.value, pl=placeSel.value, mode=workmodeSel.value;
+  const term=q.value.trim().toLowerCase(), rez=resumeSel.value, ctry=countrySel.value, fnd=fundingSel.value, pl=placeSel.value, mode=workmodeSel.value, scp=scopeSel.value;
   return DATA.filter(r=>!rez || r.base===rez)
     .filter(r=>!ctry || r.country===ctry)
     .filter(r=>!pl || r.place===pl)
     .filter(r=>!mode || (r.remote?'remote':'on-site')===mode)
+    .filter(r=>!scp || r.remote_scope===scp)
     .filter(r=>!fnd || r.funding===fnd)
     .filter(r=>!hideClosed.checked || r.status!=='closed')
     .filter(r=>!term || (r.title+' '+r.company+' '+(r.rationale||'')).toLowerCase().includes(term));
@@ -643,7 +650,7 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='Escape'){ if(drawer.classList.contains('on'))closeDrawer();
     else if(document.activeElement===q){q.value='';q.blur();render()} }});
 q.oninput=()=>render();
-[resumeSel,countrySel,placeSel,workmodeSel,fundingSel,groupSel].forEach(s=>s.onchange=()=>render());
+[resumeSel,countrySel,placeSel,workmodeSel,fundingSel,scopeSel,groupSel].forEach(s=>s.onchange=()=>render());
 hideClosed.onchange=()=>render();
 DATA.forEach((r,i)=>r._i=i);
 facetFilters(); render();

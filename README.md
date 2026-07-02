@@ -118,6 +118,12 @@ company · location, a couple of intel dots), and clicking one slides open a dra
 with the company brief, compensation, stock/IPO, Reddit, Glassdoor, news, referral
 leads, and the score rationale. Close with the ✕, the backdrop, or `Esc`.
 
+Remote roles carry a **remote scope**: the dashboard's *remote scope* facet splits
+global remote ("Remote (anywhere)") from geo-restricted remote ("Remote in Ireland"),
+and geo-restricted cards show a `Remote · <region>` badge. Set `match.remote_scope_strict:
+true` to down-rank geo-restricted remote whose region isn't in your `prefer_locations`
+or search country (off by default; global remote is never penalized).
+
 ## Publish to GitHub Pages (view on mobile)
 
 The dashboard is a single self-contained HTML file, so you can host it and open it

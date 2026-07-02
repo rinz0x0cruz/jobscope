@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     company TEXT,
     location TEXT,
     is_remote INTEGER DEFAULT 0,
+    remote_scope TEXT,
+    raw_is_remote INTEGER,
     url TEXT,
     description TEXT,
     salary_min REAL,
@@ -131,6 +133,8 @@ class Store:
             ("resume_base", "TEXT"),
             ("status", "TEXT DEFAULT 'open'"),
             ("closed_at", "TEXT"),
+            ("remote_scope", "TEXT"),
+            ("raw_is_remote", "INTEGER"),
         ):
             if col not in existing:
                 self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
@@ -158,17 +162,21 @@ class Store:
         first_seen = row["first_seen"] if row and row["first_seen"] else ts
         self.conn.execute(
             """
-            INSERT INTO jobs (id, source, title, company, location, is_remote, url,
+            INSERT INTO jobs (id, source, title, company, location, is_remote,
+                remote_scope, raw_is_remote, url,
                 description, salary_min, salary_max, salary_interval, currency,
                 job_type, company_industry, company_url, date_posted, score, tier,
                 rationale, first_seen, last_seen, status, closed_at)
-            VALUES (:id, :source, :title, :company, :location, :is_remote, :url,
+            VALUES (:id, :source, :title, :company, :location, :is_remote,
+                :remote_scope, :raw_is_remote, :url,
                 :description, :salary_min, :salary_max, :salary_interval, :currency,
                 :job_type, :company_industry, :company_url, :date_posted, :score, :tier,
                 :rationale, :first_seen, :last_seen, :status, :closed_at)
             ON CONFLICT(id) DO UPDATE SET
                 source=excluded.source, title=excluded.title, company=excluded.company,
-                location=excluded.location, is_remote=excluded.is_remote, url=excluded.url,
+                location=excluded.location, is_remote=excluded.is_remote,
+                remote_scope=excluded.remote_scope, raw_is_remote=excluded.raw_is_remote,
+                url=excluded.url,
                 description=excluded.description, salary_min=excluded.salary_min,
                 salary_max=excluded.salary_max, salary_interval=excluded.salary_interval,
                 currency=excluded.currency, job_type=excluded.job_type,
@@ -179,6 +187,8 @@ class Store:
             {
                 **job.to_dict(),
                 "is_remote": 1 if job.is_remote else 0,
+                "raw_is_remote": (None if job.raw_is_remote is None
+                                  else (1 if job.raw_is_remote else 0)),
                 "first_seen": first_seen,
                 "last_seen": ts,
                 "status": "open",
@@ -391,4 +401,5 @@ class Store:
 def _row_to_job(row: sqlite3.Row) -> Job:
     d = dict(row)
     d["is_remote"] = bool(d.get("is_remote"))
+    d["raw_is_remote"] = None if d.get("raw_is_remote") is None else bool(d.get("raw_is_remote"))
     return Job.from_dict(d)

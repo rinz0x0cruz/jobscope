@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .model import Job
+from .model import Job, derive_remote_scope
 from .store import now_iso
 
 
@@ -148,13 +148,16 @@ def _row_to_job(row) -> Job:
     raw_remote = _val(row, "is_remote", default=False)
     title = str(_val(row, "title", default="") or "").strip()
     location = str(_val(row, "location", default="") or "").strip()
+    is_remote = _derive_remote(bool(raw_remote) if raw_remote is not None else False,
+                               location, title)
     job = Job(
         source=str(_val(row, "site", default="") or ""),
         title=title,
         company=str(_val(row, "company", default="") or "").strip(),
         location=location,
-        is_remote=_derive_remote(bool(raw_remote) if raw_remote is not None else False,
-                                 location, title),
+        is_remote=is_remote,
+        remote_scope=derive_remote_scope(location, title, is_remote),
+        raw_is_remote=(bool(raw_remote) if raw_remote is not None else None),
         url=str(_val(row, "job_url", "job_url_direct", default="") or ""),
         description=str(_val(row, "description", default="") or ""),
         salary_min=_num(_val(row, "min_amount")),

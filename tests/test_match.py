@@ -64,3 +64,25 @@ def test_missing_salary_is_neutral_not_zero():
             description="python aws kubernetes iam threat modeling terraform " * 8)
     score, _, _ = score_job(j, r, _cfg())
     assert score > 40  # unknown comp shouldn't tank a good match
+
+
+def test_remote_scope_strict_downranks_geo_restricted_only():
+    r = _resume()  # location "San Francisco, CA"
+    desc = "python aws kubernetes iam threat modeling terraform " * 8
+    geo = Job(title="Security Engineer", company="A", is_remote=True,
+              remote_scope="Ireland", description=desc, salary_max=180000)
+    off = _cfg()                                # strict off (the default)
+    on = _cfg()
+    on["remote_scope_strict"] = True
+    s_off, _, _ = score_job(geo, r, off)
+    s_on, _, _ = score_job(geo, r, on)
+    assert s_on < s_off                          # geo-restricted remote is down-ranked
+    # global remote is never penalized, and default behavior is unchanged
+    glob = Job(title="Security Engineer", company="A", is_remote=True,
+               remote_scope="global", description=desc, salary_max=180000)
+    assert score_job(glob, r, on) == score_job(glob, r, off)
+    # a region you actually prefer is not down-ranked even under strict
+    pref = _cfg()
+    pref["remote_scope_strict"] = True
+    pref["prefer_locations"] = ["Remote", "Ireland"]
+    assert score_job(geo, r, pref)[0] >= s_off

@@ -202,3 +202,21 @@ def test_reopen_on_reappearance():
         assert store.get_job(job.id).status == "open"
         assert store.get_job(job.id).closed_at == ""
         store.close()
+
+
+def test_mk_sets_remote_scope_and_leaves_raw_flag_none():
+    geo = ats._mk("Acme", "Detection Engineer", "Remote - India",
+                  "https://x/1", "desc", "2026-06-30")
+    assert geo.is_remote is True
+    assert geo.remote_scope == "India"
+    assert geo.raw_is_remote is None                         # never from JobSpy on ATS
+    glob = ats._mk("Acme", "SWE", "Remote", "https://x/2", "d", "2026-06-30")
+    assert glob.is_remote is True and glob.remote_scope == "global"
+    assert glob.raw_is_remote is None
+
+
+def test_ashby_provider_derives_remote_scope(monkeypatch):
+    monkeypatch.setattr(ats.httpx, "get_json", _fake_get_json)
+    jobs = ats.fetch_company("Acme", "ashby", "acme")        # location "Remote - India", isRemote
+    assert jobs[0].remote_scope == "India"
+    assert jobs[0].raw_is_remote is None

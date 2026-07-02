@@ -6,6 +6,7 @@ import types
 
 from jobscope import scrape
 from jobscope.config import load_config
+from jobscope.model import derive_remote_scope
 from jobscope.store import Store
 
 
@@ -102,3 +103,33 @@ def test_derive_remote_corroborates_flag():
     assert scrape._derive_remote(True, "", "X") is True
     # not remote by default
     assert scrape._derive_remote(False, "Pune, India", "X") is False
+
+
+def test_derive_remote_scope_classifies_region_vs_global():
+    # a qualifier after "remote" is captured and normalized
+    assert derive_remote_scope("Remote in Ireland", "", True) == "Ireland"
+    assert derive_remote_scope("Remote - India", "", True) == "India"
+    assert derive_remote_scope("Remote, IN", "", True) == "India"
+    assert derive_remote_scope("Remote (US)", "", True) == "United States"
+    # a concrete place carried on the title-driven remote flag -> its country
+    assert derive_remote_scope("Dublin, County Dublin, Ireland", "Remote SecEng", True) == "Ireland"
+    # bare remote with no qualifier or place -> global
+    assert derive_remote_scope("Remote", "", True) == "global"
+    # not remote -> no scope
+    assert derive_remote_scope("Dublin, County Dublin, Ireland", "Security Engineer", False) == ""
+
+
+def test_row_to_job_sets_scope_and_raw_flag():
+    geo = scrape._row_to_job({
+        "site": "linkedin", "title": "Detection Engineer", "company": "Acme",
+        "location": "Remote - India", "is_remote": True, "job_url": "https://x/1",
+    })
+    assert geo.is_remote is True
+    assert geo.remote_scope == "India"
+    assert geo.raw_is_remote is True
+    glob = scrape._row_to_job({
+        "site": "linkedin", "title": "SWE", "company": "Acme",
+        "location": "Remote", "is_remote": True, "job_url": "https://x/2",
+    })
+    assert glob.remote_scope == "global"
+    assert glob.raw_is_remote is True

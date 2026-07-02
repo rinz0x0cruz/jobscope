@@ -96,3 +96,25 @@ def test_resume_base_persists():
     assert store.get_job(j.id).resume_base == "research"
     store.close()
 
+
+def test_remote_scope_and_raw_flag_roundtrip():
+    store = _store()
+    # JobSpy-style job: geo-restricted remote with a preserved raw flag
+    j = Job(source="indeed", title="Detection Engineer", company="Acme",
+            url="https://x/ie", is_remote=True, remote_scope="Ireland",
+            raw_is_remote=True).ensure_id()
+    store.upsert_job(j)
+    got = store.get_job(j.id)
+    assert got.remote_scope == "Ireland"
+    assert got.raw_is_remote is True
+    listed = {x.id: x for x in store.jobs()}[j.id]     # also survives via jobs()
+    assert listed.remote_scope == "Ireland" and listed.raw_is_remote is True
+    # ATS-style job: raw flag absent -> stays None; global scope round-trips
+    k = Job(source="ats", title="AppSec", company="Beta", url="https://x/none",
+            is_remote=True, remote_scope="global", raw_is_remote=None).ensure_id()
+    store.upsert_job(k)
+    got_k = store.get_job(k.id)
+    assert got_k.raw_is_remote is None
+    assert got_k.remote_scope == "global"
+    store.close()
+
