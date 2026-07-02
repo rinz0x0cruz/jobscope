@@ -1,0 +1,254 @@
+# jobscope — feature & behaviour reference
+
+A running catalogue of every feature and exactly how it behaves. Grouped by area.
+Keep this in sync when behaviour changes.
+
+**Design doctrine:** deterministic-first (≈80% logic / 20% optional AI), offline-first,
+human-in-the-loop. AI is **off by default** and everything degrades gracefully without it.
+No authenticated-account automation; a human always reviews before submit.
+
+---
+
+## Pipeline / data flow
+
+```
+scan → store jobs → match (score + filters + resume routing) → enrich top N
+     → tailor → prep package → (human review) → apply/deep-link → track → digest
+```
+
+`pipeline` runs `scan → match → enrich → prep top picks → digest` in one shot.
+
+---
+
+## CLI commands
+
+Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <path>`, `--db <path>`.
+
+| Command | Behaviour |
+| --- | --- |
+| `init` | Scaffolds `config.yaml` + `data/` dir. |
+| `resume import <path> --name <n>` | Parses `.md/.json/.pdf/.txt` into a structured resume and stores it under a name. Import several names for multi-resume matching. |
+| `scan` | Scrapes jobs for every search term across every **profile** (see Scraping). De-dupes by URL. |
+| `match` | Scores every stored job, applies **filters**, and records the best-fit resume per job. Prints tier counts + filtered count. |
+| `pipeline [--no-prep]` | scan → match → enrich → prep top picks → email digest. `--no-prep` stops after enrich. |
+| `enrich [--job <id>]` | Adds public intel per company (comp, stock/IPO, Reddit, news, Glassdoor, contacts, brief). Default: top N by score. |
+| `tailor <job_id>` | Produces a non-destructive tailored resume + cover letter (deterministic ATS keyword pass; AI-upgraded if enabled). |
+| `prep <job_id>` | Builds a review-ready application package folder (tailored resume/cover PDF, filled-answers, index, contacts) and marks status `prepared`. |
+| `apply <job_id> [--assist]` | Opens the posting URL for you to submit. `--assist` = headed Playwright autofill of a **public** ATS form that **stops before submit**. |
+| `dashboard [--open]` | Renders the self-contained `data/dashboard.html`. |
+| `serve [--port 8799] [--open]` | Serves the dashboard over local HTTP. |
+| `track [--set job_id=status]` | Shows the application funnel + follow-up reminders; `--set` updates a status. |
+| `new` | Lists new Strong/Good jobs since your last review, then advances the review marker. |
+| `gaps [--top 15]` | Skill-gap learning plan: skills that recur in your matched jobs but are on none of your resumes, ranked by jobs unlocked. |
+| `brief <job_id>` | Blunt, risk-forward company brief (facts + risks, no marketing fluff). |
+| `export [--format json\|csv] [--out <path>]` | Exports ranked jobs. |
+| `selftest` | Offline self-tests (no network, no keys). |
+
+---
+
+## Resume import & parsing
+
+- Accepts Markdown / JSON Resume / PDF / plain text.
+- Extracts skills (section + lexicon merge), titles (from experience headings like `### Company — Title`),
+  seniority (title-authoritative, else inferred from tenure), and month-aware date ranges scoped to the
+  experience section (so education dates don't inflate tenure).
+- Multiple named resumes are supported (e.g. `research`, `consulting`).
+
+## Multi-resume selection & discipline routing
+
+- With 2+ resumes, `match` records **which resume fits each job best** (`resume_base`).
+- **Discipline routing:** each resume and job gets a *lean* in `[-1,+1]` from keyword signals
+  (`+1` = hands-on/read-code technical, `-1` = advisory/GRC).
+  - When a job clearly leans (`|lean| ≥ LEAN_DECISIVE = 0.25`), it routes **directionally** to the
+    most-technical resume (technical roles) or most-advisory resume (advisory roles); fit score only
+    breaks ties.
+  - Ambiguous jobs fall back to best fit score with a small aligned nudge (`DISCIPLINE_SELECT_WEIGHT = 5`).
+- **Headline score/tier = best fit across all resume framings**, so the routed resume is never
+  under-credited for a keyword it happens to omit. The rationale notes `→ tailor from <resume> (… role)`
+  when the shown score came from a different framing.
+
+---
+
+## Scraping (multi-profile)
+
+- Engine: JobSpy across `indeed`, `linkedin`, `google` (configurable). `zip_recruiter` omitted (Cloudflare 403).
+- **Search profiles:** `search.profiles` is a list of per-search overrides; each reuses the base `search`
+  fields and overrides only what it lists (`location`, `is_remote`, `hours_old`, `country_indeed`,
+  `results_wanted`). One scan runs them all. Empty `profiles: []` = a single search from the base.
+  - Use case: one `remote` profile (global, last 7 days) + one `onsite-local` profile (e.g. `India`,
+    on-site, last 30 days) so both remote and on-site/hybrid roles are covered.
+- De-duplication is by canonical URL across all profiles (reposts update `last_seen`, never duplicate).
+- Note: when `hours_old` is set, the `is_remote` flag isn't sent to JobSpy (recency is preferred); remote
+  scoping then comes from the `location` string.
+
+---
+
+## Matching & scoring
+
+Deterministic 0–100 fit score = `100 × Σ(weight × signal)` minus a ghost/scam penalty, clamped to 0–100.
+
+**Weights** (`match.weights`, sum = 1.0):
+
+| Signal | Weight | Behaviour |
+| --- | --- | --- |
+| `skills` | 0.34 | Fraction of resume skills found in the JD, saturating at `SKILL_TARGET = 6` hits (→ 1.0). |
+| `title` | 0.18 | Token overlap between job title and resume titles, plus a role-word bonus (engineer/analyst/…). |
+| `seniority` | 0.12 | Distance between the resume's seniority and the job title's seniority. |
+| `comp` | 0.10 | Salary vs `min_salary`; a disclosed salary is itself a positive signal. |
+| `location` | 0.10 | `prefer_locations` match → full; remote when wanted; else resume-location overlap. |
+| `recency` | 0.04 | Newer postings score higher (age buckets). |
+| `company` | 0.12 | Prestige tier, blended with the size preference (see Prioritization). |
+
+- **Ghost/scam penalty** (`ghost_penalty = 15`): subtracted when scam/ghost-job signals fire (commission-only,
+  clickbait, empty description + no salary, buzzphrases).
+- **Tiers** (`match.tiers`): Strong ≥ 75, Good ≥ 55, Stretch ≥ 35, else Skip.
+- **Rationale**: every job carries a short "why this rank" string (top signals, matched skills, routing note,
+  any warnings/filter reason).
+
+## Prioritization
+
+- **Company quality** (`weights.company`): curated offline tiers boost prestigious / top-security employers
+  (FAANG, NVIDIA/OpenAI/Anthropic, Palo Alto Networks, CrowdStrike, Zscaler, Okta, Wiz, …). Unknown = neutral.
+- **Company size** (`match.prefer_company_size`): `any | large | mid | small`. Curated headcount bands
+  (mega/large/mid/small/startup). `large` favours big established employers, `small` favours startups,
+  `mid` peaks at scaleups. When set, the company score = 60% size-fit + 40% prestige; unknown = neutral.
+- **Location** (`match.prefer_locations`): substring list (e.g. `["Remote","India","Bengaluru"]`); a match
+  gives the full location score. `match.prefer_companies` force-boosts named employers.
+
+## Filters (forced Skip with a reason)
+
+Set under `filters`; matching jobs become tier `Skip` with a `⛔ reason` in the rationale.
+
+| Key | Behaviour |
+| --- | --- |
+| `needs_sponsorship` | Drops roles that state no visa sponsorship. |
+| `exclude_clearance` | Drops US security-clearance / citizenship-only roles. |
+| `block_companies` | Drops listed companies (substring). |
+| `block_keywords` | Drops jobs whose description contains any keyword. |
+| `block_title_keywords` | Drops jobs whose title contains any keyword. |
+| `max_age_days` | Drops postings older than N days (0 = off). |
+
+---
+
+## Enrichment
+
+Per company, best-effort and non-blocking (`enrich` toggles):
+
+| Source | Behaviour |
+| --- | --- |
+| `compensation` | Posting salary + Levels.fyi link. |
+| `stock` | yfinance ticker, price, % change, market cap, 52-wk position, IPO/public vs private. |
+| `reddit` | old.reddit JSON search + lexicon sentiment + count (AI summary if enabled). |
+| `news` | Google News RSS headlines (via feedparser). |
+| `glassdoor` | Best-effort rating (off by default). |
+| `contacts` | Legit-only referral leads: LinkedIn/Google people-search links + public GitHub profiles + AI outreach draft (optional). No PII harvesting. |
+| `brief` | Blunt company brief: facts + risks, no hype; leads with risks; only states given facts. |
+
+`enrich.top_n` controls how many top jobs get enriched by default.
+
+## AI backend (optional)
+
+- OpenAI-compatible client; **Groq by default** (`ai.provider`, `ai.base_url`, `ai.model`).
+- **Off unless** `ai.enabled: true` **and** the API key env var (`ai.api_key_env`) is set. Ollama needs no key.
+- Responses are cached in SQLite (`ai_cache`) keyed by hash(prompt+model).
+- AI is used only for: resume bullet rewrite, cover letter, application free-text answers, Reddit/news
+  summaries, outreach drafts. Everything has a deterministic fallback.
+
+## Tailoring & PDF
+
+- Deterministic ATS pass: matched vs missing keywords, coverage %, non-destructive tailored resume + cover.
+- AI upgrades the summary/cover when enabled.
+- PDF via Playwright (Markdown → ATS-friendly HTML → PDF); graceful HTML fallback if Chromium is absent.
+
+## Apply / prep
+
+- `prep` builds an application package folder: tailored resume + cover (PDF), `filled-answers.md`,
+  `application.md` index, referral contacts; sets status `prepared`. Optional email summary.
+- `apply` opens the posting; **you submit**. Opt-in `--assist` autofills a **public** ATS form
+  (Greenhouse/Lever/Ashby/Workday, no login) and **stops before submit**. Never automates logged-in accounts.
+
+## Email digest
+
+- SMTP; off unless `email.enabled` + credentials (`email.password_env`). Sends the pipeline digest.
+
+## Tracking
+
+- `track` shows the funnel (counts by status) and follow-up reminders (`apply.followup_days`).
+- `track --set job_id=status` updates a status.
+- `new` lists new Strong/Good jobs since the stored `last_review` marker, then advances it.
+
+## Skill gaps
+
+- `gaps` scans your Strong/Good/Stretch jobs for lexicon skills present in JDs but absent from **all** your
+  resumes, ranked by how many jobs each would unlock, with example companies. Advisory only — add a skill to
+  a resume only if genuinely true.
+
+---
+
+## Dashboard
+
+Self-contained `data/dashboard.html` (inline CSS/JS, no deps, no network). Your data stays local.
+
+### Tabs
+- **Overview** + one tab per score bucket: **Strong / Good / Stretch / Skip**, each with a live count.
+- A bucket tab shows only that tier's jobs; the Overview tab shows summary panels (no job list).
+
+### Overview tab
+- **KPI cards:** Total, Strong, Good, Avg score, Filtered.
+- **Analyzed donut:** tier distribution with counts + percentages.
+- **Targeting these roles:** your search terms, plus *by-resume* and *by-location* split bars.
+- **Application funnel:** counts by application status (from the tracker).
+- **Top companies:** most frequent employers in view.
+- **Skill gaps:** top gap skills as bars (jobs unlocked).
+- **Top matches table:** highest-scoring jobs; click a row to open the detail drawer.
+
+### List (bucket tabs)
+- **Cards** (minimal): score + bar, title, company · location, matched-resume tag, `NEW` (<24h), intel dots
+  (size, salary, stock ticker/Private, Glassdoor, Reddit, contacts, news), tier pill.
+- **Detail drawer** (click a card): company brief, compensation, stock/IPO, Reddit, Glassdoor, recent news,
+  referral leads, "why this rank", and — when grouped — an "All postings" list. Close with ✕, backdrop, or `Esc`.
+- **Grouping** (`Group: on/off`, on by default): collapses duplicate postings of the same role
+  (same company + normalized title) into one card with a `×N postings` badge; the drawer lists each posting
+  (source · location · score + link).
+
+### Controls (apply within the active bucket / scope)
+- **Search** box (`/` to focus, `Esc` to clear): filters by title / company / rationale; also scopes the Overview.
+- **Sort:** Score · Newest · Company · Resume.
+- **Resume filter** (shown with 2+ resumes): limit to jobs matched to one base resume.
+- **Group** on/off; **theme** light/dark (persisted).
+
+---
+
+## Export & self-test
+
+- `export --format json|csv` writes ranked jobs to `data/` (or `--out`).
+- `selftest` runs offline checks (scoring, filters, routing, company tiers/size, parsing) — no network/keys.
+
+---
+
+## Configuration reference (`config.yaml`)
+
+Copy from `config.example.yaml`; secrets go in `.env`. Key groups:
+
+- `profile` — resume path, identity (name/email/phone/location), links.
+- `search` — `sites`, `terms`, `google_term`, `location`, `country_indeed`, `results_wanted`, `hours_old`,
+  `is_remote`, `distance`, `linkedin_fetch_description`, `proxies`, `profiles[]`.
+- `match` — `weights{}`, `min_salary`, `seniority`, `prefer_locations[]`, `prefer_companies[]`,
+  `prefer_company_size`, `tiers{}`, `ghost_penalty`.
+- `filters` — `needs_sponsorship`, `exclude_clearance`, `block_companies[]`, `block_keywords[]`,
+  `block_title_keywords[]`, `max_age_days`.
+- `enrich` — `compensation`, `stock`, `reddit`, `news`, `glassdoor`, `contacts`, `brief`, `news_feeds[]`, `top_n`.
+- `ai` — `enabled`, `provider`, `base_url`, `model`, `temperature`, `max_tokens`, `api_key_env`.
+- `email` — `enabled`, `smtp_host`, `smtp_port`, `from_addr`, `to_addr`, `password_env`.
+- `apply` — `assist`, `package_dir`, `auto_prep_top`, `followup_days`.
+- `output` — `db_path`, `dashboard_path`.
+
+## Storage
+
+Local SQLite (`data/jobscope.db`): `jobs`, `enrichment`, `contacts`, `applications`, `resumes`, `meta`,
+`ai_cache`, `runs`. Everything stays on your machine; `config.yaml`, `.env`, and `data/` are gitignored.
+
+## Responsible use
+
+Public, logged-out scraping only; no fake accounts. AI output is advisory and a human reviews before submit.
+Assisted apply never submits and never touches authenticated sessions.
