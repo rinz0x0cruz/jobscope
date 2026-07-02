@@ -189,6 +189,7 @@ def run(cfg: dict, store) -> int:
         p.get("is_remote") for p in (s.get("profiles") or []))
     print("\n  == ATS boards (direct company fetch) ==")
     new_total = 0
+    closed_total = 0
     for entry in entries:
         resolved = _resolve(entry)
         if not resolved:
@@ -205,7 +206,15 @@ def run(cfg: dict, store) -> int:
             if job.title and job.company and store.upsert_job(job):
                 new_here += 1
         new_total += new_here
-        print(f"  [{name}] {len(board)} on board / {len(kept)} matched ({new_here} new)")
+        # The board is the full source of truth: anything we stored before that
+        # is no longer listed has been taken down. Only reconcile on a real fetch
+        # (non-empty board) so a transient failure never mass-closes a company.
+        closed_here = 0
+        if board:
+            closed_here = store.reconcile_open("ats", name, {j.url for j in board})
+            closed_total += closed_here
+        tail = f", {closed_here} taken down" if closed_here else ""
+        print(f"  [{name}] {len(board)} on board / {len(kept)} matched ({new_here} new{tail})")
         store.log_run(f"ats:{name}", len(kept), "ok")
-    print(f"  ATS complete: {new_total} new from {len(entries)} companies")
+    print(f"  ATS complete: {new_total} new, {closed_total} taken down from {len(entries)} companies")
     return new_total

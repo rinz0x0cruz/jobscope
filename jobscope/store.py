@@ -38,7 +38,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     rationale TEXT,
     resume_base TEXT,
     first_seen TEXT,
-    last_seen TEXT
+    last_seen TEXT,
+    status TEXT DEFAULT 'open',
+    closed_at TEXT
 );
 CREATE TABLE IF NOT EXISTS enrichment (
     company TEXT PRIMARY KEY,
@@ -127,6 +129,8 @@ class Store:
             ("company_industry", "TEXT"),
             ("company_url", "TEXT"),
             ("resume_base", "TEXT"),
+            ("status", "TEXT DEFAULT 'open'"),
+            ("closed_at", "TEXT"),
         ):
             if col not in existing:
                 self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
@@ -157,11 +161,11 @@ class Store:
             INSERT INTO jobs (id, source, title, company, location, is_remote, url,
                 description, salary_min, salary_max, salary_interval, currency,
                 job_type, company_industry, company_url, date_posted, score, tier,
-                rationale, first_seen, last_seen)
+                rationale, first_seen, last_seen, status, closed_at)
             VALUES (:id, :source, :title, :company, :location, :is_remote, :url,
                 :description, :salary_min, :salary_max, :salary_interval, :currency,
                 :job_type, :company_industry, :company_url, :date_posted, :score, :tier,
-                :rationale, :first_seen, :last_seen)
+                :rationale, :first_seen, :last_seen, :status, :closed_at)
             ON CONFLICT(id) DO UPDATE SET
                 source=excluded.source, title=excluded.title, company=excluded.company,
                 location=excluded.location, is_remote=excluded.is_remote, url=excluded.url,
@@ -169,13 +173,16 @@ class Store:
                 salary_max=excluded.salary_max, salary_interval=excluded.salary_interval,
                 currency=excluded.currency, job_type=excluded.job_type,
                 company_industry=excluded.company_industry, company_url=excluded.company_url,
-                date_posted=excluded.date_posted, last_seen=excluded.last_seen
+                date_posted=excluded.date_posted, last_seen=excluded.last_seen,
+                status='open', closed_at=''
             """,
             {
                 **job.to_dict(),
                 "is_remote": 1 if job.is_remote else 0,
                 "first_seen": first_seen,
                 "last_seen": ts,
+                "status": "open",
+                "closed_at": "",
             },
         )
         self.conn.commit()
@@ -192,6 +199,32 @@ class Store:
     def get_job(self, job_id_: str) -> Optional[Job]:
         row = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id_,)).fetchone()
         return _row_to_job(row) if row else None
+
+    def reconcile_open(self, source: str, company: str, live_urls) -> int:
+        """Mark stored jobs from (source, company) that are no longer in the live
+        URL set as closed (taken down). Returns how many were newly closed.
+
+        Callers must only pass a *successfully fetched* board's URLs -- an empty
+        set from a failed fetch would wrongly close everything.
+        """
+        live = {u for u in live_urls if u}
+        if not live:
+            return 0
+        rows = self.conn.execute(
+            "SELECT id, url FROM jobs WHERE source = ? AND company = ? "
+            "AND (status IS NULL OR status = 'open')", (source, company)).fetchall()
+        gone = [r["id"] for r in rows if (r["url"] or "") not in live]
+        if gone:
+            ts = now_iso()
+            self.conn.executemany(
+                "UPDATE jobs SET status = 'closed', closed_at = ? WHERE id = ?",
+                [(ts, i) for i in gone])
+            self.conn.commit()
+        return len(gone)
+
+    def closed_count(self) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE status = 'closed'").fetchone()[0]
 
     def jobs(self, order_by_score: bool = True, limit: Optional[int] = None) -> list[Job]:
         sql = "SELECT * FROM jobs"
@@ -279,7 +312,8 @@ class Store:
 
     def applications(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            "SELECT a.*, j.title, j.company FROM applications a "
+            "SELECT a.*, j.title, j.company, j.status AS job_status, j.closed_at "
+            "FROM applications a "
             "LEFT JOIN jobs j ON j.id = a.job_id ORDER BY a.updated DESC"
         )
         return [dict(r) for r in rows]

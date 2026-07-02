@@ -126,6 +126,9 @@ def _job_record(job, enr: dict, store) -> dict[str, Any]:
         "blocked": "⛔" in rationale,
         "posted": job.date_posted,
         "first_seen": job.first_seen or "",
+        "status": job.status or "open",
+        "last_seen": job.last_seen or "",
+        "closed_at": job.closed_at or "",
         "enrich": _enrich_summary(enr),
         "brief": ((enr or {}).get("brief") or {}).get("text", "") if enr else "",
         "contacts": [{"name": c.get("name"), "title": c.get("title"),
@@ -234,11 +237,14 @@ h1{font-size:16px; margin:0; letter-spacing:-.2px; font-weight:650}
   font:11px var(--mono); border:1px solid var(--border); border-radius:5px; padding:1px 5px; background:var(--bg2)}
 select#resume, select#country, select#place, select#workmode, select#funding, select#group{background:var(--card); color:var(--fg); border:1px solid var(--border);
   border-radius:10px; padding:9px 10px; font-size:13px; outline:none; cursor:pointer}
+.chk{display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--dim);
+  background:var(--card); border:1px solid var(--border); border-radius:10px; padding:8px 10px; cursor:pointer; user-select:none}
+.chk input{accent-color:var(--accent); cursor:pointer; margin:0}
 .iconbtn{background:var(--card); border:1px solid var(--border); color:var(--dim);
   width:38px;height:38px;border-radius:10px; cursor:pointer; display:grid; place-items:center; transition:.16s}
 .iconbtn:hover{border-color:var(--border-h); color:var(--fg)}
 /* kpis */
-.kpis{display:grid; grid-template-columns:repeat(5,1fr); gap:12px; padding:22px 24px 6px}
+.kpis{display:grid; grid-template-columns:repeat(6,1fr); gap:12px; padding:22px 24px 6px}
 .kpi{background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
   padding:14px 16px; position:relative; overflow:hidden; transition:.18s}
 .kpi:hover{border-color:var(--border-h)}
@@ -367,6 +373,10 @@ main{padding:12px 24px 60px; display:grid; gap:11px}
   border:1px solid color-mix(in srgb,var(--strong) 35%,transparent); border-radius:5px; padding:0 5px}
 .dupe{font-size:10px; font-weight:700; color:var(--dim); letter-spacing:.02em;
   border:1px solid var(--border-h); border-radius:5px; padding:0 6px}
+.gone{font-size:10px; font-weight:700; color:#d14343; letter-spacing:.02em;
+  border:1px solid color-mix(in srgb,#d14343 45%,transparent); border-radius:5px; padding:0 6px}
+.job.closed{opacity:.62}
+.job.closed .title{text-decoration:line-through; text-decoration-color:#d14343}
 .enr{margin-top:11px; display:flex; gap:7px; flex-wrap:wrap}
 .pill{font-size:12px; background:var(--bg2); border:1px solid var(--border); border-radius:8px;
   padding:3px 9px; color:var(--dim); display:inline-flex; gap:5px; align-items:center; transition:.14s}
@@ -399,6 +409,7 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
   <select id="place" hidden><option value="">All locations</option></select>
   <select id="workmode" hidden><option value="">All modes</option></select>
   <select id="funding" hidden><option value="">All funding</option></select>
+  <label class="chk" id="hideclosed-l" title="Hide postings no longer on the company board"><input type="checkbox" id="hideclosed"> Hide taken-down</label>
   <select id="group" title="Group duplicate postings of the same role">
     <option value="on">Group: on</option>
     <option value="off">Group: off</option>
@@ -420,7 +431,7 @@ const TIERC = {Strong:'#22c55e',Good:'#3b82f6',Stretch:'#f59e0b',Skip:'#71717a'}
 const BARC = ['#7c6cff','#22c55e','#3b82f6','#f59e0b','#71717a','#e879f9'];
 const TABS = ['overview','Strong','Good','Stretch','Skip'];
 let activeTab = 'overview';
-const q = document.getElementById('q'), resumeSel = document.getElementById('resume'), countrySel = document.getElementById('country'), placeSel = document.getElementById('place'), workmodeSel = document.getElementById('workmode'), fundingSel = document.getElementById('funding'), groupSel = document.getElementById('group');
+const q = document.getElementById('q'), resumeSel = document.getElementById('resume'), countrySel = document.getElementById('country'), placeSel = document.getElementById('place'), workmodeSel = document.getElementById('workmode'), fundingSel = document.getElementById('funding'), groupSel = document.getElementById('group'), hideClosed = document.getElementById('hideclosed');
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const isNew = r => r.first_seen && (Date.now()-Date.parse(r.first_seen) < 864e5);
 
@@ -452,7 +463,7 @@ function metaDots(r){const e=r.enrich||{}, d=[];
 }
 function card(r,i){
   const col=TIERC[r.tier];
-  return `<article class="job ${r.blocked?'blocked':''}" data-i="${r._i}" style="animation-delay:${Math.min(i*20,360)}ms">
+  return `<article class="job ${r.blocked?'blocked':''} ${r.status==='closed'?'closed':''}" data-i="${r._i}" style="animation-delay:${Math.min(i*20,360)}ms">
     <div class="scorewrap">
       <div class="score tnum" style="color:${col}">${r.score}</div>
       <div class="sbar"><i style="width:${Math.max(3,Math.min(100,r.score))}%;background:${col}"></i></div>
@@ -460,7 +471,7 @@ function card(r,i){
     <div class="mid">
       <div class="title">${esc(r.title)}</div>
       <div class="co"><span>${esc(r.company||'')}</span><span>·</span><span>${esc(r.location||'')}</span>
-        ${r.base?`<span class="base">${esc(r.base)}</span>`:''}${isNew(r)?`<span class="new">NEW</span>`:''}${dupeCount(r)>1?`<span class="dupe">×${dupeCount(r)} postings</span>`:''}</div>
+        ${r.base?`<span class="base">${esc(r.base)}</span>`:''}${isNew(r)?`<span class="new">NEW</span>`:''}${r.status==='closed'?`<span class="gone" title="No longer listed on the company board">\u2691 Taken down</span>`:''}${dupeCount(r)>1?`<span class="dupe">×${dupeCount(r)} postings</span>`:''}</div>
       <div class="dots">${metaDots(r)}</div>
     </div>
     <span class="tierpill" style="--c:${col}"><span class="dot"></span>${r.tier}</span>
@@ -491,6 +502,7 @@ function scoped(){
     .filter(r=>!pl || r.place===pl)
     .filter(r=>!mode || (r.remote?'remote':'on-site')===mode)
     .filter(r=>!fnd || r.funding===fnd)
+    .filter(r=>!hideClosed.checked || r.status!=='closed')
     .filter(r=>!term || (r.title+' '+r.company+' '+(r.rationale||'')).toLowerCase().includes(term));
 }
 function normTitle(t){return (t||'').toLowerCase().replace(/\(.*?\)|\[.*?\]/g,' ').replace(/[^a-z0-9]+/g,' ').trim();}
@@ -518,7 +530,8 @@ function buildTabs(base){
 }
 function renderOverview(base){
   const st=statsFor(base), c=st.c, total=base.length;
-  const kpis=[['Total',total],['Strong',c.Strong],['Good',c.Good],['Avg score',st.avg],['Filtered',st.blocked]]
+  const closed=DATA.filter(r=>r.status==='closed').length;
+  const kpis=[['Total',total],['Strong',c.Strong],['Good',c.Good],['Avg score',st.avg],['Filtered',st.blocked],['Taken down',closed]]
     .map(([l,v])=>`<div class="kpi"><div class="lab">${l}</div><div class="val tnum">${v}</div></div>`).join('');
   const order=['Strong','Good','Stretch','Skip'], dt=order.reduce((a,t)=>a+(c[t]||0),0)||1;
   let acc=0; const segs=order.filter(t=>c[t]).map(t=>{const p=(c[t]||0)/dt*100, s=`${TIERC[t]} ${acc}% ${acc+p}%`; acc+=p; return s;});
@@ -611,6 +624,7 @@ document.addEventListener('keydown',e=>{
     else if(document.activeElement===q){q.value='';q.blur();render()} }});
 q.oninput=()=>render();
 [resumeSel,countrySel,placeSel,workmodeSel,fundingSel,groupSel].forEach(s=>s.onchange=()=>render());
+hideClosed.onchange=()=>render();
 DATA.forEach((r,i)=>r._i=i);
 facetFilters(); render();
 </script></body></html>"""

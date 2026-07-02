@@ -144,3 +144,61 @@ def test_matches_unit():
     assert ats._matches(remote, locs, roles, want_remote=False) is False
     assert ats._matches(uk, locs, roles, want_remote=True) is False
     assert ats._matches(sales, locs, roles, want_remote=True) is False
+
+
+_BOARD2 = {"jobs": [
+    {"title": "Security Engineer", "location": {"name": "Bengaluru, India"},
+     "absolute_url": "https://gh/db/1", "content": "x", "updated_at": "2026-06-30T00:00:00-04:00"},
+    {"title": "Detection Engineer", "location": {"name": "Remote - India"},
+     "absolute_url": "https://gh/db/2", "content": "x", "updated_at": "2026-06-30T00:00:00-04:00"},
+]}
+
+
+def test_taken_down_when_missing_from_board(monkeypatch):
+    state = {"data": {"jobs": list(_BOARD2["jobs"])}}
+    monkeypatch.setattr(ats.httpx, "get_json",
+                        lambda url, **_k: state["data"] if "greenhouse" in url else None)
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp, terms=["security engineer", "detection engineer"],
+                   country_indeed="India", is_remote=True, companies=["databricks"])
+        store = Store(cfg["output"]["db_path"])
+        ats.run(cfg, store)
+        ids = {j.title: j.id for j in store.jobs()}
+        assert len(ids) == 2
+        state["data"] = {"jobs": _BOARD2["jobs"][:1]}        # "Detection Engineer" pulled
+        ats.run(cfg, store)
+        gone = store.get_job(ids["Detection Engineer"])
+        assert gone.status == "closed" and gone.closed_at
+        assert store.get_job(ids["Security Engineer"]).status == "open"
+        store.close()
+
+
+def test_failed_fetch_does_not_close(monkeypatch):
+    state = {"data": {"jobs": _BOARD2["jobs"][:1]}}
+    monkeypatch.setattr(ats.httpx, "get_json",
+                        lambda url, **_k: state["data"] if "greenhouse" in url else None)
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp, terms=["security engineer"], country_indeed="India",
+                   is_remote=True, companies=["databricks"])
+        store = Store(cfg["output"]["db_path"])
+        ats.run(cfg, store)
+        jid = store.jobs()[0].id
+        state["data"] = None                                 # fetch failure -> empty board
+        ats.run(cfg, store)
+        assert store.get_job(jid).status == "open"           # not closed on a failed fetch
+        store.close()
+
+
+def test_reopen_on_reappearance():
+    from jobscope.model import Job
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        store = Store(cfg["output"]["db_path"])
+        job = Job(source="ats", title="SE", company="X", url="u1").ensure_id()
+        store.upsert_job(job)
+        assert store.reconcile_open("ats", "X", {"other"}) == 1
+        assert store.get_job(job.id).status == "closed"
+        store.upsert_job(job)                                # reappears -> reopened
+        assert store.get_job(job.id).status == "open"
+        assert store.get_job(job.id).closed_at == ""
+        store.close()

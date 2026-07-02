@@ -98,6 +98,20 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Best-effort:** a wrong slug or dead board yields nothing rather than failing the scan. ATS runs even if
   JobSpy isn't installed (it needs only `requests`).
 
+## Taken-down (closed) detection
+
+- Jobs carry a `status` (`open` / `closed`) and a `closed_at` timestamp. A re-seen posting is always
+  reopened on upsert.
+- **Authoritative for ATS boards:** each board fetch returns the company's *full* current listing, so any
+  job previously stored from that company that is no longer on the board is marked `closed` (taken down).
+  This only runs on a **successful** (non-empty) fetch, so a transient network failure never mass-closes a
+  company. `scan` reports e.g. `[databricks] ... (3 taken down)`.
+- JobSpy postings (LinkedIn/Indeed) can't be re-verified reliably, so they aren't auto-closed -- only the
+  authoritative ATS signal flips `status`.
+- **Dashboard:** closed roles show a red `⚑ Taken down` badge with a struck-through title, an Overview
+  **Taken down** KPI, and a **Hide taken-down** toggle. Applications keep the job's `status` so you can see
+  if a role you applied to has since been pulled.
+
 ---
 
 ## Matching & scoring

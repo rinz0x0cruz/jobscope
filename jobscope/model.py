@@ -84,6 +84,8 @@ class Job:
     resume_base: str = ""                                    # which base resume scored best
     first_seen: str = ""
     last_seen: str = ""
+    status: str = "open"                                     # open | closed (taken down)
+    closed_at: str = ""                                      # when it left the source board
 
     def ensure_id(self) -> "Job":
         if not self.id:

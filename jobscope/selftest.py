@@ -122,6 +122,12 @@ def run() -> int:
             cfg2["search"].update(terms=["security engineer"], country_indeed="India",
                                   is_remote=True, companies=["databricks"])
             c.ok("ats run filters role + upserts", ats.run(cfg2, store) == 1)
+            jid = store.jobs()[0].id
+            c.ok("reconcile ignores empty liveset",
+                 store.reconcile_open("ats", "databricks", set()) == 0)
+            c.ok("reconcile closes missing job",
+                 store.reconcile_open("ats", "databricks", {"https://other"}) == 1)
+            c.ok("closed status persists", store.get_job(jid).status == "closed")
             store.close()
     finally:
         ats.httpx.get_json = _orig_get_json
