@@ -35,7 +35,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `tailor <job_id>` | Produces a non-destructive tailored resume + cover letter (deterministic ATS keyword pass; AI-upgraded if enabled). |
 | `prep <job_id>` | Builds a review-ready application package folder (tailored resume/cover PDF, filled-answers, index, contacts) and marks status `prepared`. |
 | `apply <job_id> [--assist]` | Opens the posting URL for you to submit. `--assist` = headed Playwright autofill of a **public** ATS form that **stops before submit**. |
-| `dashboard [--open]` | Renders the self-contained `data/dashboard.html`. |
+| `dashboard [--open] [--public]` | Renders the self-contained `data/dashboard.html`. `--public` also writes a **redacted** copy (per-job contacts/rationale/resume-base and the Overview funnel/targets stripped) to `output.public_dashboard_path` — safe to host publicly. |
 | `serve [--port 8799] [--open]` | Serves the dashboard over local HTTP. |
 | `track [--set job_id=status]` | Shows the application funnel + follow-up reminders; `--set` updates a status. |
 | `new` | Lists new Strong/Good jobs since your last review, then advances the review marker. |
@@ -49,9 +49,11 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 ## Resume import & parsing
 
 - Accepts Markdown / JSON Resume / PDF / plain text.
-- Extracts skills (section + lexicon merge), titles (from experience headings like `### Company — Title`),
-  seniority (title-authoritative, else inferred from tenure), and month-aware date ranges scoped to the
-  experience section (so education dates don't inflate tenure).
+- Extracts skills (section + lexicon merge), titles (from experience headings like `### Company — Title`;
+  bullet/sentence fragments are rejected — a title must be short, Title-Cased, and contain a whole-word role
+  keyword), and month-aware date ranges scoped to the experience section (so education dates don't inflate tenure).
+- **Seniority is years-anchored:** derived from tenure, with a seniority word in a title nudging it by at most
+  one band. So a stray "Senior" on a ~1-year resume can't inflate it, while a genuine "Senior … + 10y" stays senior.
 - Multiple named resumes are supported (e.g. `research`, `consulting`).
 
 ## Multi-resume selection & discipline routing
@@ -80,6 +82,9 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - De-duplication is by canonical URL across all profiles (reposts update `last_seen`, never duplicate).
 - Note: when `hours_old` is set, the `is_remote` flag isn't sent to JobSpy (recency is preferred); remote
   scoping then comes from the `location` string.
+- **Remote is corroborated:** JobSpy's `is_remote` flag over-reports (it can mark an on-site role remote off a
+  stray description mention), so a row counts as remote only when the location/title says so
+  (`remote`/`anywhere`/`wfh`/…) or the flag is set with no concrete location. ATS rows use the same keyword rule.
 
 ## Company-direct ATS boards
 
@@ -257,6 +262,25 @@ Self-contained `data/dashboard.html` (inline CSS/JS, no deps, no network). Your 
 
 - `export --format json|csv` writes ranked jobs to `data/` (or `--out`).
 - `selftest` runs offline checks (scoring, filters, routing, company tiers/size, parsing) — no network/keys.
+
+---
+
+## Public dashboard & hosting (mobile viewing)
+
+- `dashboard --public` renders a **redacted** self-contained copy to `output.public_dashboard_path`
+  (default `data/public-dashboard.html`, gitignored). `render._redact_public` strips per-job `contacts`,
+  `rationale`, and `resume_base`, plus the Overview `funnel` and `targets`; it keeps company, title, location,
+  score, tier, salary, brief, enrichment, and links.
+- **Hosting:** the code repo is **private** (early history had a work-email author), and GitHub Free can't
+  serve Pages from a private repo, so the dashboard is published from a **separate public repo**
+  `rinz0x0cruz/jobscope-dashboard` (clean history) at <https://rinz0x0cruz.github.io/jobscope-dashboard/>.
+- `scripts/publish.ps1` / `publish.sh` render the redacted copy and push it (as `index.html` + `.nojekyll`)
+  to that repo via a gitignored persistent clone (`.dashboard-repo/`), pinned to the `rinz0x0cruz` identity.
+  `scripts/register-publish-task.ps1` runs it as a daily Windows Scheduled Task.
+- **Gotcha:** the legacy Jekyll builder fails on the ~487 KB single-line dashboard even with `.nojekyll`, so
+  `jobscope-dashboard` uses **Actions-based Pages** (`.github/workflows/pages.yml`, `build_type=workflow`).
+- **Rules:** publishing originates locally (the SQLite DB is local/gitignored, so CI can't regenerate it);
+  only ever publish the **redacted** copy — never `data/dashboard.html`.
 
 ---
 
