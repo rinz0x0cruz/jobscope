@@ -53,6 +53,28 @@ def _overview_data(cfg: dict, store) -> dict:
     return {"funnel": funnel, "gaps": gaps, "considered": considered, "targets": targets}
 
 
+_COUNTRY_CODES = {
+    "in": "India", "us": "United States", "usa": "United States", "uk": "United Kingdom",
+    "gb": "United Kingdom", "uae": "United Arab Emirates", "ae": "United Arab Emirates",
+    "sg": "Singapore", "de": "Germany", "fr": "France", "il": "Israel", "my": "Malaysia",
+    "it": "Italy", "ca": "Canada", "au": "Australia", "nl": "Netherlands", "es": "Spain",
+    "ie": "Ireland", "ch": "Switzerland", "se": "Sweden", "pl": "Poland", "jp": "Japan",
+    "br": "Brazil", "mx": "Mexico", "ph": "Philippines", "id": "Indonesia", "pt": "Portugal",
+}
+
+
+def _country_of(job) -> str:
+    """Best-effort country from a JobSpy location string ('Remote, IN' / 'MH, IN' -> India)."""
+    loc = (job.location or "").strip()
+    if not loc:
+        return "Remote" if job.is_remote else ""
+    segs = [s.strip() for s in loc.split(",") if s.strip()]
+    if not segs:
+        return ""
+    last = segs[-1].strip(". ")
+    return _COUNTRY_CODES.get(last.lower(), last)
+
+
 def _job_record(job, enr: dict, store) -> dict[str, Any]:
     salary = _fmt_salary(job)
     contacts = store.contacts_for(job.company) if job.company else []
@@ -70,6 +92,7 @@ def _job_record(job, enr: dict, store) -> dict[str, Any]:
         "base": job.resume_base or "",
         "salary": salary,
         "size": companies.company_size(job.company)[1] if job.company else "",
+        "country": _country_of(job),
         "industry": job.company_industry,
         "rationale": rationale,
         "blocked": "⛔" in rationale,
@@ -181,7 +204,7 @@ h1{font-size:16px; margin:0; letter-spacing:-.2px; font-weight:650}
 #q:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); width:320px}
 .kbd{position:absolute; right:9px; top:50%; transform:translateY(-50%); color:var(--mute);
   font:11px var(--mono); border:1px solid var(--border); border-radius:5px; padding:1px 5px; background:var(--bg2)}
-select#sort, select#resume, select#group{background:var(--card); color:var(--fg); border:1px solid var(--border);
+select#resume, select#country, select#size, select#group{background:var(--card); color:var(--fg); border:1px solid var(--border);
   border-radius:10px; padding:9px 10px; font-size:13px; outline:none; cursor:pointer}
 .iconbtn{background:var(--card); border:1px solid var(--border); color:var(--dim);
   width:38px;height:38px;border-radius:10px; cursor:pointer; display:grid; place-items:center; transition:.16s}
@@ -234,7 +257,7 @@ select#sort, select#resume, select#group{background:var(--card); color:var(--fg)
 .legend .lg .dot{width:9px;height:9px;border-radius:3px}
 .legend .lg b{color:var(--fg)} .legend .lg i{color:var(--mute); font-style:normal; margin-left:auto}
 .frow{display:flex; align-items:center; gap:10px; font-size:13px; color:var(--dim); margin:7px 0}
-.frow>span{min-width:92px; max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.frow>span{flex:0 0 148px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .frow b{color:var(--fg); margin-left:auto; font-variant-numeric:tabular-nums}
 .fbar{flex:1; height:7px; background:var(--bg2); border-radius:99px; overflow:hidden; min-width:40px}
 .fbar i{display:block; height:100%; background:var(--accent)}
@@ -343,13 +366,9 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
     <input id="q" placeholder="Filter title, company, skill…" spellcheck="false">
     <span class="kbd">/</span>
   </div>
-  <select id="sort">
-    <option value="score">Sort: Score</option>
-    <option value="new">Sort: Newest</option>
-    <option value="company">Sort: Company</option>
-    <option value="resume">Sort: Resume</option>
-  </select>
   <select id="resume" hidden><option value="">All resumes</option></select>
+  <select id="country" hidden><option value="">All countries</option></select>
+  <select id="size" hidden><option value="">All sizes</option></select>
   <select id="group" title="Group duplicate postings of the same role">
     <option value="on">Group: on</option>
     <option value="off">Group: off</option>
@@ -371,7 +390,7 @@ const TIERC = {Strong:'#22c55e',Good:'#3b82f6',Stretch:'#f59e0b',Skip:'#71717a'}
 const BARC = ['#7c6cff','#22c55e','#3b82f6','#f59e0b','#71717a','#e879f9'];
 const TABS = ['overview','Strong','Good','Stretch','Skip'];
 let activeTab = 'overview';
-const q = document.getElementById('q'), sortSel = document.getElementById('sort'), resumeSel = document.getElementById('resume'), groupSel = document.getElementById('group');
+const q = document.getElementById('q'), resumeSel = document.getElementById('resume'), countrySel = document.getElementById('country'), sizeSel = document.getElementById('size'), groupSel = document.getElementById('group');
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const isNew = r => r.first_seen && (Date.now()-Date.parse(r.first_seen) < 864e5);
 
@@ -418,16 +437,24 @@ function card(r,i){
     <span class="chev">›</span>
   </article>`;
 }
-function resumeFilters(){
-  const bases=[...new Set(DATA.map(r=>r.base).filter(Boolean))].sort();
-  if(bases.length<2){resumeSel.hidden=true; return;}
-  resumeSel.hidden=false;
-  resumeSel.innerHTML='<option value="">All resumes</option>'+
-    bases.map(b=>`<option value="${esc(b)}">Resume: ${esc(b)}</option>`).join('');
+function fillSelect(sel, allLabel, values, fmt){
+  if(values.length<2){sel.hidden=true; sel.value=''; return;}
+  const cur=sel.value; sel.hidden=false;
+  sel.innerHTML=`<option value="">${allLabel}</option>`+
+    values.map(v=>`<option value="${esc(v)}">${esc(fmt?fmt(v):v)}</option>`).join('');
+  sel.value=values.includes(cur)?cur:'';
+}
+function facetFilters(){
+  fillSelect(resumeSel,'All resumes',[...new Set(DATA.map(r=>r.base).filter(Boolean))].sort(),v=>'Resume: '+v);
+  fillSelect(countrySel,'All countries',[...new Set(DATA.map(r=>r.country).filter(Boolean))].sort());
+  const order=['mega','large','mid','small','startup'];
+  fillSelect(sizeSel,'All sizes',order.filter(s=>DATA.some(r=>r.size===s)),v=>v+' companies');
 }
 function scoped(){
-  const term=q.value.trim().toLowerCase(), rez=resumeSel.value;
+  const term=q.value.trim().toLowerCase(), rez=resumeSel.value, ctry=countrySel.value, sz=sizeSel.value;
   return DATA.filter(r=>!rez || r.base===rez)
+    .filter(r=>!ctry || r.country===ctry)
+    .filter(r=>!sz || r.size===sz)
     .filter(r=>!term || (r.title+' '+r.company+' '+(r.rationale||'')).toLowerCase().includes(term));
 }
 function normTitle(t){return (t||'').toLowerCase().replace(/\(.*?\)|\[.*?\]/g,' ').replace(/[^a-z0-9]+/g,' ').trim();}
@@ -493,13 +520,9 @@ function render(){
   const ov=document.getElementById('overview'), list=document.getElementById('list');
   if(activeTab==='overview'){ list.hidden=true; ov.hidden=false; renderOverview(base); return; }
   ov.hidden=true; list.hidden=false;
-  const s=sortSel.value;
   let items=base.filter(r=>r.tier===activeTab);
   if(groupSel.value!=='off') items=groupItems(items);
-  if(s==='company') items=[...items].sort((a,b)=>(a.company||'').localeCompare(b.company||''));
-  else if(s==='new') items=[...items].sort((a,b)=>(b.first_seen||'').localeCompare(a.first_seen||''));
-  else if(s==='resume') items=[...items].sort((a,b)=>(a.base||'').localeCompare(b.base||'')||(b.score-a.score));
-  else items=[...items].sort((a,b)=>b.score-a.score);
+  items=[...items].sort((a,b)=>b.score-a.score);
   list.innerHTML=items.length?items.map(card).join('')
     :`<div class="empty">No ${activeTab} jobs match.</div>`;
 }
@@ -550,7 +573,8 @@ document.addEventListener('keydown',e=>{
   if(e.key==='/'&&document.activeElement!==q){e.preventDefault();q.focus()}
   else if(e.key==='Escape'){ if(drawer.classList.contains('on'))closeDrawer();
     else if(document.activeElement===q){q.value='';q.blur();render()} }});
-q.oninput=()=>render(); sortSel.onchange=()=>render(); resumeSel.onchange=()=>render(); groupSel.onchange=()=>render();
+q.oninput=()=>render();
+[resumeSel,countrySel,sizeSel,groupSel].forEach(s=>s.onchange=()=>render());
 DATA.forEach((r,i)=>r._i=i);
-resumeFilters(); render();
+facetFilters(); render();
 </script></body></html>"""

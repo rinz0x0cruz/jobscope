@@ -53,7 +53,8 @@ NO_SPONSORSHIP_SIGNALS = [
 # / GRC. Substring matched (case-insensitive); tune freely.
 TECHNICAL_SIGNALS = [
     "reverse engineering", "reverse engineer", "malware", "exploit",
-    "vulnerability research", "vuln research", "disassembl", "decompil",
+    "vulnerability research", "vuln research", "vulnerability detection",
+    "vulnerability management", "disassembl", "decompil",
     "debugger", "debugging", "ida pro", "ghidra", "x64dbg", "windbg",
     "binary analysis", "shellcode", "fuzz", "detection engineering",
     "detection engineer", "security engineer", "software engineer",

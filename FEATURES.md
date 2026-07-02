@@ -213,9 +213,10 @@ Self-contained `data/dashboard.html` (inline CSS/JS, no deps, no network). Your 
 
 ### Controls (apply within the active bucket / scope)
 - **Search** box (`/` to focus, `Esc` to clear): filters by title / company / rationale; also scopes the Overview.
-- **Sort:** Score · Newest · Company · Resume.
-- **Resume filter** (shown with 2+ resumes): limit to jobs matched to one base resume.
-- **Group** on/off; **theme** light/dark (persisted).
+- **Facet filters** — **Resume** (2+ resumes), **Country** (derived from location), **Company size**
+  (mega/large/mid/small/startup). All stack together (AND) with search, the active tab, and grouping;
+  each auto-hides when there's only one value.
+- **Group** on/off; **theme** light/dark (persisted). Lists are ordered by score (desc).
 
 ---
 
