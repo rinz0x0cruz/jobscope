@@ -165,6 +165,17 @@ def _selftest_filters(c: "_Check") -> None:
     c.ok("filter blocks company",
          apply_filters(Job(company="Acme"), {"block_companies": ["acme"]}) is not None)
     c.ok("filter passes clean job", apply_filters(Job(company="Z", description="ok"), {}) is None)
+    from .match import required_experience_years
+    c.ok("exp: senior title implies ~4y",
+         required_experience_years(Job(title="Senior Software Engineer")) == 4.0)
+    c.ok("exp: explicit N+ years parsed",
+         required_experience_years(Job(title="Engineer", description="5+ years of experience")) == 5.0)
+    c.ok("exp: no signal -> None",
+         required_experience_years(Job(title="Software Engineer", description="great team")) is None)
+    c.ok("exp filter blocks over cap",
+         apply_filters(Job(title="Staff Engineer"), {"max_years_experience": 2}) is not None)
+    c.ok("exp filter keeps at/below cap",
+         apply_filters(Job(title="Engineer", description="2+ years"), {"max_years_experience": 2}) is None)
     r1 = Resume(skills=["yara", "malware analysis"], seniority="mid")
     r2 = Resume(skills=["audit", "compliance"], seniority="mid")
     job = Job(title="Malware Analyst", description="yara malware analysis " * 5)

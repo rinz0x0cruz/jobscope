@@ -60,6 +60,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "block_keywords": [],
         "block_title_keywords": [],
         "max_age_days": 0,
+        "max_years_experience": 0,
     },
     "enrich": {
         "compensation": True,

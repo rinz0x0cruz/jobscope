@@ -87,6 +87,37 @@ def _title_seniority(title: str) -> Optional[int]:
     return best
 
 
+# Rough minimum years of experience implied by a seniority word in the title.
+_SENIORITY_MIN_YEARS = {0: 0, 1: 0, 2: 2, 3: 4, 4: 6, 5: 8, 6: 10, 7: 12, 8: 15}
+
+
+def required_experience_years(job: Job) -> Optional[float]:
+    """Best-effort minimum years of experience a posting asks for.
+
+    Combines the seniority implied by the title (Senior ~4y, Staff ~6y, Principal
+    ~8y, ...) with explicit "N+ years" / "N-M years" / "N years of experience"
+    phrases in the text. Returns None when the posting gives no experience signal.
+    Deliberately conservative (takes the highest stated bar) so an experience cap
+    doesn't leak clearly-too-senior roles through.
+    """
+    title = job.title or ""
+    text = f"{title}\n{job.description or ''}".lower()
+    nums: list[int] = []
+    for m in re.finditer(r"(?<![\d-])(\d{1,2})\s*\+\s*(?:years?|yrs?)", text):            # "5+ years"
+        nums.append(int(m.group(1)))
+    for m in re.finditer(r"(?<![\d-])(\d{1,2})\s*(?:-|\u2013|to)\s*\d{1,2}\s*(?:years?|yrs?)", text):  # "3-5 years"
+        nums.append(int(m.group(1)))                                          # lower bound
+    for m in re.finditer(r"(?<![\d-])(\d{1,2})\s*(?:years?|yrs?)[^.\n]{0,18}experience", text):        # "5 years ... experience"
+        nums.append(int(m.group(1)))
+    explicit = max((n for n in nums if 1 <= n <= 25), default=None)
+
+    rank = _title_seniority(title)
+    tmin = _SENIORITY_MIN_YEARS.get(rank) if rank is not None else None
+
+    vals = [v for v in (explicit, tmin) if v is not None]
+    return float(max(vals)) if vals else None
+
+
 def _skill_score(resume: Resume, job_text: str) -> tuple[float, list[str]]:
     jt = job_text.lower()
     hits = []
@@ -348,6 +379,11 @@ def apply_filters(job: Job, fcfg: dict) -> Optional[str]:
             return f"clearance/citizenship required ({cf[0]})"
     if fcfg.get("needs_sponsorship") and no_sponsorship(job):
         return "no visa sponsorship"
+    cap = fcfg.get("max_years_experience", 0) or 0
+    if cap:
+        req = required_experience_years(job)
+        if req is not None and req > cap:
+            return f"needs ~{int(req)}y experience (cap {cap}y)"
     max_age = fcfg.get("max_age_days", 0) or 0
     if max_age:
         age = _age_days(job)

@@ -144,6 +144,7 @@ Set under `filters`; matching jobs become tier `Skip` with a `⛔ reason` in the
 | `block_keywords` | Drops jobs whose description contains any keyword. |
 | `block_title_keywords` | Drops jobs whose title contains any keyword. |
 | `max_age_days` | Drops postings older than N days (0 = off). |
+| `max_years_experience` | Drops roles asking clearly more experience than the cap (0 = off). Required years are inferred from the title seniority (Senior ~4y, Staff ~6y, Principal ~8y) and explicit `N+ years` / `N-M years` / `N years … experience` phrases, taking the highest bar. Set to your years + a small buffer to focus on roles you can actually apply for. |
 
 ---
 
