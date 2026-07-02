@@ -213,9 +213,10 @@ Self-contained `data/dashboard.html` (inline CSS/JS, no deps, no network). Your 
 
 ### Controls (apply within the active bucket / scope)
 - **Search** box (`/` to focus, `Esc` to clear): filters by title / company / rationale; also scopes the Overview.
-- **Facet filters** — **Resume** (2+ resumes), **Country** (derived from location), **Funding**
-  (`public` / `unicorn` — a compensation proxy from curated funding data). All stack together (AND) with
-  search, the active tab, and grouping; each auto-hides when there's only one value.
+- **Facet filters** — **Resume** (2+ resumes), **Country** (from location), **Location** (city/region,
+  top places + Remote), **Work mode** (Remote / On-site), and **Funding** (`public` / `unicorn` — a
+  compensation proxy from curated funding data). All stack together (AND) with search, the active tab,
+  and grouping; each auto-hides when there's only one value.
 - **Group** on/off; **theme** light/dark (persisted). Lists are ordered by score (desc).
 
 ---
