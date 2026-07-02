@@ -126,14 +126,35 @@ def _num(v):
         return None
 
 
+# Positive remote signals. JobSpy's `is_remote` flag alone over-reports (it marks
+# on-site roles whose description merely mentions "remote"/"hybrid"), so we only
+# trust a True when the location/title corroborates it.
+_REMOTE_WORDS = ("remote", "anywhere", "work from home", "work-from-home", "wfh",
+                 "fully distributed", "distributed team", "telecommute")
+
+
+def _derive_remote(raw_is_remote: bool, location: str, title: str) -> bool:
+    blob = f"{location}\n{title}".lower()
+    if any(w in blob for w in _REMOTE_WORDS):
+        return True
+    # A concrete place (e.g. "Dublin, County Dublin, Ireland") contradicts a bare
+    # remote flag; only trust JobSpy's True when no specific location is given.
+    if raw_is_remote and "," not in (location or ""):
+        return True
+    return False
+
+
 def _row_to_job(row) -> Job:
-    is_remote = _val(row, "is_remote", default=False)
+    raw_remote = _val(row, "is_remote", default=False)
+    title = str(_val(row, "title", default="") or "").strip()
+    location = str(_val(row, "location", default="") or "").strip()
     job = Job(
         source=str(_val(row, "site", default="") or ""),
-        title=str(_val(row, "title", default="") or "").strip(),
+        title=title,
         company=str(_val(row, "company", default="") or "").strip(),
-        location=str(_val(row, "location", default="") or "").strip(),
-        is_remote=bool(is_remote) if is_remote is not None else False,
+        location=location,
+        is_remote=_derive_remote(bool(raw_remote) if raw_remote is not None else False,
+                                 location, title),
         url=str(_val(row, "job_url", "job_url_direct", default="") or ""),
         description=str(_val(row, "description", default="") or ""),
         salary_min=_num(_val(row, "min_amount")),

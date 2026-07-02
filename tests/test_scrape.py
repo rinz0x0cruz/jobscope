@@ -88,3 +88,17 @@ def test_scrape_backward_compatible_without_profiles():
             store.close()
     finally:
         sys.modules.pop("jobspy", None)
+
+
+def test_derive_remote_corroborates_flag():
+    # JobSpy over-reports remote: a concrete city + no remote keyword must NOT be remote.
+    assert scrape._derive_remote(True, "Dublin, County Dublin, Ireland", "Security Engineer") is False
+    assert scrape._derive_remote(True, "Bengaluru, Karnataka, India", "Detection Engineer") is False
+    # explicit remote wording wins, even if the flag was False
+    assert scrape._derive_remote(False, "Remote - India", "X") is True
+    assert scrape._derive_remote(False, "", "Remote Security Engineer") is True
+    # a bare remote flag with no concrete place is trusted
+    assert scrape._derive_remote(True, "United States", "X") is True
+    assert scrape._derive_remote(True, "", "X") is True
+    # not remote by default
+    assert scrape._derive_remote(False, "Pune, India", "X") is False

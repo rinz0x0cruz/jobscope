@@ -182,6 +182,11 @@ def _selftest_filters(c: "_Check") -> None:
          apply_filters(Job(title="Staff Engineer"), {"max_years_experience": 2}) is not None)
     c.ok("exp filter keeps at/below cap",
          apply_filters(Job(title="Engineer", description="2+ years"), {"max_years_experience": 2}) is None)
+    from . import scrape
+    c.ok("remote: concrete city overrides stray flag",
+         scrape._derive_remote(True, "Dublin, County Dublin, Ireland", "Security Engineer") is False)
+    c.ok("remote: explicit keyword is remote",
+         scrape._derive_remote(False, "Remote - India", "Security Engineer") is True)
     r1 = Resume(skills=["yara", "malware analysis"], seniority="mid")
     r2 = Resume(skills=["audit", "compliance"], seniority="mid")
     job = Job(title="Malware Analyst", description="yara malware analysis " * 5)
