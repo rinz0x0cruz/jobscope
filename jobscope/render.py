@@ -9,6 +9,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 from typing import Any
 
 from . import companies
@@ -80,19 +81,29 @@ _COUNTRY_CODES = {
     "it": "Italy", "ca": "Canada", "au": "Australia", "nl": "Netherlands", "es": "Spain",
     "ie": "Ireland", "ch": "Switzerland", "se": "Sweden", "pl": "Poland", "jp": "Japan",
     "br": "Brazil", "mx": "Mexico", "ph": "Philippines", "id": "Indonesia", "pt": "Portugal",
+    "can": "Canada", "gbr": "United Kingdom", "u.s": "United States", "u.s.": "United States",
+    "u.k": "United Kingdom",
 }
 
 
 def _country_of(job) -> str:
-    """Best-effort country from a JobSpy location string ('Remote, IN' / 'MH, IN' -> India)."""
+    """Best-effort country from a messy location string.
+
+    Strips parenthetical / work-mode noise ("United States (Remote)", "US - Remote",
+    "CAN-Remote" -> United States / Canada) and maps common codes, so the country
+    facet stays tidy instead of fragmenting into one option per posting variant.
+    """
     loc = (job.location or "").strip()
     if not loc:
         return "Remote" if job.is_remote else ""
-    segs = [s.strip() for s in loc.split(",") if s.strip()]
-    if not segs:
-        return ""
-    last = segs[-1].strip(". ")
-    return _COUNTRY_CODES.get(last.lower(), last)
+    cleaned = re.sub(r"\([^)]*\)", " ", loc)                       # drop "(Remote)" etc.
+    _wm = ("remote", "onsite", "on-site", "hybrid", "anywhere", "flexible", "wfh")
+    for seg in reversed([s for s in re.split(r"[,;/]", cleaned) if s.strip()]):
+        words = [w for w in seg.split() if w.strip(".-") and w.lower().strip(".-") not in _wm]
+        cand = re.sub(r"-?(?:remote|wfh)$", "", " ".join(words), flags=re.I).strip(" .-")
+        if cand:
+            return _COUNTRY_CODES.get(cand.lower(), cand)
+    return "Remote" if job.is_remote else ""
 
 
 _IN_STATES = {
@@ -335,7 +346,7 @@ select#resume, select#country, select#place, select#workmode, select#funding, se
 /* list */
 main{padding:12px 24px 60px; display:grid; gap:11px}
 .job{background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
-  padding:15px 18px; display:grid; grid-template-columns:60px 1fr auto 16px; gap:16px; align-items:center;
+  padding:15px 18px; display:grid; grid-template-columns:60px 1fr auto 16px; gap:16px; align-items:start;
   cursor:pointer; transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease;
   animation:rise .4s both}
 .job:hover{transform:translateY(-2px); border-color:var(--border-h); box-shadow:var(--shadow)}
@@ -388,8 +399,21 @@ main{padding:12px 24px 60px; display:grid; gap:11px}
 .title a{text-decoration:none}
 .title a:hover{color:var(--accent)}
 .co{color:var(--dim); font-size:13px; margin-top:2px; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
-.co .base{font:11px var(--mono); color:var(--accent); border:1px solid var(--accent-dim);
+.base{font:11px var(--mono); color:var(--accent); border:1px solid var(--accent-dim);
   background:var(--accent-dim); padding:1px 7px; border-radius:6px}
+.corow{display:flex; align-items:center; gap:10px; margin-top:3px}
+.corow .co-name{color:var(--dim); font-size:13px; font-weight:500; min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.applybtn{margin-left:auto; flex:none; font-size:12px; font-weight:650; text-decoration:none;
+  color:var(--accent); border:1px solid var(--accent-dim); background:var(--accent-dim);
+  border-radius:8px; padding:4px 12px; transition:.14s}
+.applybtn:hover{filter:brightness(1.12); border-color:var(--accent)}
+.loc{color:var(--mute); font-size:12.5px; margin-top:3px}
+.facts{display:flex; flex-wrap:wrap; gap:5px 20px; margin-top:10px}
+.fact{font-size:12.5px; display:flex; gap:7px; align-items:baseline; min-width:0}
+.fact .k{color:var(--mute); font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; font-weight:700; flex:none}
+.fact .v{color:var(--fg); font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:360px}
+.badgerow{display:flex; gap:7px; flex-wrap:wrap; margin-top:11px; align-items:center}
 .new{font-size:10px; font-weight:700; color:var(--strong); letter-spacing:.05em;
   border:1px solid color-mix(in srgb,var(--strong) 35%,transparent); border-radius:5px; padding:0 5px}
 .dupe{font-size:10px; font-weight:700; color:var(--dim); letter-spacing:.02em;
@@ -485,8 +509,37 @@ function metaDots(r){const e=r.enrich||{}, d=[];
   if(e.news&&e.news.length) d.push('📰 '+e.news.length);
   return d.slice(0,5).map(x=>`<span class="dot-i">${esc(String(x))}</span>`).join('');
 }
+function compLabel(r){
+  if(r.salary) return r.salary;
+  const c=(r.enrich||{}).comp;
+  return (c&&c.range) ? c.range : 'NA';
+}
+function stockLabel(r){
+  const s=(r.enrich||{}).stock;
+  if(s&&s.public&&s.ticker){
+    let out=s.ticker;
+    if(s.price!=null) out+=' '+s.price;
+    if(s.change_pct!=null) out+=' ('+(s.change_pct>=0?'+':'')+s.change_pct+'%)';
+    return out;
+  }
+  if(s&&s.public===false) return 'Not Public';
+  return '\u2014';
+}
+function reputation(r){
+  const e=r.enrich||{};
+  if(e.glassdoor&&e.glassdoor.rating) return 'Glassdoor '+e.glassdoor.rating+'/5';
+  if(e.reddit&&e.reddit.count) return 'Reddit: '+(e.reddit.sentiment||'')+' ('+e.reddit.count+')';
+  if(r.brief){
+    const line=(r.brief.split('\n').map(s=>s.trim()).find(s=>s&&!/^(facts|risks|unknowns)/i.test(s))||'').replace(/^[-\u2022*\s]+/,'').trim();
+    if(line) return line.length>96?line.slice(0,96)+'\u2026':line;
+  }
+  if(e.news&&e.news.length&&e.news[0].title) return e.news[0].title;
+  if(r.funding) return r.funding.charAt(0).toUpperCase()+r.funding.slice(1)+' company';
+  return '\u2014';
+}
 function card(r,i){
   const col=TIERC[r.tier];
+  const badges=`${r.base?`<span class="base">${esc(r.base)}</span>`:''}${isNew(r)?`<span class="new">NEW</span>`:''}${r.remote&&r.remote_scope&&r.remote_scope!=='global'?`<span class="rscope" title="Geo-restricted remote">Remote \u00b7 ${esc(r.remote_scope)}</span>`:''}${r.status==='closed'?`<span class="gone" title="No longer listed on the company board">\u2691 Taken down</span>`:''}${dupeCount(r)>1?`<span class="dupe">\u00d7${dupeCount(r)} postings</span>`:''}`;
   return `<article class="job ${r.blocked?'blocked':''} ${r.status==='closed'?'closed':''}" data-i="${r._i}" style="animation-delay:${Math.min(i*20,360)}ms">
     <div class="scorewrap">
       <div class="score tnum" style="color:${col}">${r.score}</div>
@@ -494,12 +547,17 @@ function card(r,i){
     </div>
     <div class="mid">
       <div class="title">${esc(r.title)}</div>
-      <div class="co"><span>${esc(r.company||'')}</span><span>·</span><span>${esc(r.location||'')}</span>
-        ${r.base?`<span class="base">${esc(r.base)}</span>`:''}${isNew(r)?`<span class="new">NEW</span>`:''}${r.remote&&r.remote_scope&&r.remote_scope!=='global'?`<span class="rscope" title="Geo-restricted remote">Remote \u00b7 ${esc(r.remote_scope)}</span>`:''}${r.status==='closed'?`<span class="gone" title="No longer listed on the company board">\u2691 Taken down</span>`:''}${dupeCount(r)>1?`<span class="dupe">×${dupeCount(r)} postings</span>`:''}</div>
-      <div class="dots">${metaDots(r)}</div>
+      <div class="corow"><span class="co-name">${esc(r.company||'\u2014')}</span>${r.url?`<a class="applybtn" href="${esc(r.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Apply \u2197</a>`:''}</div>
+      <div class="loc">${esc(r.location||'\u2014')}</div>
+      <div class="facts">
+        <div class="fact"><span class="k">Comp</span><span class="v">${esc(compLabel(r))}</span></div>
+        <div class="fact"><span class="k">Stock</span><span class="v">${esc(stockLabel(r))}</span></div>
+        <div class="fact"><span class="k">Reputation</span><span class="v">${esc(reputation(r))}</span></div>
+      </div>
+      ${badges?`<div class="badgerow">${badges}</div>`:''}
     </div>
     <span class="tierpill" style="--c:${col}"><span class="dot"></span>${r.tier}</span>
-    <span class="chev">›</span>
+    <span class="chev">\u203a</span>
   </article>`;
 }
 function fillSelect(sel, allLabel, values, fmt){
