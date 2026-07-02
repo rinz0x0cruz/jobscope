@@ -44,6 +44,16 @@ search:
   #     is_remote: false         # include on-site / hybrid
   #     hours_old: 720           # last 30 days
   #     country_indeed: "India"
+  # Optional: pull specific companies' PUBLIC job boards (Greenhouse / Lever /
+  # Ashby) directly -- no login, no key. This surfaces roles at well-funded
+  # companies (e.g. unicorns) that keyword search on LinkedIn/Indeed rarely ranks
+  # into view. Board jobs are filtered by your locations + terms, then merged.
+  # Entries are a known name (see jobscope/ats.py COMPANY_BOARDS) or an explicit
+  # "Name|provider|slug" override. Leave empty to skip ATS boards.
+  companies: []
+  #   - databricks              # known: resolved to greenhouse/databricks
+  #   - wiz
+  #   - "Acme|lever|acme"       # explicit provider + board slug
 
 match:
   # Deterministic fit score = 100 * weighted sum, minus a ghost/scam penalty.

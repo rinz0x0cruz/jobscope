@@ -93,6 +93,39 @@ def run() -> int:
     except ImportError:
         pass  # not yet built
 
+    # --- ats (direct company boards; HTTP stubbed, no network) -----------
+    from . import ats
+
+    def _stub(url, **_kw):
+        if "greenhouse" in url:
+            return {"jobs": [
+                {"title": "Security Engineer", "location": {"name": "Bengaluru, India"},
+                 "absolute_url": "https://x/1", "content": "<p>a &amp; b</p>",
+                 "updated_at": "2026-06-30T00:00:00-04:00"},
+                {"title": "Account Executive", "location": {"name": "Bengaluru, India"},
+                 "absolute_url": "https://x/2", "content": "sell", "updated_at": ""},
+            ]}
+        return None
+
+    _orig_get_json = ats.httpx.get_json
+    ats.httpx.get_json = _stub
+    try:
+        c.ok("ats resolves known slug",
+             ats._resolve("databricks") == ("databricks", "greenhouse", "databricks"))
+        c.ok("ats resolves explicit override", ats._resolve("A|lever|a") == ("A", "lever", "a"))
+        boards = ats.fetch_company("Databricks", "greenhouse", "databricks")
+        c.ok("ats parses greenhouse board", len(boards) == 2 and boards[0].source == "ats")
+        c.ok("ats strips + unescapes html", boards[0].description == "a & b")
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "a.db"))
+            cfg2 = load_config(None)
+            cfg2["search"].update(terms=["security engineer"], country_indeed="India",
+                                  is_remote=True, companies=["databricks"])
+            c.ok("ats run filters role + upserts", ats.run(cfg2, store) == 1)
+            store.close()
+    finally:
+        ats.httpx.get_json = _orig_get_json
+
     total = c.passed + c.failed
     print(f"\n  {c.passed}/{total} checks passed")
     return 0 if c.failed == 0 else 1

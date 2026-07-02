@@ -28,7 +28,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | --- | --- |
 | `init` | Scaffolds `config.yaml` + `data/` dir. |
 | `resume import <path> --name <n>` | Parses `.md/.json/.pdf/.txt` into a structured resume and stores it under a name. Import several names for multi-resume matching. |
-| `scan` | Scrapes jobs for every search term across every **profile** (see Scraping). De-dupes by URL. |
+| `scan` | Scrapes jobs for every search term across every **profile**, then pulls configured companies' **public ATS boards** directly (see Scraping + Company-direct ATS boards). De-dupes by URL. |
 | `match` | Scores every stored job, applies **filters**, and records the best-fit resume per job. Prints tier counts + filtered count. |
 | `pipeline [--no-prep]` | scan → match → enrich → prep top picks → email digest. `--no-prep` stops after enrich. |
 | `enrich [--job <id>]` | Adds public intel per company (comp, stock/IPO, Reddit, news, Glassdoor, contacts, brief). Default: top N by score. |
@@ -80,6 +80,23 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - De-duplication is by canonical URL across all profiles (reposts update `last_seen`, never duplicate).
 - Note: when `hours_old` is set, the `is_remote` flag isn't sent to JobSpy (recency is preferred); remote
   scoping then comes from the `location` string.
+
+## Company-direct ATS boards
+
+- **Why:** keyword search on LinkedIn/Indeed rarely ranks well-funded companies (unicorns, public) into
+  the top results, so their roles are missed. `scan` also pulls named companies' **public** job boards
+  directly — no login, no API key — surfacing India/remote roles keyword search never sees.
+- **Providers:** Greenhouse (`boards-api.greenhouse.io`), Lever (`api.lever.co`), Ashby
+  (`api.ashbyhq.com`). All are logged-out public JSON endpoints (consistent with the no-auth-automation rule).
+- **Config:** `search.companies` is a list of entries. Each is either a known name resolved via
+  `jobscope/ats.py` `COMPANY_BOARDS` (e.g. `databricks` → greenhouse/databricks) or an explicit
+  `"Name|provider|slug"` override. Empty list = ATS boards skipped.
+- **Filtering:** each board is filtered to your locations (target countries/cities from `profiles` +
+  `country_indeed`, plus any remote role when `is_remote` is set) **and** role keywords derived from
+  `search.terms` (+ a small security/SWE lexicon), then normalized to the `Job` schema and de-duped by URL
+  like any other source (`source = "ats"`).
+- **Best-effort:** a wrong slug or dead board yields nothing rather than failing the scan. ATS runs even if
+  JobSpy isn't installed (it needs only `requests`).
 
 ---
 

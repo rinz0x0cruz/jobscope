@@ -13,28 +13,39 @@ from .store import now_iso
 
 
 def run(cfg: dict, store) -> int:
+    base = cfg["search"]
+    total_new = 0
+    total_seen = 0
+
     try:
         from jobspy import scrape_jobs
     except ImportError:
-        print("  JobSpy is not installed. Run: pip install python-jobspy")
-        return 1
+        scrape_jobs = None
+        if base.get("companies"):
+            print("  JobSpy not installed - skipping keyword search, running ATS boards only.")
+        else:
+            print("  JobSpy is not installed. Run: pip install python-jobspy")
+            return 1
 
-    base = cfg["search"]
-    # One search per profile; each profile overrides the base search (location,
-    # is_remote, hours_old, ...). No profiles -> a single search from the base
-    # (backwards compatible).
-    profiles = base.get("profiles") or [{}]
-    total_new = 0
-    total_seen = 0
-    for prof in profiles:
-        s = {**base, **prof}
-        label = prof.get("name") or s.get("location") or "search"
-        if len(profiles) > 1:
-            print(f"\n  == profile: {label} "
-                  f"(location={s.get('location')!r}, hours_old={s.get('hours_old')}) ==")
-        new, seen = _scan_profile(scrape_jobs, s, store, label)
-        total_new += new
-        total_seen += seen
+    if scrape_jobs is not None:
+        # One search per profile; each profile overrides the base search (location,
+        # is_remote, hours_old, ...). No profiles -> a single search from the base
+        # (backwards compatible).
+        profiles = base.get("profiles") or [{}]
+        for prof in profiles:
+            s = {**base, **prof}
+            label = prof.get("name") or s.get("location") or "search"
+            if len(profiles) > 1:
+                print(f"\n  == profile: {label} "
+                      f"(location={s.get('location')!r}, hours_old={s.get('hours_old')}) ==")
+            new, seen = _scan_profile(scrape_jobs, s, store, label)
+            total_new += new
+            total_seen += seen
+
+    # ATS boards: pull configured companies' public job boards directly. Needs
+    # only `requests`, so it runs even when JobSpy is unavailable.
+    from . import ats
+    total_new += ats.run(cfg, store)
 
     print(f"\n  scan complete: {total_new} new / {total_seen} seen. "
           f"Next: python -m jobscope match")

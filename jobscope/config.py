@@ -33,6 +33,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "linkedin_fetch_description": True,
         "proxies": [],
         "profiles": [],
+        "companies": [],
     },
     "match": {
         "weights": {
