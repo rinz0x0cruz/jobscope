@@ -93,6 +93,10 @@ def cmd_apply(args, cfg):
 def cmd_dashboard(args, cfg):
     from . import render
     with _store(args, cfg) as store:
+        if getattr(args, "emit_json", False):
+            path = render.emit_json(cfg, store, public=getattr(args, "public", False))
+            print(f"  dashboard json -> {path}")
+            return 0
         path = render.build(cfg, store, public=getattr(args, "public", False))
     print(f"  dashboard -> {path}")
     if getattr(args, "open", False):
@@ -187,6 +191,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--public", action="store_true",
                     help="Render a redacted copy safe for public hosting "
                          "(no referral contacts, application funnel, or search terms)")
+    sp.add_argument("--emit-json", action="store_true",
+                    help="Write the dashboard data as JSON (data/dashboard[.public].json) "
+                         "for the web build, instead of rendering HTML")
     sp.set_defaults(func=cmd_dashboard)
 
     sp = sub.add_parser("serve", help="Serve the dashboard locally")

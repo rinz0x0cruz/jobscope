@@ -37,6 +37,38 @@ def build(cfg: dict, store, public: bool = False) -> str:
     return path
 
 
+def build_data(cfg: dict, store, public: bool = False) -> dict:
+    """Assemble the dashboard payload (rows + overview) as a plain dict.
+
+    This is the data contract the web dashboard build consumes; it reuses the exact
+    per-job and overview shapes the HTML renderer uses, and applies the public
+    redaction when ``public`` is set.
+    """
+    jobs = store.jobs(order_by_score=True)
+    rows = [_job_record(j, store.get_enrichment(j.company) if j.company else {}, store)
+            for j in jobs]
+    overview = _overview_data(cfg, store)
+    if public:
+        _redact_public(rows, overview)
+    return {"generated": now_iso(), "total": len(rows), "rows": rows, "overview": overview}
+
+
+def _json_path(cfg: dict, public: bool) -> str:
+    dash = cfg["output"].get("dashboard_path") or "data/dashboard.html"
+    directory = os.path.dirname(os.path.abspath(dash)) or "."
+    return os.path.join(directory, "dashboard.public.json" if public else "dashboard.json")
+
+
+def emit_json(cfg: dict, store, public: bool = False) -> str:
+    """Write the dashboard payload to data/dashboard[.public].json; return the path."""
+    data = build_data(cfg, store, public=public)
+    path = _json_path(cfg, public)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, separators=(",", ":"))
+    return path
+
+
 def _redact_public(rows: list[dict], overview: dict) -> None:
     """Strip private fields in place for a publicly-hosted (GitHub Pages) dashboard.
 
