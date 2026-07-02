@@ -119,6 +119,21 @@ def test_derive_remote_scope_classifies_region_vs_global():
     assert derive_remote_scope("Dublin, County Dublin, Ireland", "Security Engineer", False) == ""
 
 
+def test_derive_remote_scope_rejects_noise():
+    # "in" is word-anchored: "India" must not be read as "in" + "dia"
+    assert derive_remote_scope("Remote India", "", True) == "global"
+    assert derive_remote_scope("Remote Indiana", "", True) == "global"
+    # the title is never parsed, so job-title words can't leak into the scope
+    assert derive_remote_scope("Remote,", "Security Engineer II", True) == "global"
+    # work-mode words are stripped rather than becoming a fake region
+    assert derive_remote_scope("Remote-first", "", True) == "global"
+    assert derive_remote_scope("US - Remote", "", True) == "global"
+    # a trailing "-remote" on a real place is cleaned back to the place
+    assert derive_remote_scope("Bengaluru, US-Remote", "", True) == "United States"
+    # multi-region tokens normalize each side
+    assert derive_remote_scope("Remote - US/Canada", "", True) == "United States/Canada"
+
+
 def test_row_to_job_sets_scope_and_raw_flag():
     geo = scrape._row_to_job({
         "site": "linkedin", "title": "Detection Engineer", "company": "Acme",
