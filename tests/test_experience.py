@@ -23,6 +23,17 @@ def test_explicit_years_phrases():
     assert required_experience_years(_job("Security Engineer", "a great team")) is None
 
 
+def test_broader_experience_phrases():
+    # phrasings the original three patterns missed (real postings use these constantly)
+    assert required_experience_years(_job("Security Engineer", "at least 5 years")) == 5.0
+    assert required_experience_years(_job("Security Engineer", "minimum of 6 years")) == 6.0
+    assert required_experience_years(_job("Security Engineer", "7 years required")) == 7.0
+    assert required_experience_years(_job("Security Engineer", "5 years of relevant industry experience")) == 5.0
+    assert required_experience_years(_job("Security Engineer", "5 yrs exp")) == 5.0
+    assert required_experience_years(_job("Security Engineer", "3 to 5 years")) == 3.0
+    assert required_experience_years(_job("Security Engineer", "5 years' experience")) == 5.0
+
+
 def test_takes_highest_bar_across_title_and_text():
     # Senior title (~4y) + "8+ years" text -> 8; conservative so it doesn't leak through a cap.
     assert required_experience_years(_job("Senior Engineer", "8+ years in security")) == 8.0

@@ -67,7 +67,7 @@ def _scan_profile(scrape_jobs, s: dict, store, label: str) -> tuple[int, int]:
                 country_indeed=s.get("country_indeed", "USA"),
                 distance=s.get("distance", 50),
                 description_format="markdown",
-                linkedin_fetch_description=s.get("linkedin_fetch_description", False),
+                linkedin_fetch_description=s.get("linkedin_fetch_description", True),
                 verbose=0,
             )
             # optional proxies protect your main IP on big scans (no fake accounts)
