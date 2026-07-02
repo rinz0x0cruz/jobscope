@@ -23,12 +23,34 @@ def build(cfg: dict, store) -> str:
     for j in jobs:
         enr = store.get_enrichment(j.company) if j.company else {}
         rows.append(_job_record(j, enr, store))
+    overview = _overview_data(cfg, store)
     path = cfg["output"]["dashboard_path"]
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    htmltext = _render(rows)
+    htmltext = _render(rows, overview)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(htmltext)
     return path
+
+
+def _overview_data(cfg: dict, store) -> dict:
+    """Extra summary data for the Overview tab: application funnel, skill gaps, targets."""
+    funnel: dict[str, int] = {}
+    try:
+        for a in store.applications():
+            s = a.get("status") or "new"
+            funnel[s] = funnel.get(s, 0) + 1
+    except Exception:  # noqa: BLE001 - overview is best-effort, never break the dashboard
+        pass
+    gaps: list = []
+    considered = 0
+    try:
+        from .insights import skill_gap
+        considered, ranked = skill_gap(store, top=8)
+        gaps = [[s, c] for s, c, _ex in ranked]
+    except Exception:  # noqa: BLE001
+        pass
+    targets = list((cfg.get("search") or {}).get("terms") or [])
+    return {"funnel": funnel, "gaps": gaps, "considered": considered, "targets": targets}
 
 
 def _job_record(job, enr: dict, store) -> dict[str, Any]:
@@ -100,10 +122,12 @@ def _fmt_salary(job) -> str:
     return f"{f(lo or hi)}{unit}"
 
 
-def _render(rows: list[dict]) -> str:
+def _render(rows: list[dict], overview: dict | None = None) -> str:
     data = json.dumps(rows).replace("</", "<\\/")
+    ov = json.dumps(overview or {}).replace("</", "<\\/")
     return (_TEMPLATE
             .replace("__DATA__", data)
+            .replace("__OVERVIEW__", ov)
             .replace("__GENERATED__", html.escape(now_iso()))
             .replace("__TOTAL__", str(len(rows))))
 
@@ -183,6 +207,53 @@ select#sort, select#resume, select#group{background:var(--card); color:var(--fg)
 .chip b{color:var(--dim); font-variant-numeric:tabular-nums; font-weight:600}
 .chip.off{opacity:.4}
 .chip.off .dot{background:var(--mute)}
+/* tabs */
+.tabs{display:flex; gap:4px; padding:14px 24px 0; flex-wrap:wrap; border-bottom:1px solid var(--border)}
+.tab{background:transparent; border:0; border-bottom:2px solid transparent; color:var(--dim);
+  padding:9px 14px; font-size:14px; font-weight:600; cursor:pointer; display:inline-flex; gap:7px;
+  align-items:center; transition:.15s; margin-bottom:-1px}
+.tab:hover{color:var(--fg)}
+.tab.active{color:var(--fg); border-bottom-color:var(--c)}
+.tab b{font-variant-numeric:tabular-nums; color:var(--c);
+  background:color-mix(in srgb,var(--c) 16%,transparent); padding:0 8px; border-radius:99px; font-size:12px}
+/* overview */
+#overview{padding:18px 24px 60px}
+.view[hidden]{display:none}
+.ov-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(258px,1fr)); gap:14px; margin-top:14px}
+.panel{background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px 18px}
+.panel.wide{grid-column:1/-1}
+.panel h3{font-size:12px; text-transform:uppercase; letter-spacing:.07em; color:var(--mute); margin:0 0 13px; font-weight:600}
+.panel h4{font-size:12px; color:var(--mute); margin:15px 0 8px; font-weight:600}
+.donut-wrap{display:flex; gap:20px; align-items:center; flex-wrap:wrap}
+.donut{width:132px; height:132px; border-radius:50%; flex:none; display:grid; place-items:center}
+.donut .hole{width:96px; height:96px; border-radius:50%; background:var(--card); display:grid; place-items:center; text-align:center}
+.donut .hole b{font-size:27px; font-weight:720; letter-spacing:-.5px; line-height:1}
+.donut .hole span{font-size:11px; color:var(--mute)}
+.legend{display:grid; gap:7px; min-width:120px}
+.legend .lg{font-size:13px; color:var(--dim); display:flex; gap:8px; align-items:center}
+.legend .lg .dot{width:9px;height:9px;border-radius:3px}
+.legend .lg b{color:var(--fg)} .legend .lg i{color:var(--mute); font-style:normal; margin-left:auto}
+.frow{display:flex; align-items:center; gap:10px; font-size:13px; color:var(--dim); margin:7px 0}
+.frow>span{min-width:92px; max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.frow b{color:var(--fg); margin-left:auto; font-variant-numeric:tabular-nums}
+.fbar{flex:1; height:7px; background:var(--bg2); border-radius:99px; overflow:hidden; min-width:40px}
+.fbar i{display:block; height:100%; background:var(--accent)}
+.muted{color:var(--mute); font-size:13px; line-height:1.5}
+.chips-static{display:flex; gap:6px; flex-wrap:wrap}
+.tchip{font-size:12px; background:var(--accent-dim); color:var(--accent); border-radius:99px; padding:3px 11px}
+.stack{display:flex; height:10px; border-radius:99px; overflow:hidden; background:var(--bg2)}
+.stack i{display:block; height:100%}
+.stack-lg{display:flex; gap:12px; flex-wrap:wrap; margin-top:8px}
+.stack-lg .lg{font-size:12px; color:var(--dim); display:flex; gap:6px; align-items:center}
+.stack-lg .lg .dot{width:8px;height:8px;border-radius:3px} .stack-lg .lg b{color:var(--fg)}
+.ovtable{width:100%; border-collapse:collapse; font-size:13px}
+.ovtable th{text-align:left; color:var(--mute); font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+  padding:7px 10px; border-bottom:1px solid var(--border)}
+.ovtable td{padding:9px 10px; border-bottom:1px solid var(--border); color:var(--dim)}
+.ovtable tbody tr{cursor:pointer; transition:.12s}
+.ovtable tbody tr:hover{background:var(--bg2)}
+.ovtable td:nth-child(2){color:var(--fg); font-weight:500}
+.tierpill.sm{font-size:11px; padding:2px 8px}
 /* list */
 main{padding:12px 24px 60px; display:grid; gap:11px}
 .job{background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
@@ -287,53 +358,37 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
   </button>
 </header>
-<section class="kpis" id="kpis"></section>
-<section class="chips" id="chips"></section>
-<main id="list"></main>
+<nav class="tabs" id="tabs"></nav>
+<section id="overview" class="view"></section>
+<main id="list" class="view" hidden></main>
 <div id="overlay"></div>
 <aside id="drawer" aria-label="Job details"></aside>
 <footer>jobscope · local dashboard · your data stays on this machine</footer>
 <script>
 const DATA = __DATA__;
+const OVERVIEW = __OVERVIEW__;
 const TIERC = {Strong:'#22c55e',Good:'#3b82f6',Stretch:'#f59e0b',Skip:'#71717a'};
-const off = new Set(['Skip']);
+const BARC = ['#7c6cff','#22c55e','#3b82f6','#f59e0b','#71717a','#e879f9'];
+const TABS = ['overview','Strong','Good','Stretch','Skip'];
+let activeTab = 'overview';
 const q = document.getElementById('q'), sortSel = document.getElementById('sort'), resumeSel = document.getElementById('resume'), groupSel = document.getElementById('group');
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const isNew = r => r.first_seen && (Date.now()-Date.parse(r.first_seen) < 864e5);
 
 function counts(items){const c={Strong:0,Good:0,Stretch:0,Skip:0};(items||DATA).forEach(r=>c[r.tier]=(c[r.tier]||0)+1);return c}
-function animate(el,to){const t0=performance.now(),dur=650;
-  (function step(t){const k=Math.min(1,(t-t0)/dur),e=1-Math.pow(1-k,3);
-   el.textContent=Math.round(to*e);if(k<1)requestAnimationFrame(step)})(t0)}
 function statsFor(items){
   const c=counts(items); let sum=0,scored=0,blocked=0;
   items.forEach(r=>{ if(r.blocked) blocked++; else if(r.score>0){ sum+=r.score; scored++; } });
   return {c, total:items.length, avg:scored?Math.round(sum/scored):0, blocked};
 }
-function paintKpis(items, first){
-  const st=statsFor(items);
-  const cards=[['Total',st.total,''],['Strong',st.c.Strong,'s'],['Good',st.c.Good,'g'],
-    ['Avg score',st.avg,''],['Filtered',st.blocked,'']];
-  const host=document.getElementById('kpis');
-  if(first){
-    host.innerHTML=cards.map(([l,v,cl])=>
-      `<div class="kpi ${cl}"><div class="lab">${l}</div><div class="val tnum" data-v="${v}">0</div><div class="bar"></div></div>`).join('');
-    host.querySelectorAll('.val').forEach(el=>animate(el,+el.dataset.v));
-  } else {
-    const vals=host.querySelectorAll('.val');
-    cards.forEach(([l,v],i)=>{ if(vals[i]){ vals[i].textContent=v; vals[i].dataset.v=v; } });
-  }
-}
-function buildChips(){
-  document.getElementById('chips').innerHTML=['Strong','Good','Stretch','Skip'].map(t=>
-    `<button class="chip ${off.has(t)?'off':''}" data-tier="${t}" style="--c:${TIERC[t]}">
-       <span class="dot"></span>${t} <b class="tnum" data-count="${t}">0</b></button>`).join('');
-  document.querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>{
-    const t=ch.dataset.tier; off.has(t)?off.delete(t):off.add(t); ch.classList.toggle('off'); render();});
-}
-function paintChipCounts(items){
-  const c=counts(items);
-  document.querySelectorAll('#chips .tnum').forEach(b=>{ b.textContent=c[b.dataset.count]||0; });
+function pct(n,t){return t?Math.round(n/t*100):0;}
+function tally(arr){const m={}; arr.forEach(x=>m[x]=(m[x]||0)+1); return m;}
+function topN(m,n){return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,n);}
+function stackBar(m){
+  const segs=Object.entries(m).sort((a,b)=>b[1]-a[1]); const tot=segs.reduce((a,kv)=>a+kv[1],0)||1;
+  const bar=segs.map(([k,v],i)=>`<i style="width:${v/tot*100}%;background:${BARC[i%BARC.length]}" title="${esc(k)}: ${v}"></i>`).join('');
+  const lg=segs.map(([k,v],i)=>`<span class="lg"><span class="dot" style="background:${BARC[i%BARC.length]}"></span>${esc(k)} <b>${v}</b></span>`).join('');
+  return `<div class="stack">${bar}</div><div class="stack-lg">${lg}</div>`;
 }
 function metaDots(r){const e=r.enrich||{}, d=[];
   if(r.size) d.push('🏢 '+r.size);
@@ -388,18 +443,65 @@ function groupItems(items){
   }
   return [...map.values()];
 }
-function render(first){
-  const s=sortSel.value, base=scoped();
-  paintKpis(base, !!first); paintChipCounts(base);
-  let items=base.filter(r=>!off.has(r.tier));
+function buildTabs(base){
+  const c=counts(base);
+  document.getElementById('tabs').innerHTML=TABS.map(t=>{
+    const lab=t==='overview'?'Overview':t;
+    const badge=t==='overview'?'':`<b>${c[t]||0}</b>`;
+    const col=t==='overview'?'var(--accent)':TIERC[t];
+    return `<button class="tab ${activeTab===t?'active':''}" data-tab="${t}" style="--c:${col}">${lab}${badge}</button>`;
+  }).join('');
+  document.querySelectorAll('#tabs .tab').forEach(b=>b.onclick=()=>{ activeTab=b.dataset.tab; render(); });
+}
+function renderOverview(base){
+  const st=statsFor(base), c=st.c, total=base.length;
+  const kpis=[['Total',total],['Strong',c.Strong],['Good',c.Good],['Avg score',st.avg],['Filtered',st.blocked]]
+    .map(([l,v])=>`<div class="kpi"><div class="lab">${l}</div><div class="val tnum">${v}</div></div>`).join('');
+  const order=['Strong','Good','Stretch','Skip'], dt=order.reduce((a,t)=>a+(c[t]||0),0)||1;
+  let acc=0; const segs=order.filter(t=>c[t]).map(t=>{const p=(c[t]||0)/dt*100, s=`${TIERC[t]} ${acc}% ${acc+p}%`; acc+=p; return s;});
+  const donut=`<div class="donut" style="background:conic-gradient(${segs.join(',')||'var(--border) 0 100%'})"><div class="hole"><b>${total}</b><span>analyzed</span></div></div>`;
+  const legend=order.map(t=>`<div class="lg"><span class="dot" style="background:${TIERC[t]}"></span>${t} <b>${c[t]||0}</b> <i>${pct(c[t]||0,dt)}%</i></div>`).join('');
+  const fn=OVERVIEW.funnel||{}, fk=Object.keys(fn), ftot=fk.reduce((a,k)=>a+fn[k],0);
+  const funnel=fk.length?fk.map(k=>`<div class="frow"><span>${esc(k)}</span><div class="fbar"><i style="width:${pct(fn[k],ftot)}%"></i></div><b>${fn[k]}</b></div>`).join('')
+    :`<div class="muted">No applications tracked yet.<br>Run <code>prep &lt;id&gt;</code> then <code>track</code>.</div>`;
+  const rzBar=stackBar(tally(base.map(r=>r.base||'unassigned')));
+  const rmBar=stackBar(tally(base.map(r=>r.remote?'remote':'on-site')));
+  const topco=topN(tally(base.map(r=>r.company||'\u2014')),7).map(([n,k])=>`<div class="frow"><span>${esc(n)}</span><b>${k}</b></div>`).join('') || '<div class="muted">\u2014</div>';
+  const gaps=(OVERVIEW.gaps||[]).length?(OVERVIEW.gaps||[]).slice(0,8).map(g=>`<div class="frow"><span>${esc(g[0])}</span><div class="fbar"><i style="width:${pct(g[1],OVERVIEW.considered||1)}%"></i></div><b>${g[1]}</b></div>`).join('')
+    :'<div class="muted">No skill gaps \u2014 your resumes cover the market.</div>';
+  const targets=(OVERVIEW.targets||[]).map(t=>`<span class="tchip">${esc(t)}</span>`).join('') || '<span class="muted">\u2014</span>';
+  const top=[...base].sort((a,b)=>b.score-a.score).slice(0,10);
+  const rows=top.map(r=>`<tr data-i="${r._i}"><td class="tnum" style="color:${TIERC[r.tier]}">${r.score}</td><td>${esc(r.title)}</td><td>${esc(r.company||'')}</td><td><span class="tierpill sm" style="--c:${TIERC[r.tier]}"><span class="dot"></span>${r.tier}</span></td><td>${esc(r.base||'')}</td></tr>`).join('');
+  document.getElementById('overview').innerHTML=`
+    <div class="kpis">${kpis}</div>
+    <div class="ov-grid">
+      <div class="panel"><h3>Analyzed</h3><div class="donut-wrap">${donut}<div class="legend">${legend}</div></div></div>
+      <div class="panel"><h3>Targeting these roles</h3><div class="chips-static">${targets}</div>
+        <h4>By resume</h4>${rzBar}<h4>By location</h4>${rmBar}</div>
+      <div class="panel"><h3>Application funnel</h3>${funnel}</div>
+      <div class="panel"><h3>Top companies</h3>${topco}</div>
+      <div class="panel wide"><h3>Skill gaps that unlock the most matches</h3>${gaps}</div>
+    </div>
+    <div class="panel wide" style="margin-top:14px"><h3>Top matches</h3>
+      <table class="ovtable"><thead><tr><th>Score</th><th>Title</th><th>Company</th><th>Tier</th><th>Resume</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  document.querySelectorAll('.ovtable tbody tr').forEach(tr=>tr.onclick=()=>openDrawer(+tr.dataset.i));
+}
+function render(){
+  const base=scoped();
+  buildTabs(base);
+  const ov=document.getElementById('overview'), list=document.getElementById('list');
+  if(activeTab==='overview'){ list.hidden=true; ov.hidden=false; renderOverview(base); return; }
+  ov.hidden=true; list.hidden=false;
+  const s=sortSel.value;
+  let items=base.filter(r=>r.tier===activeTab);
   if(groupSel.value!=='off') items=groupItems(items);
   if(s==='company') items=[...items].sort((a,b)=>(a.company||'').localeCompare(b.company||''));
   else if(s==='new') items=[...items].sort((a,b)=>(b.first_seen||'').localeCompare(a.first_seen||''));
   else if(s==='resume') items=[...items].sort((a,b)=>(a.base||'').localeCompare(b.base||'')||(b.score-a.score));
   else items=[...items].sort((a,b)=>b.score-a.score);
-  const list=document.getElementById('list');
   list.innerHTML=items.length?items.map(card).join('')
-    :`<div class="empty">No matching jobs.<br><br>Run <code>jobscope scan</code> then <code>jobscope match</code>.</div>`;
+    :`<div class="empty">No ${activeTab} jobs match.</div>`;
 }
 const overlay=document.getElementById('overlay'), drawer=document.getElementById('drawer');
 function sec(t,html){return html?`<div class="sec"><h3>${t}</h3>${html}</div>`:''}
@@ -450,5 +552,5 @@ document.addEventListener('keydown',e=>{
     else if(document.activeElement===q){q.value='';q.blur();render()} }});
 q.oninput=()=>render(); sortSel.onchange=()=>render(); resumeSel.onchange=()=>render(); groupSel.onchange=()=>render();
 DATA.forEach((r,i)=>r._i=i);
-buildChips(); resumeFilters(); render(true);
+resumeFilters(); render();
 </script></body></html>"""
