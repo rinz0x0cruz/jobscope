@@ -85,7 +85,7 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `brief <job_id>` | Blunt, risk-forward company brief (no marketing fluff) |
 | `gaps [--top N]` | Skill-gap learning plan: skills to learn ranked by jobs unlocked |
 | `new` | New Strong/Good jobs since you last reviewed |
-| `dashboard [--open]` / `serve` | Render / serve the local HTML dashboard (click a card to expand full detail) |
+| `dashboard [--open] [--public]` / `serve` | Render / serve the local HTML dashboard (click a card to expand full detail); `--public` writes a redacted copy safe to host |
 | `track [--set job_id=status]` | Application funnel, rates, and follow-up reminders |
 | `export [--format json\|csv]` | Export ranked jobs |
 | `selftest` | Offline self-tests (no network, no keys) |
@@ -117,6 +117,29 @@ The dashboard is master–detail: cards show only the essentials (score, title,
 company · location, a couple of intel dots), and clicking one slides open a drawer
 with the company brief, compensation, stock/IPO, Reddit, Glassdoor, news, referral
 leads, and the score rationale. Close with the ✕, the backdrop, or `Esc`.
+
+## Publish to GitHub Pages (view on mobile)
+
+The dashboard is a single self-contained HTML file, so you can host it and open it
+from your phone. The full dashboard embeds private data (referral contacts, your
+application funnel, and search terms), so publish the **redacted** copy:
+
+```bash
+python -m jobscope dashboard --public   # -> data/public-dashboard.html (no contacts / funnel / search terms)
+```
+
+`scripts/publish.ps1` (Windows) / `scripts/publish.sh` (macOS/Linux) render that
+redacted copy and push it to a `gh-pages` branch via a throwaway git worktree —
+your database never leaves your machine. One-time setup:
+
+1. Run the script once by hand to create `gh-pages` and cache your git credential.
+2. Enable Pages: **repo → Settings → Pages → Deploy from a branch → `gh-pages` / root**.
+   The dashboard is then live at `https://<user>.github.io/<repo>/`.
+3. Auto-refresh (Windows): `scripts/register-publish-task.ps1` registers a daily
+   Scheduled Task that re-renders and pushes while you're logged on.
+
+> GitHub Pages is **public**. Only the redacted copy is published, but treat the URL
+> as shareable — keep real data in the local (`dashboard`) view.
 
 ## Multi-resume matching
 

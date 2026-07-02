@@ -93,7 +93,7 @@ def cmd_apply(args, cfg):
 def cmd_dashboard(args, cfg):
     from . import render
     with _store(args, cfg) as store:
-        path = render.build(cfg, store)
+        path = render.build(cfg, store, public=getattr(args, "public", False))
     print(f"  dashboard -> {path}")
     if getattr(args, "open", False):
         import webbrowser
@@ -184,6 +184,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("dashboard", help="Render the HTML dashboard")
     sp.add_argument("--open", action="store_true", help="Open in browser")
+    sp.add_argument("--public", action="store_true",
+                    help="Render a redacted copy safe for public hosting "
+                         "(no referral contacts, application funnel, or search terms)")
     sp.set_defaults(func=cmd_dashboard)
 
     sp = sub.add_parser("serve", help="Serve the dashboard locally")

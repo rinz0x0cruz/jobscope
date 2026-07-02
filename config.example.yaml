@@ -119,3 +119,4 @@ apply:
 output:
   db_path: "data/jobscope.db"
   dashboard_path: "data/dashboard.html"
+  public_dashboard_path: "data/public-dashboard.html"   # redacted copy for `dashboard --public` / GitHub Pages

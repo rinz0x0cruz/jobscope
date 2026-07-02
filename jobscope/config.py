@@ -99,6 +99,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "output": {
         "db_path": "data/jobscope.db",
         "dashboard_path": "data/dashboard.html",
+        "public_dashboard_path": "data/public-dashboard.html",
     },
 }
 

@@ -17,19 +17,39 @@ from .store import now_iso
 TIER_COLORS = {"Strong": "#16a34a", "Good": "#2563eb", "Stretch": "#d97706", "Skip": "#6b7280"}
 
 
-def build(cfg: dict, store) -> str:
+def build(cfg: dict, store, public: bool = False) -> str:
     jobs = store.jobs(order_by_score=True)
     rows = []
     for j in jobs:
         enr = store.get_enrichment(j.company) if j.company else {}
         rows.append(_job_record(j, enr, store))
     overview = _overview_data(cfg, store)
-    path = cfg["output"]["dashboard_path"]
+    if public:
+        _redact_public(rows, overview)
+        path = cfg["output"].get("public_dashboard_path") or cfg["output"]["dashboard_path"]
+    else:
+        path = cfg["output"]["dashboard_path"]
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     htmltext = _render(rows, overview)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(htmltext)
     return path
+
+
+def _redact_public(rows: list[dict], overview: dict) -> None:
+    """Strip private fields in place for a publicly-hosted (GitHub Pages) dashboard.
+
+    Removes third-party referral contacts, score rationale, and resume-variant
+    labels from every job, plus the application funnel and search terms from the
+    overview -- leaving only public job info and fit scores. The ``blocked`` flag
+    is already computed in ``_job_record``, so clearing ``rationale`` here is safe.
+    """
+    for r in rows:
+        r["contacts"] = []
+        r["rationale"] = ""
+        r["base"] = ""
+    overview["funnel"] = {}
+    overview["targets"] = []
 
 
 def _overview_data(cfg: dict, store) -> dict:

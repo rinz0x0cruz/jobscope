@@ -17,6 +17,9 @@ config.json
 data/*
 !data/.gitkeep
 
+# gh-pages publish worktree (transient; created by scripts/publish.*)
+/.gh-pages/
+
 # Playwright / browsers
 .cache/
 
