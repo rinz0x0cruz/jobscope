@@ -204,7 +204,7 @@ Self-contained `data/dashboard.html` (inline CSS/JS, no deps, no network). Your 
 
 ### List (bucket tabs)
 - **Cards** (minimal): score + bar, title, company · location, matched-resume tag, `NEW` (<24h), intel dots
-  (size, salary, stock ticker/Private, Glassdoor, Reddit, contacts, news), tier pill.
+  (funding, salary, stock ticker/Private, Glassdoor, Reddit, contacts, news), tier pill.
 - **Detail drawer** (click a card): company brief, compensation, stock/IPO, Reddit, Glassdoor, recent news,
   referral leads, "why this rank", and — when grouped — an "All postings" list. Close with ✕, backdrop, or `Esc`.
 - **Grouping** (`Group: on/off`, on by default): collapses duplicate postings of the same role
@@ -213,9 +213,9 @@ Self-contained `data/dashboard.html` (inline CSS/JS, no deps, no network). Your 
 
 ### Controls (apply within the active bucket / scope)
 - **Search** box (`/` to focus, `Esc` to clear): filters by title / company / rationale; also scopes the Overview.
-- **Facet filters** — **Resume** (2+ resumes), **Country** (derived from location), **Company size**
-  (mega/large/mid/small/startup). All stack together (AND) with search, the active tab, and grouping;
-  each auto-hides when there's only one value.
+- **Facet filters** — **Resume** (2+ resumes), **Country** (derived from location), **Funding**
+  (`public` / `unicorn` — a compensation proxy from curated funding data). All stack together (AND) with
+  search, the active tab, and grouping; each auto-hides when there's only one value.
 - **Group** on/off; **theme** light/dark (persisted). Lists are ordered by score (desc).
 
 ---

@@ -132,6 +132,15 @@ def test_company_size_bands():
     assert company_size("Totally Unknown Co") == (0.5, "")        # neutral, no band
 
 
+def test_company_funding_tiers():
+    from jobscope.companies import company_funding
+    assert company_funding("CrowdStrike") == "public"            # publicly traded
+    assert company_funding("Palo Alto Networks, Inc.") == "public"
+    assert company_funding("Wiz") == "unicorn"                   # private $1B+
+    assert company_funding("Databricks") == "unicorn"
+    assert company_funding("Totally Unknown Co") == ""           # unknown -> blank
+
+
 def test_prefer_company_size_direction():
     big = match._company_score(_job(company="Amazon"), {"prefer_company_size": "large"})[0]
     small = match._company_score(_job(company="Amazon"), {"prefer_company_size": "small"})[0]

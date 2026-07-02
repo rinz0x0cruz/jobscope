@@ -92,6 +92,7 @@ def _job_record(job, enr: dict, store) -> dict[str, Any]:
         "base": job.resume_base or "",
         "salary": salary,
         "size": companies.company_size(job.company)[1] if job.company else "",
+        "funding": companies.company_funding(job.company) if job.company else "",
         "country": _country_of(job),
         "industry": job.company_industry,
         "rationale": rationale,
@@ -204,7 +205,7 @@ h1{font-size:16px; margin:0; letter-spacing:-.2px; font-weight:650}
 #q:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); width:320px}
 .kbd{position:absolute; right:9px; top:50%; transform:translateY(-50%); color:var(--mute);
   font:11px var(--mono); border:1px solid var(--border); border-radius:5px; padding:1px 5px; background:var(--bg2)}
-select#resume, select#country, select#size, select#group{background:var(--card); color:var(--fg); border:1px solid var(--border);
+select#resume, select#country, select#funding, select#group{background:var(--card); color:var(--fg); border:1px solid var(--border);
   border-radius:10px; padding:9px 10px; font-size:13px; outline:none; cursor:pointer}
 .iconbtn{background:var(--card); border:1px solid var(--border); color:var(--dim);
   width:38px;height:38px;border-radius:10px; cursor:pointer; display:grid; place-items:center; transition:.16s}
@@ -368,7 +369,7 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
   </div>
   <select id="resume" hidden><option value="">All resumes</option></select>
   <select id="country" hidden><option value="">All countries</option></select>
-  <select id="size" hidden><option value="">All sizes</option></select>
+  <select id="funding" hidden><option value="">All funding</option></select>
   <select id="group" title="Group duplicate postings of the same role">
     <option value="on">Group: on</option>
     <option value="off">Group: off</option>
@@ -390,7 +391,7 @@ const TIERC = {Strong:'#22c55e',Good:'#3b82f6',Stretch:'#f59e0b',Skip:'#71717a'}
 const BARC = ['#7c6cff','#22c55e','#3b82f6','#f59e0b','#71717a','#e879f9'];
 const TABS = ['overview','Strong','Good','Stretch','Skip'];
 let activeTab = 'overview';
-const q = document.getElementById('q'), resumeSel = document.getElementById('resume'), countrySel = document.getElementById('country'), sizeSel = document.getElementById('size'), groupSel = document.getElementById('group');
+const q = document.getElementById('q'), resumeSel = document.getElementById('resume'), countrySel = document.getElementById('country'), fundingSel = document.getElementById('funding'), groupSel = document.getElementById('group');
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const isNew = r => r.first_seen && (Date.now()-Date.parse(r.first_seen) < 864e5);
 
@@ -410,7 +411,7 @@ function stackBar(m){
   return `<div class="stack">${bar}</div><div class="stack-lg">${lg}</div>`;
 }
 function metaDots(r){const e=r.enrich||{}, d=[];
-  if(r.size) d.push('🏢 '+r.size);
+  if(r.funding) d.push('💵 '+r.funding);
   if(r.salary) d.push('💰');
   if(e.stock&&e.stock.ticker) d.push('📈 '+e.stock.ticker);
   else if(e.stock&&e.stock.public===false) d.push('🏦 Private');
@@ -447,14 +448,14 @@ function fillSelect(sel, allLabel, values, fmt){
 function facetFilters(){
   fillSelect(resumeSel,'All resumes',[...new Set(DATA.map(r=>r.base).filter(Boolean))].sort(),v=>'Resume: '+v);
   fillSelect(countrySel,'All countries',[...new Set(DATA.map(r=>r.country).filter(Boolean))].sort());
-  const order=['mega','large','mid','small','startup'];
-  fillSelect(sizeSel,'All sizes',order.filter(s=>DATA.some(r=>r.size===s)),v=>v+' companies');
+  const order=['public','unicorn'];
+  fillSelect(fundingSel,'All funding',order.filter(f=>DATA.some(r=>r.funding===f)),v=>'Funding: '+v);
 }
 function scoped(){
-  const term=q.value.trim().toLowerCase(), rez=resumeSel.value, ctry=countrySel.value, sz=sizeSel.value;
+  const term=q.value.trim().toLowerCase(), rez=resumeSel.value, ctry=countrySel.value, fnd=fundingSel.value;
   return DATA.filter(r=>!rez || r.base===rez)
     .filter(r=>!ctry || r.country===ctry)
-    .filter(r=>!sz || r.size===sz)
+    .filter(r=>!fnd || r.funding===fnd)
     .filter(r=>!term || (r.title+' '+r.company+' '+(r.rationale||'')).toLowerCase().includes(term));
 }
 function normTitle(t){return (t||'').toLowerCase().replace(/\(.*?\)|\[.*?\]/g,' ').replace(/[^a-z0-9]+/g,' ').trim();}
@@ -550,7 +551,7 @@ function openDrawer(i){
       `<a class="lnk" href="${esc(m.url||'#')}" target="_blank">${esc(m.source||'link')} · ${esc(m.location||'\u2014')} · ${m.score} \u2197</a>`).join('');
     b+=sec(`All postings (${r._members.length})`, rows);
   }
-  const meta=[r.base?`<span class="tag">${esc(r.base)}</span> base`:'', r.size?`${esc(r.size)} company`:'', r.posted?`Posted ${esc(r.posted)}`:''].filter(Boolean).join(' · ');
+  const meta=[r.base?`<span class="tag">${esc(r.base)}</span> base`:'', r.funding?`funding: ${esc(r.funding)}`:'', r.posted?`Posted ${esc(r.posted)}`:''].filter(Boolean).join(' · ');
   drawer.innerHTML=`<div class="dw-head"><div class="dw-top">
       <div class="dw-score" style="color:${col}">${r.score}</div>
       <div><div class="dw-title">${esc(r.title)}</div><div class="dw-co">${esc(r.company||'')} · ${esc(r.location||'')}</div></div>
@@ -574,7 +575,7 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='Escape'){ if(drawer.classList.contains('on'))closeDrawer();
     else if(document.activeElement===q){q.value='';q.blur();render()} }});
 q.oninput=()=>render();
-[resumeSel,countrySel,sizeSel,groupSel].forEach(s=>s.onchange=()=>render());
+[resumeSel,countrySel,fundingSel,groupSel].forEach(s=>s.onchange=()=>render());
 DATA.forEach((r,i)=>r._i=i);
 facetFilters(); render();
 </script></body></html>"""

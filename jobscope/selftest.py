@@ -137,12 +137,15 @@ def _selftest_filters(c: "_Check") -> None:
     job = Job(title="Malware Analyst", description="yara malware analysis " * 5)
     _, _, _, base = select_base(job, [("research", r1), ("consulting", r2)], _default_match_cfg())
     c.ok("select_base picks best resume", base == "research", base)
-    from .companies import company_quality, company_size
+    from .companies import company_quality, company_size, company_funding
     c.ok("company_quality: elite", company_quality("Google")[0] == 1.0)
     c.ok("company_quality: unknown neutral", company_quality("Obscure Widgets LLC")[0] == 0.5)
     c.ok("company_size: mega", company_size("Amazon Web Services") == (1.00, "mega"))
     c.ok("company_size: startup band", company_size("Wiz")[1] == "small")
     c.ok("company_size: unknown neutral", company_size("Obscure Widgets LLC") == (0.5, ""))
+    c.ok("company_funding: public", company_funding("CrowdStrike") == "public")
+    c.ok("company_funding: unicorn", company_funding("Wiz") == "unicorn")
+    c.ok("company_funding: unknown blank", company_funding("Obscure Widgets LLC") == "")
     from .match import _company_score
     big = {"prefer_company_size": "large"}
     small = {"prefer_company_size": "small"}

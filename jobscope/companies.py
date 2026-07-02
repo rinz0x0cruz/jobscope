@@ -109,3 +109,44 @@ def company_size(company: str) -> tuple[float, str]:
             if ns and ns <= ct:
                 return score, label
     return 0.5, ""
+
+
+# --- company funding tier (a compensation proxy) --------------------------
+# Best-effort, curated. Funding correlates with ability/tendency to pay:
+#   public  = publicly traded (liquid equity, generally strongest cash comp)
+#   unicorn = private, ~$1B+ valuation / heavily VC-funded (strong comp + upside)
+# Everything else is left blank (unknown). Funding drifts (IPOs, downrounds), so
+# treat this as a rough band, not live Crunchbase data.
+_PUBLIC = ["google", "alphabet", "meta", "apple", "amazon", "microsoft", "netflix",
+           "nvidia", "oracle", "intel", "cisco", "sap", "adobe", "salesforce",
+           "qualcomm", "broadcom", "paypal", "servicenow", "workday", "tesla", "uber",
+           "lyft", "airbnb", "spotify", "atlassian", "block", "snap", "pinterest",
+           "coinbase", "palantir", "datadog", "cloudflare", "snowflake", "mongodb",
+           "gitlab", "twilio", "okta", "zscaler", "crowdstrike", "palo alto networks",
+           "fortinet", "sentinelone", "tenable", "rapid7", "qualys", "varonis",
+           "cyberark", "check point", "akamai", "elastic", "confluent", "hashicorp",
+           "dynatrace", "docusign", "unity", "roblox", "dell", "hpe", "ibm", "amd",
+           "micron", "visa", "mastercard", "adp", "intuit", "autodesk", "ebay",
+           "cognizant", "infosys", "wipro", "tcs", "hcltech", "accenture", "capgemini"]
+_UNICORN = ["stripe", "databricks", "canva", "openai", "anthropic", "wiz", "snyk",
+            "netskope", "abnormal security", "orca security", "sysdig", "lacework",
+            "rippling", "ramp", "notion", "figma", "discord", "airtable", "miro",
+            "revolut", "plaid", "brex", "deel", "gusto", "vercel", "retool", "temporal",
+            "grafana", "cockroach labs", "scale ai", "anduril", "mistral", "cohere",
+            "perplexity", "hugging face", "1password", "tanium", "arctic wolf", "cyera",
+            "island", "chainguard", "huntress", "semgrep", "socure", "aqua security"]
+
+_FUNDING_TIERS = [("public", _PUBLIC), ("unicorn", _UNICORN)]
+_FUNDING_COMPILED = [(label, [_tokens(n) for n in names]) for label, names in _FUNDING_TIERS]
+
+
+def company_funding(company: str) -> str:
+    """Return a funding tier ('public' | 'unicorn') or '' if unknown (comp proxy)."""
+    ct = _tokens(company)
+    if not ct:
+        return ""
+    for label, namesets in _FUNDING_COMPILED:
+        for ns in namesets:
+            if ns and ns <= ct:
+                return label
+    return ""
