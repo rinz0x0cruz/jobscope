@@ -68,3 +68,35 @@ def test_company_dash_title_and_years():
     # experience-scoped: intern (2024) + FT (2025->present) ~= 1-2y, not 4 (education excluded)
     assert 0.5 <= r.years_experience <= 3
     assert r.seniority in ("junior", "mid")
+
+
+BULLET_NOISE = """# Sam Poe
+
+Bengaluru, India \u00b7 sam@example.com
+
+## PROFESSIONAL EXPERIENCE
+
+### Acme \u2014 Security Researcher
+*Bengaluru, India \u00b7 Jan 2025 \u2013 Present*
+- Built metrics and standardized reports for engineering, analysts, and senior leadership.
+- Reverse-engineered 8 malware families.
+
+### Acme \u2014 Security Researcher Intern
+*Bengaluru, India \u00b7 May 2024 \u2013 Aug 2024*
+- Triaged CVEs.
+
+## EDUCATION
+**University \u2014 B.Tech**
+*2021 \u2013 2025*
+"""
+
+
+def test_bullet_prose_does_not_leak_titles_or_seniority():
+    r = _parse(BULLET_NOISE)
+    # comma-separated bullet prose must not be captured as job titles
+    assert all("leadership" not in t.lower() for t in r.titles), r.titles
+    assert all(not t.lower().startswith("and ") for t in r.titles), r.titles
+    assert any(t.lower() == "security researcher" for t in r.titles), r.titles
+    # ~1yr (intern + researcher) must not read as "senior" from a stray bullet word
+    assert r.seniority != "senior", r.seniority
+    assert r.seniority in ("junior", "mid", "intern"), r.seniority

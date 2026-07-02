@@ -262,25 +262,44 @@ ROLE_WORDS = ("engineer", "developer", "manager", "analyst", "architect", "consu
 _SEP_RE = re.compile(r"\s*[\u2014\u2013\-\u00b7|,]\s*")
 
 
+def _looks_like_title(seg: str) -> bool:
+    """True when a segment reads like a job title, not a sentence fragment."""
+    if not (2 < len(seg) <= 48):
+        return False
+    low = seg.lower()
+    if low.startswith(("http", "www", "and ", "or ", "for ", "with ", "the ", "a ", "to ", "of ")):
+        return False
+    if seg[-1] in ".:;":                         # sentences / trailing punctuation
+        return False
+    if len(seg.split()) > 6:                      # real titles are short
+        return False
+    if not re.search(r"\b(?:" + "|".join(ROLE_WORDS) + r")\b", low):
+        return False
+    first = next((ch for ch in seg if ch.isalpha()), "")
+    return bool(first) and first.isupper()        # titles are Title-Cased
+
+
 def _guess_titles(text: str) -> list[str]:
-    """Capture role titles from headings like '### Company — Title' or '**Title**'."""
+    """Capture role titles from headings ('### Company - Title', '**Title**') or
+    compact 'Title - Company - dates' rows, ignoring bullet prose."""
     titles, seen = [], set()
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
-        is_heading = line.startswith("#") or line.startswith("**")
+        is_heading = line.startswith("#") or (line.startswith("**") and line.endswith("**"))
         cleaned = line.lstrip("#").strip().strip("*").strip()
         if not (is_heading or _SEP_RE.search(cleaned)):
             continue
         for seg in _SEP_RE.split(cleaned):
-            seg = seg.strip().strip("*_")
+            seg = seg.strip().strip("*_").strip()
+            if not _looks_like_title(seg):
+                continue
             low = seg.lower()
-            if 2 < len(seg) <= 60 and any(w in low for w in ROLE_WORDS):
-                if low in seen or low.startswith(("http", "www")):
-                    continue
-                seen.add(low)
-                titles.append(seg)
+            if low in seen:
+                continue
+            seen.add(low)
+            titles.append(seg)
     return titles[:12]
 
 
@@ -334,13 +353,19 @@ def _infer_seniority(titles: list[str], years: float) -> str:
                     has_intern = True
                 else:
                     ranks.append(rank)
-    # An explicit seniority word in a title is authoritative; years is only a
-    # fallback proxy (so a titled "Senior" with 10 years stays senior, not staff).
-    title_rank = max(ranks) if ranks else -1
-    if title_rank >= 0:
-        return rank_label.get(title_rank, "")
     if has_intern and years < 1:
         return "intern"
+    # Years is the anchor; a seniority word in a title may nudge the label by at
+    # most one band. So a stray "Senior" on a ~1-year resume can't claim a
+    # seniority it hasn't earned, while a genuine title still lifts an
+    # under-titled year count (e.g. "Senior" + 10y stays senior, not staff).
+    title_rank = max(ranks) if ranks else -1
+    yr_rank = _years_rank(years)
+    if title_rank >= 0 and yr_rank >= 0:
+        rank = min(max(title_rank, yr_rank - 1), yr_rank + 1)
+        return rank_label.get(rank, "")
+    if title_rank >= 0:
+        return rank_label.get(title_rank, "")
     return _years_label(years)
 
 
