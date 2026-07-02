@@ -52,9 +52,13 @@ Run notes: `python -m jobscope` needs the repo root as CWD and `PYTHONPATH="."` 
 2. **Grow `COMPANY_BOARDS`:** find correct slugs for the ones that returned 0 (snyk, confluent, hashicorp)
    and add more security unicorns. Big Workday employers (CrowdStrike / Palo Alto / Zscaler) have no simple
    public board API — skip unless a clean source appears.
-3. **Publishing hygiene:** run the daily publish Scheduled Task on **one** machine only (avoid double pushes).
-   The task on this machine is registered (`jobscope publish`, daily 08:00, not yet fired). On the other
-   machine, do **not** register it unless you retire this one.
+3. **Publishing hygiene:** the daily publish must push from **one** machine only (avoid double pushes).
+   `scripts/register-publish-task.ps1` designates the publisher by writing a gitignored `.publish-primary`
+   marker (hostname + UTC timestamp); `scripts/publish.ps1` / `scripts/publish.sh` skip the git push on any
+   machine whose marker is missing or names a different host, unless `-Force` / `--force` (or
+   `JOBSCOPE_PUBLISH_FORCE=1`). `scripts/unregister-publish-task.ps1` retires a machine (removes the task +
+   marker). The task on this machine is registered (`jobscope publish`, daily 08:00); on another machine run
+   `register-publish-task.ps1` there only after retiring this one.
 4. **Optional:** store the raw JobSpy `is_remote` separately so future re-derivations don't lose signal.
 
 ## 5. Guardrails (don't regress these)

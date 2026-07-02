@@ -20,6 +20,9 @@ data/*
 # dashboard publish clone (transient; created by scripts/publish.*)
 /.dashboard-repo/
 
+# designated-publisher marker (one machine pushes; written by register-publish-task.ps1)
+.publish-primary
+
 # Playwright / browsers
 .cache/
 

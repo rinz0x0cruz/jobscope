@@ -25,7 +25,8 @@
 [CmdletBinding()]
 param(
     [string]$Repo = "https://github.com/rinz0x0cruz/jobscope-dashboard.git",
-    [string]$Branch = "main"
+    [string]$Branch = "main",
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,6 +51,17 @@ if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --public failed (exit $LAST
 
 $PublicHtml = Join-Path $RepoRoot "data\public-dashboard.html"
 if (-not (Test-Path $PublicHtml)) { throw "expected dashboard not found: $PublicHtml" }
+
+# Publish gate: only the designated publisher (the machine that ran
+# register-publish-task.ps1, which wrote .publish-primary) pushes, to avoid double
+# git pushes. Rendering above always runs; only the push below is gated. Use -Force
+# to override.
+$Marker = Join-Path $RepoRoot ".publish-primary"
+if (-not $Force) {
+    if (-not (Test-Path $Marker)) { Write-Host "==> Not the designated publisher (no .publish-primary marker). Skipping push. Run scripts/register-publish-task.ps1 here to designate this machine, or pass -Force."; return }
+    $MarkerHost = (Get-Content $Marker -TotalCount 1).Trim()
+    if ($MarkerHost -and $MarkerHost -ne $env:COMPUTERNAME) { Write-Host "==> Marker names '$MarkerHost', not this machine '$env:COMPUTERNAME'. Skipping push. Pass -Force to override."; return }
+}
 
 # 2. Publish index.html to the separate public dashboard repo via a persistent
 #    (gitignored) clone. Only this machine pushes there, so a plain push is safe.

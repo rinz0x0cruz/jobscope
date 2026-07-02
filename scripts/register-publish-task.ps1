@@ -50,7 +50,14 @@ $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force | Out-Null
 
+# Designate THIS machine as the publisher: write the gitignored marker that
+# publish.ps1 / publish.sh check before pushing (prevents double git pushes).
+$Marker = Join-Path $RepoRoot ".publish-primary"
+Set-Content -Path $Marker -Value "$env:COMPUTERNAME`n$((Get-Date).ToUniversalTime().ToString('o'))" -Encoding UTF8
+
 Write-Host "Registered scheduled task '$TaskName' -> daily at $Time."
 Write-Host "Runs: $PublishPs1"
+Write-Host "This machine ($env:COMPUTERNAME) is now the designated publisher (wrote .publish-primary)."
+Write-Host "Other machines will skip the push unless they run this script or pass -Force."
 Write-Host "Run it now with:  Start-ScheduledTask -TaskName '$TaskName'"
-Write-Host "Remove it with:   Unregister-ScheduledTask -TaskName '$TaskName' -Confirm:`$false"
+Write-Host "Retire this machine with:  ./scripts/unregister-publish-task.ps1"

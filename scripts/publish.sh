@@ -9,6 +9,18 @@
 #   defaults: https://github.com/rinz0x0cruz/jobscope-dashboard.git  main
 set -euo pipefail
 
+# Force support: a --force flag (stripped here before positional parsing) or
+# JOBSCOPE_PUBLISH_FORCE=1 bypasses the publish gate below.
+FORCE="${JOBSCOPE_PUBLISH_FORCE:-}"
+POSITIONAL=()
+for arg in "$@"; do
+    case "$arg" in
+        --force) FORCE=1 ;;
+        *) POSITIONAL+=("$arg") ;;
+    esac
+done
+set -- "${POSITIONAL[@]+"${POSITIONAL[@]}"}"
+
 REPO="${1:-https://github.com/rinz0x0cruz/jobscope-dashboard.git}"
 BRANCH="${2:-main}"
 
@@ -24,6 +36,18 @@ PYTHONPATH=. "$PY" -m jobscope dashboard --public
 
 PUBLIC_HTML="$REPO_ROOT/data/public-dashboard.html"
 [ -f "$PUBLIC_HTML" ] || { echo "expected dashboard not found: $PUBLIC_HTML" >&2; exit 1; }
+
+# Publish gate: only the designated publisher (the machine that ran
+# register-publish-task.ps1, which wrote .publish-primary) pushes, to avoid double
+# git pushes. Rendering above always runs; only the push below is gated. Use --force
+# (or JOBSCOPE_PUBLISH_FORCE=1) to override.
+MARKER="$REPO_ROOT/.publish-primary"
+if [ -z "${FORCE:-}" ]; then
+    if [ ! -f "$MARKER" ]; then echo "==> Not the designated publisher (no .publish-primary marker). Skipping push. Run scripts/register-publish-task.ps1 (or create the marker) here, or pass --force."; exit 0; fi
+    MHOST="$(head -n1 "$MARKER" | tr -d '[:space:]')"
+    HOSTN="$(hostname)"
+    if [ -n "$MHOST" ] && [ "$MHOST" != "$HOSTN" ]; then echo "==> Marker names '$MHOST', not this machine '$HOSTN'. Skipping push. Pass --force to override."; exit 0; fi
+fi
 
 # 2. Publish index.html to the separate public dashboard repo via a persistent
 #    (gitignored) clone. Only this machine pushes there, so a plain push is safe.
