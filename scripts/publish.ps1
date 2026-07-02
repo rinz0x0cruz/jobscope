@@ -1,32 +1,31 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Render the redacted jobscope dashboard and publish it to the gh-pages branch
-    so it is viewable from a phone via GitHub Pages.
+    Render the redacted jobscope dashboard and publish it to the public
+    jobscope-dashboard repo so it is viewable from a phone via GitHub Pages.
 
 .DESCRIPTION
     Runs `jobscope dashboard --public` to produce a redacted, self-contained HTML
-    (no referral contacts, application funnel, or search terms), then copies it as
-    index.html onto an orphan `gh-pages` branch through a throwaway git worktree and
-    pushes it. Your database and packages stay local; only the redacted snapshot
-    reaches GitHub.
+    (no referral contacts, application funnel, or search terms), then pushes it as
+    index.html to a separate PUBLIC repo (jobscope-dashboard) whose Pages site serves
+    it. The jobscope code repo can stay private; only the redacted snapshot is public,
+    in a repo with a clean history. Your database/packages never leave your machine.
 
-    Safe to run from a scheduled task. Commits use the local rinz0x0cruz identity so
-    a global (work) git identity never leaks into gh-pages history.
+    Safe to run from a scheduled task. Commits use the local rinz0x0cruz identity.
+
+.PARAMETER Repo
+    HTTPS URL of the public dashboard repo to publish to.
 
 .PARAMETER Branch
-    Branch that GitHub Pages serves from. Default "gh-pages".
-
-.PARAMETER Remote
-    Git remote to push to. Default "origin".
+    Branch GitHub Pages serves from on that repo. Default "main".
 
 .EXAMPLE
     ./scripts/publish.ps1
 #>
 [CmdletBinding()]
 param(
-    [string]$Branch = "gh-pages",
-    [string]$Remote = "origin"
+    [string]$Repo = "https://github.com/rinz0x0cruz/jobscope-dashboard.git",
+    [string]$Branch = "main"
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,41 +51,26 @@ if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --public failed (exit $LAST
 $PublicHtml = Join-Path $RepoRoot "data\public-dashboard.html"
 if (-not (Test-Path $PublicHtml)) { throw "expected dashboard not found: $PublicHtml" }
 
-# 2. Publish to gh-pages through a detached worktree so `main` is never disturbed.
-$WorkTree = Join-Path $RepoRoot ".gh-pages"
+# 2. Publish index.html to the separate public dashboard repo via a persistent
+#    (gitignored) clone. Only this machine pushes there, so a plain push is safe.
+$DashDir = Join-Path $RepoRoot ".dashboard-repo"
 $Name  = "rinz0x0cruz"
 $Email = "rinz0x0cruz@users.noreply.github.com"
 
-# Clean any stale worktree left by an interrupted run.
-if (Test-Path $WorkTree) {
-    git worktree remove --force $WorkTree 2>$null
-    if (Test-Path $WorkTree) { Remove-Item -Recurse -Force $WorkTree -ErrorAction SilentlyContinue }
+if (-not (Test-Path (Join-Path $DashDir ".git"))) {
+    git clone --quiet $Repo $DashDir
+    if ($LASTEXITCODE -ne 0) { throw "clone of $Repo failed (is a credential cached?)" }
 }
 
-git show-ref --verify --quiet "refs/heads/$Branch"
-$branchExists = ($LASTEXITCODE -eq 0)
+Copy-Item $PublicHtml (Join-Path $DashDir "index.html") -Force
+New-Item -ItemType File -Path (Join-Path $DashDir ".nojekyll") -Force | Out-Null
 
+Push-Location $DashDir
 try {
-    if ($branchExists) {
-        git worktree add --quiet $WorkTree $Branch
-        if ($LASTEXITCODE -ne 0) { throw "git worktree add failed" }
-    } else {
-        git worktree add --quiet --detach $WorkTree HEAD
-        if ($LASTEXITCODE -ne 0) { throw "git worktree add (detach) failed" }
-        Push-Location $WorkTree
-        git checkout --orphan $Branch
-        git rm -rf --quiet . 2>$null
-        Pop-Location
-    }
+    # Ensure we're on $Branch (create it on the first publish to an empty repo).
+    git rev-parse --verify --quiet $Branch 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) { git checkout -q $Branch } else { git checkout -q -B $Branch }
 
-    # Publish exactly { index.html, .nojekyll }.
-    Get-ChildItem -Path $WorkTree -Force |
-        Where-Object { $_.Name -ne ".git" } |
-        Remove-Item -Recurse -Force
-    Copy-Item $PublicHtml (Join-Path $WorkTree "index.html") -Force
-    New-Item -ItemType File -Path (Join-Path $WorkTree ".nojekyll") -Force | Out-Null
-
-    Push-Location $WorkTree
     git add -A
     git diff --cached --quiet
     if ($LASTEXITCODE -eq 0) {
@@ -94,14 +78,12 @@ try {
     } else {
         $stamp = (Get-Date).ToUniversalTime().ToString("o")
         git -c user.name=$Name -c user.email=$Email commit -q -m "chore: publish dashboard $stamp"
-        if ($LASTEXITCODE -ne 0) { Pop-Location; throw "commit failed" }
-        git push -q $Remote $Branch
-        if ($LASTEXITCODE -ne 0) { Pop-Location; throw "push failed (is a credential cached / remote reachable?)" }
-        Write-Host "==> Published to $Remote/$Branch."
+        if ($LASTEXITCODE -ne 0) { throw "commit failed" }
+        git push -q -u origin $Branch
+        if ($LASTEXITCODE -ne 0) { throw "push failed (is a credential cached / remote reachable?)" }
+        Write-Host "==> Published to $Repo ($Branch)."
     }
-    Pop-Location
 }
 finally {
-    git worktree remove --force $WorkTree 2>$null
-    if (Test-Path $WorkTree) { Remove-Item -Recurse -Force $WorkTree -ErrorAction SilentlyContinue }
+    Pop-Location
 }
