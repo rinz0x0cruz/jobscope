@@ -9,7 +9,11 @@ from __future__ import annotations
 from typing import Any, Optional
 from urllib.parse import quote_plus
 
+from .registry import source
 
+
+@source(section="comp", config_key="compensation",
+        call=lambda fn, ctx: fn(ctx.company, ctx.job))
 def enrich(company: str, job) -> Optional[dict[str, Any]]:
     out: dict[str, Any] = {
         "levels_fyi": f"https://www.levels.fyi/companies/{_slug(company)}/salaries",

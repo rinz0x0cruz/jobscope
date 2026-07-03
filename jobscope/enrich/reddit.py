@@ -9,6 +9,7 @@ from typing import Any, Optional
 from urllib.parse import quote_plus
 
 from .. import httpx
+from .registry import source
 
 SEARCH_URL = "https://www.reddit.com/search.json"
 
@@ -20,6 +21,7 @@ NEG = {"bad", "worst", "toxic", "layoff", "layoffs", "fired", "avoid", "scam", "
        "overworked", "rejected", "ghosted", "shady", "nightmare", "quit", "pip"}
 
 
+@source(section="reddit", config_key="reddit")
 def enrich(company: str) -> Optional[dict[str, Any]]:
     q = f'"{company}"'
     payload = httpx.get_json(

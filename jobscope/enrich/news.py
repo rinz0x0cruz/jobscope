@@ -8,9 +8,13 @@ from __future__ import annotations
 from typing import Any, Optional
 from urllib.parse import quote_plus
 
+from .registry import source
+
 GOOGLE_NEWS = "https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
 
 
+@source(section="news", config_key="news",
+        call=lambda fn, ctx: fn(ctx.company, ctx.ecfg.get("news_feeds", [])))
 def enrich(company: str, extra_feeds: list[str] | None = None) -> Optional[list[dict[str, Any]]]:
     try:
         import feedparser
