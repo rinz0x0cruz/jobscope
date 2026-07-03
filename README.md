@@ -133,7 +133,7 @@ python -m jobscope inbox                      # sync (incremental) -> funnel
 python -m jobscope inbox --backfill           # rescan lookback_days
 python -m jobscope track                      # updated funnel + response/interview/offer rates
 python -m jobscope track --timeline <job_id>  # email history for one application
-python -m jobscope dashboard --open           # the funnel shows on the dashboard
+python -m jobscope dashboard --open           # Applications board: pipeline columns + email timelines
 ```
 
 Multiple mailboxes: add more entries under `accounts`, each with its own
