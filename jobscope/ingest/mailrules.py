@@ -119,12 +119,12 @@ _RULES: list[tuple[str, list[str]]] = [
         r"schedule (?:a |an |your )?(?:call|time|chat|conversation|meeting|screen)",
         r"(?:phone|video|recruiter|hiring manager|initial) screen",
         r"(?:your|share your|let us know your) availability",
-        r"(?:next|following) steps? (?:in|of|for) (?:the|your|our)",
+        r"next steps?.{0,40}(?:schedul|interview|call|conversation|availab|meet|chat)",
         r"like to (?:speak|chat|meet|connect|talk|discuss)",
         r"set up (?:a |some )?(?:call|time|chat|meeting)",
         r"book (?:a )?time",
         r"calendly\.com|savvycal|cal\.com",
-        r"invite you to (?:a|an|the|interview)",
+        r"invit(?:e|ing) you (?:to|for) (?:an? )?(?:interview|call|conversation|chat|screen(?:ing)?|meeting)",
         r"move(?:d)? (?:you )?(?:to|forward to|on to) the (?:next|interview)",
     ]),
     ("confirmation", [
@@ -153,6 +153,13 @@ _RULES: list[tuple[str, list[str]]] = [
 _COMPILED: list[tuple[str, list[re.Pattern[str]]]] = [
     (sig, [re.compile(p, re.I) for p in pats]) for sig, pats in _RULES
 ]
+_PATTERNS: dict[str, list[re.Pattern[str]]] = dict(_COMPILED)
+
+
+def _matches(signal: str, text: str) -> bool:
+    """True if any compiled pattern for ``signal`` matches ``text``."""
+    return any(p.search(text) for p in _PATTERNS.get(signal, []))
+
 
 # Signals that on their own mark an email as job-related even from an unknown
 # sender domain (a recruiter cold-email from a random domain is intentionally
@@ -185,6 +192,32 @@ _NOREPLY_LOCALPARTS = {
     "no-reply", "noreply", "no_reply", "donotreply", "do-not-reply", "careers",
     "jobs", "recruiting", "recruitment", "talent", "hr", "hello", "notifications",
     "notification", "mailer", "mail", "team", "people", "hiring", "apply",
+    "hrms", "hcm", "workday", "taleo", "system", "portal", "admin", "info",
+}
+
+# Tokens that are never a real company -- they leak from body filler like
+# "...at this time" / "applying to us" or status words, and must be discarded.
+_COMPANY_STOP = {
+    "us", "you", "your", "this time", "the moment", "present", "now", "today",
+    "here", "the team", "our team", "the company", "the position", "the role",
+    "a", "an", "the", "application", "applications", "update", "status",
+    "confirmation", "received", "team", "job", "role", "position", "opening",
+}
+
+# Email-service / HR-platform domains that RELAY employer mail but are not the
+# employer, so their registrable name must never be used as the company.
+_RELAY_DOMAINS = {
+    "amazonses.com", "sparkpostmail.com", "sparkpost.com", "sendgrid.net",
+    "sendgrid.com", "mailgun.org", "mandrillapp.com", "mcsv.net", "rsgsv.net",
+    "oracle.com", "outlook.com", "office365.com", "sapsf.com",
+    "successfactors.com", "darwinbox.in", "darwinbox.com", "ycombinator.com",
+}
+
+# Subdomain / TLD labels stripped when deriving a company from a domain.
+_DOMAIN_NOISE = {
+    "com", "io", "co", "net", "org", "ai", "app", "inc", "mail", "email",
+    "hr", "www", "jobs", "careers", "recruiting", "talent", "notifications",
+    "e", "us", "eu", "in", "uk", "gov", "edu",
 }
 
 
@@ -210,17 +243,44 @@ def is_ats_domain(from_domain: str) -> bool:
     return any(d == k or d.endswith("." + k) for k in ATS_DOMAINS)
 
 
+def company_from_domain(from_domain: str) -> str:
+    """Company name from a *direct* employer sending domain (zscaler.com ->
+    "Zscaler", tide.co -> "Tide"). Returns "" for ATS/job-board/relay domains,
+    whose registrable name is a platform/ESP, not the employer."""
+    d = (from_domain or "").lower().strip().strip(".")
+    if not d or domain_platform(d):
+        return ""
+    if any(d == r or d.endswith("." + r) for r in _RELAY_DOMAINS):
+        return ""
+    labels = [p for p in d.split(".") if p not in _DOMAIN_NOISE]
+    if not labels:
+        return ""
+    name = labels[-1]
+    if len(name) < 2 or name.isdigit():
+        return ""
+    return _title(name)
+
+
 def classify_signal(from_addr: str, subject: str, body: str) -> str:
     """Classify an email into one of model.SIGNALS using ordered keyword rules.
 
-    Precedence (rejection/offer first) avoids the common false-positive where a
-    rejection or offer email also mentions "interview" or "application".
+    Precedence: rejection/offer are decisive from anywhere (their phrasing is
+    rarely boilerplate and they often quote earlier "interview"/"application"
+    words). A clear confirmation *subject* then beats interview/recruiter body
+    boilerplate -- ATS "application received" mail pads the body with "next
+    steps" text. Otherwise the ordered rules run over the full subject+body.
     """
-    text = f"{subject or ''}\n{body or ''}"
-    for signal, patterns in _COMPILED:
-        for pat in patterns:
-            if pat.search(text):
-                return signal
+    subject = subject or ""
+    text = f"{subject}\n{body or ''}"
+    for signal in ("rejection", "offer"):
+        if _matches(signal, text):
+            return signal
+    if _matches("confirmation", subject) and not (
+            _matches("interview", subject) or _matches("assessment", subject)):
+        return "confirmation"
+    for signal in ("assessment", "interview", "confirmation", "recruiter"):
+        if _matches(signal, text):
+            return signal
     return "other"
 
 
@@ -311,6 +371,17 @@ _JOB_APPLICATION = re.compile(
     r"(?:your|the)\s+(?P<company>[A-Za-z0-9 &.'-]{2,40}?)\s+job\s+application\b", re.I)
 _ROLE_DASH = re.compile(
     r"^(?P<company>[A-Za-z0-9 &.,'-]{2,50}?)\s*[-\u2013\u2014|:]\s*(?P<role>[A-Za-z0-9 ,+/&().-]{2,60})$")
+# "thank you for your interest in <Company>" (rejection/confirmation phrasing).
+_INTEREST_IN = re.compile(
+    r"interest(?:ed)?\s+in\s+(?:working\s+(?:at|with)\s+|joining\s+)?"
+    r"(?P<company>[A-Za-z0-9][A-Za-z0-9 &.'-]{1,49}?)"
+    r"(?=[!.?,]|\s+(?:team|careers?|for|and|as|to|has|is|was|been|please|thank|we)\b|$)",
+    re.I)
+# "... at <Company>" where Company is a Proper Noun: the capitalised start
+# filters filler like "at this time"; stop at pipe/paren/punctuation or line end.
+_AT_COMPANY = re.compile(
+    r"\bat\s+(?P<company>[A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z0-9][A-Za-z0-9&.'-]*){0,3})"
+    r"(?=\s*[|(]|[!.?,)]|\s+(?:for|and|as|team|careers?)\b|$)")
 
 
 def parse_company_role(from_name: str, from_domain: str, subject: str,
@@ -328,32 +399,37 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
     m = _ROLE_AT_COMPANY.search(subject)
     if m:
         role = _clean(m.group("role"))
-        company = _clean(_strip_company_noise(m.group("company")))
+        company = _pick(_strip_company_noise(m.group("company")))
 
-    if not company:
-        m = _APPLICATION_TO.search(subject)
+    for pattern in (_APPLICATION_TO, _INTEREST_IN, _JOB_APPLICATION, _AT_COMPANY):
+        if company:
+            break
+        m = pattern.search(subject)
         if m:
-            company = _clean(_strip_company_noise(m.group("company")))
+            company = _pick(_strip_company_noise(m.group("company")))
 
+    # A direct employer domain (ey.com, zscaler.com) beats a system sender
+    # display like "HRMS"; ATS/board/relay domains yield "" here.
     if not company:
-        m = _JOB_APPLICATION.search(subject)
-        if m:
-            company = _clean(_strip_company_noise(m.group("company")))
+        company = _pick(company_from_domain(from_domain))
 
     if not company:                      # body as a last resort (subject wins)
         m = _APPLICATION_TO.search(body or "")
         if m:
-            company = _clean(_strip_company_noise(m.group("company")))
+            company = _pick(_strip_company_noise(m.group("company")))
 
     # Sender display name is often the real company ("Databricks Recruiting").
     if not company:
-        company = _company_from_sender(from_name, from_domain)
+        company = _pick(_company_from_sender(from_name, from_domain))
 
     if not role:
         m = _ROLE_DASH.match(subject.strip())
         if m:
             role = _clean(m.group("role"))
-            company = company or _clean(m.group("company"))
+            if not company:
+                cand = _strip_company_noise(m.group("company"))
+                if len(cand.split()) <= 3:
+                    company = _pick(cand)
 
     return company, role
 
@@ -364,15 +440,8 @@ def _company_from_sender(from_name: str, from_domain: str) -> str:
     stripped = normalize_company(name)
     if stripped and stripped not in _NOREPLY_LOCALPARTS and len(stripped) > 1:
         return _title(name)
-    # Fall back to the registrable part of a non-ATS corporate domain.
-    plat = domain_platform(from_domain)
-    if not plat:
-        d = (from_domain or "").lower()
-        parts = [p for p in d.split(".") if p not in ("com", "io", "co", "net",
-                 "org", "ai", "app", "mail", "email", "hr", "www", "jobs", "careers")]
-        if parts:
-            return _title(parts[-1])
-    return ""
+    # Fall back to a direct employer domain (skips ATS/board/relay platforms).
+    return company_from_domain(from_domain)
 
 
 def _clean(s: str) -> str:
@@ -380,6 +449,19 @@ def _clean(s: str) -> str:
     # Strip a trailing recruiting/careers tag left on a company token.
     s = _COMPANY_SUFFIXES.sub("", s).strip(" -|:,.")
     return re.sub(r"\s+", " ", s).strip()
+
+
+def _valid_company(c: str) -> bool:
+    """Reject empty/too-short tokens and known body filler ("us", "this time")."""
+    key = normalize_company(c)
+    return (bool(key) and len(key) > 1
+            and key not in _COMPANY_STOP and key not in _NOREPLY_LOCALPARTS)
+
+
+def _pick(s: str) -> str:
+    """Clean a candidate company, returning it only if it is a plausible name."""
+    c = _clean(s)
+    return c if _valid_company(c) else ""
 
 
 # Trailing status/verb phrases that get glued onto a company captured from a

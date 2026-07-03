@@ -170,6 +170,77 @@ def test_normalize_company_strips_suffix():
     assert mailrules.normalize_company("Acme Technologies LLC") == "acme"
 
 
+# --- mailrules: subject authority + robust company parsing ------------------
+def test_classify_confirmation_subject_beats_interview_body():
+    # ATS "application received" confirmations pad the body with interview-ish
+    # boilerplate ("next steps", "we'll invite you"); the subject must win.
+    assert mailrules.classify_signal(
+        "no-reply@darwinbox.in", "Application Received for Security Analyst",
+        "Thanks for applying. Here are the next steps in the process and we will "
+        "invite you to the next stage in due course.") == "confirmation"
+    assert mailrules.classify_signal(
+        "no-reply@zscaler.com", "Thank you for your application to Zscaler!",
+        "We'll be in touch about next steps and may invite you to a conversation."
+    ) == "confirmation"
+
+
+def test_classify_interview_still_detected_from_subject():
+    # A genuine interview invite (no confirmation subject) still classifies.
+    assert mailrules.classify_signal(
+        "x@greenhouse.io", "Invitation to interview",
+        "We'd like to invite you to an interview.") == "interview"
+
+
+def test_classify_rejection_still_wins_from_body():
+    assert mailrules.classify_signal(
+        "no-reply@ashbyhq.com", "Your application to Acme",
+        "Unfortunately we will not be moving forward at this time.") == "rejection"
+
+
+def test_parse_company_interest_in():
+    company, _ = mailrules.parse_company_role(
+        "Tide", "gh-mail.tide.co", "Thank you for your interest in Tide", "")
+    assert company.lower() == "tide"
+
+
+def test_parse_company_at_company_tail():
+    # A long role prefix precedes the employer -- grab the trailing "at <Company>".
+    company, _ = mailrules.parse_company_role(
+        "no-reply", "myworkday.com",
+        "Your application for R0000441842 Lead Engineer (CTI team) (Open) at Target",
+        "")
+    assert company == "Target"
+
+
+def test_parse_company_at_company_with_pipe():
+    company, _ = mailrules.parse_company_role(
+        "no-reply", "example-relay.com",
+        "Thank you for your application at MantleSolutions | 75 Security Analyst", "")
+    assert company == "MantleSolutions"
+
+
+def test_parse_company_from_direct_domain():
+    # A direct employer domain is the company when the subject names none.
+    company, _ = mailrules.parse_company_role(
+        "Recruiting", "zscaler.com", "We received your application", "")
+    assert company.lower() == "zscaler"
+
+
+def test_parse_company_rejects_body_filler():
+    # "application at this time" must never yield the company "this time".
+    company, _ = mailrules.parse_company_role(
+        "Careers", "greenhouse.io", "Update on your application",
+        "Regarding your application at this time, we have no update.")
+    assert company == ""
+
+
+def test_parse_company_ignores_system_display():
+    # A darwinbox "HRMS" system display over a relay domain is not a company.
+    company, _ = mailrules.parse_company_role(
+        "HRMS", "darwinbox.in", "Application Received for Analyst - L0", "")
+    assert company == ""
+
+
 # --- mailrules: status machine ----------------------------------------------
 def test_signal_to_status():
     assert mailrules.signal_to_status("confirmation") == "applied"
