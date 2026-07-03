@@ -15,6 +15,7 @@ Usage:
     python -m jobscope dashboard [--open]          Render the HTML dashboard
     python -m jobscope serve [--port 8799 --open]  Serve the dashboard locally
     python -m jobscope track [--set job_id=status] Funnel + follow-up reminders
+    python -m jobscope inbox [--dry-run]           Sync Gmail (IMAP) -> application funnel
     python -m jobscope export [--format json|csv]  Export ranked jobs
     python -m jobscope selftest                     Offline self-tests (no network)
 """
@@ -113,7 +114,15 @@ def cmd_serve(args, cfg):
 def cmd_track(args, cfg):
     from . import track
     with _store(args, cfg) as store:
-        return track.run(store, set_expr=getattr(args, "set", None), cfg=cfg)
+        return track.run(store, set_expr=getattr(args, "set", None), cfg=cfg,
+                         timeline=getattr(args, "timeline", None))
+
+
+def cmd_inbox(args, cfg):
+    from . import inbox
+    with _store(args, cfg) as store:
+        return inbox.run(cfg, store, dry_run=args.dry_run, account=args.account,
+                         since=args.since, backfill=args.backfill)
 
 
 def cmd_new(args, cfg):
@@ -203,7 +212,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("track", help="View / update application status")
     sp.add_argument("--set", default=None, help="job_id=status")
+    sp.add_argument("--timeline", default=None, metavar="JOB_ID",
+                    help="Show the email timeline (mail_events) for an application")
     sp.set_defaults(func=cmd_track)
+
+    sp = sub.add_parser("inbox", help="Sync Gmail (IMAP) for application-status emails")
+    sp.add_argument("--account", default=None, help="Only sync this configured email address")
+    sp.add_argument("--since", default=None, metavar="YYYY-MM-DD",
+                    help="Scan mail since this date (default: incremental / lookback_days on first run)")
+    sp.add_argument("--backfill", action="store_true",
+                    help="Ignore the incremental marker and rescan lookback_days")
+    sp.add_argument("--dry-run", action="store_true", help="Classify and print, but write nothing")
+    sp.set_defaults(func=cmd_inbox)
 
     sub.add_parser("new", help="Show new Strong/Good jobs since your last review").set_defaults(func=cmd_new)
 

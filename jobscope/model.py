@@ -214,7 +214,58 @@ class Application:
     applied_at: str = ""
     notes: str = ""
     updated: str = ""
+    # Fallbacks for applications discovered from email that have no matching
+    # scraped job row; store.applications() COALESCEs these under the job.
+    company: str = ""
+    title: str = ""
+    source: str = ""                                         # "" = manual/prep; "inbox" = discovered from email
+
+
+@dataclass
+class MailEvent:
+    """A single classified job-application email.
+
+    An immutable audit record -- one row per relevant email -- forming the
+    timeline behind an application's funnel status. Persistence lives in
+    :mod:`jobscope.store` (the ``mail_events`` table).
+    """
+
+    id: str = ""                     # sha1(account|message_id) or sha1(account|uid)
+    account: str = ""                # mailbox the email came from
+    uid: str = ""                    # IMAP UID within the account/folder
+    message_id: str = ""             # RFC822 Message-ID header
+    thread_id: str = ""              # best-effort thread key (References root / normalized subject)
+    from_addr: str = ""
+    from_name: str = ""
+    from_domain: str = ""
+    subject: str = ""
+    date: str = ""                   # ISO timestamp parsed from the email's Date header
+    company: str = ""                # parsed employer
+    role: str = ""                   # parsed role/title
+    signal: str = ""                 # one of SIGNALS
+    job_id: str = ""                 # linked application/job id
+    snippet: str = ""                # short body excerpt used for classification
+    first_seen: str = ""
+
+    def ensure_id(self) -> "MailEvent":
+        if not self.id:
+            basis = (f"{self.account}|{self.message_id}" if self.message_id
+                     else f"{self.account}|{self.uid}")
+            self.id = hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+        return self
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "MailEvent":
+        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        return cls(**{k: v for k, v in (d or {}).items() if k in known})
 
 
 # Canonical application statuses (mirrors career-ops' states.yml idea).
 STATUSES = ["new", "prepared", "applied", "interview", "rejected", "offer", "skipped"]
+
+# Granular per-email signals stored on each MailEvent (richer than the coarse
+# funnel statuses above; several map onto one status via mailrules.signal_to_status).
+SIGNALS = ["confirmation", "recruiter", "assessment", "interview", "offer", "rejection", "other"]

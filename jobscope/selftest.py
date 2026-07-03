@@ -93,6 +93,9 @@ def run() -> int:
     except ImportError:
         pass  # not yet built
 
+    # --- inbox (deterministic email classification; no network) ----------
+    _selftest_inbox(c)
+
     # --- ats (direct company boards; HTTP stubbed, no network) -----------
     from . import ats
 
@@ -135,6 +138,41 @@ def run() -> int:
     total = c.passed + c.failed
     print(f"\n  {c.passed}/{total} checks passed")
     return 0 if c.failed == 0 else 1
+
+
+def _selftest_inbox(c: "_Check") -> None:
+    from . import mailrules
+    from .model import Application, MailEvent
+    from .store import Store
+
+    c.ok("mail: confirmation classified",
+         mailrules.classify_signal("no-reply@greenhouse.io",
+                                   "Thank you for applying to Databricks", "") == "confirmation")
+    c.ok("mail: rejection beats interview",
+         mailrules.classify_signal(
+             "x@lever.co", "Update",
+             "We enjoyed your interview but unfortunately will not be moving forward.")
+         == "rejection")
+    c.ok("mail: status advance is monotonic",
+         mailrules.advance_status("offer", "applied") == "offer")
+    c.ok("mail: rejection is terminal",
+         mailrules.advance_status("rejected", "interview") == "rejected")
+    company, role = mailrules.parse_company_role(
+        "Databricks Recruiting", "greenhouse.io",
+        "Your application for the Security Engineer role at Databricks", "")
+    c.ok("mail: parses company + role", company == "Databricks" and "Security Engineer" in role)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Store(os.path.join(tmp, "m.db"))
+        ev = MailEvent(account="me@x", message_id="<a@x>", signal="confirmation",
+                       job_id="mail:1", company="Acme")
+        c.ok("mail: event upserts", store.upsert_mail_event(ev) is True)
+        c.ok("mail: event dedupes", store.upsert_mail_event(ev) is False)
+        store.set_application(Application(job_id="mail:1", status="applied",
+                                         company="Acme", title="Engineer", source="inbox"))
+        c.ok("mail: email-only app shows company",
+             store.applications()[0]["company"] == "Acme")
+        store.close()
 
 
 def _selftest_match(c: "_Check") -> None:

@@ -13,7 +13,7 @@ import sqlite3
 import time
 from typing import Any, Iterable, Optional
 
-from .model import Job, Resume
+from .model import Job, MailEvent, Resume
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -76,7 +76,10 @@ CREATE TABLE IF NOT EXISTS applications (
     cover_path TEXT,
     applied_at TEXT,
     notes TEXT,
-    updated TEXT
+    updated TEXT,
+    company TEXT,
+    title TEXT,
+    source TEXT
 );
 CREATE TABLE IF NOT EXISTS profile (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -107,8 +110,27 @@ CREATE TABLE IF NOT EXISTS runs (
     count INTEGER,
     status TEXT
 );
+CREATE TABLE IF NOT EXISTS mail_events (
+    id TEXT PRIMARY KEY,
+    account TEXT,
+    uid TEXT,
+    message_id TEXT,
+    thread_id TEXT,
+    from_addr TEXT,
+    from_name TEXT,
+    from_domain TEXT,
+    subject TEXT,
+    date TEXT,
+    company TEXT,
+    role TEXT,
+    signal TEXT,
+    job_id TEXT,
+    snippet TEXT,
+    first_seen TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
+CREATE INDEX IF NOT EXISTS idx_mail_events_job ON mail_events(job_id);
 """
 
 
@@ -147,6 +169,10 @@ class Store:
         enr = {r["name"] for r in self.conn.execute("PRAGMA table_info(enrichment)")}
         if "brief_json" not in enr:
             self.conn.execute("ALTER TABLE enrichment ADD COLUMN brief_json TEXT")
+        appc = {r["name"] for r in self.conn.execute("PRAGMA table_info(applications)")}
+        for col in ("company", "title", "source"):
+            if col not in appc:
+                self.conn.execute(f"ALTER TABLE applications ADD COLUMN {col} TEXT")
         self.conn.commit()
 
     def close(self) -> None:
@@ -320,27 +346,78 @@ class Store:
 
     # ---- applications ---------------------------------------------------
     def set_application(self, app: Any) -> None:
+        # Empty company/title/source never clobber existing values (an email sync
+        # can enrich a prepped app, and a manual status change must not wipe a
+        # previously parsed company); non-empty values overwrite.
         self.conn.execute(
             """
             INSERT INTO applications (job_id, status, package_dir, resume_path,
-                cover_path, applied_at, notes, updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                cover_path, applied_at, notes, updated, company, title, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_id) DO UPDATE SET
                 status=excluded.status, package_dir=excluded.package_dir,
                 resume_path=excluded.resume_path, cover_path=excluded.cover_path,
-                applied_at=excluded.applied_at, notes=excluded.notes, updated=excluded.updated
+                applied_at=excluded.applied_at, notes=excluded.notes, updated=excluded.updated,
+                company=COALESCE(NULLIF(excluded.company, ''), applications.company),
+                title=COALESCE(NULLIF(excluded.title, ''), applications.title),
+                source=COALESCE(NULLIF(excluded.source, ''), applications.source)
             """,
             (app.job_id, app.status, app.package_dir, app.resume_path,
-             app.cover_path, app.applied_at, app.notes, now_iso()),
+             app.cover_path, app.applied_at, app.notes, now_iso(),
+             getattr(app, "company", ""), getattr(app, "title", ""),
+             getattr(app, "source", "")),
         )
         self.conn.commit()
 
+    def get_application(self, job_id_: str) -> Optional[dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT * FROM applications WHERE job_id = ?", (job_id_,)).fetchone()
+        return dict(row) if row else None
+
     def applications(self) -> list[dict[str, Any]]:
+        # Prefer the scraped job's company/title; fall back to the values parsed
+        # from email for applications that have no matching job row.
         rows = self.conn.execute(
-            "SELECT a.*, j.title, j.company, j.status AS job_status, j.closed_at "
+            "SELECT a.job_id, a.status, a.package_dir, a.resume_path, a.cover_path, "
+            "a.applied_at, a.notes, a.updated, a.source, "
+            "COALESCE(NULLIF(j.company, ''), a.company) AS company, "
+            "COALESCE(NULLIF(j.title, ''), a.title) AS title, "
+            "j.status AS job_status, j.closed_at "
             "FROM applications a "
             "LEFT JOIN jobs j ON j.id = a.job_id ORDER BY a.updated DESC"
         )
+        return [dict(r) for r in rows]
+
+    # ---- mail events (inbound job-application emails) -------------------
+    def upsert_mail_event(self, ev: Any) -> bool:
+        """Insert a classified email event. Returns True if newly inserted;
+        idempotent -- re-processing the same message is a no-op."""
+        ev.ensure_id()
+        row = self.conn.execute(
+            "SELECT id FROM mail_events WHERE id = ?", (ev.id,)).fetchone()
+        if row is not None:
+            return False
+        self.conn.execute(
+            """
+            INSERT INTO mail_events (id, account, uid, message_id, thread_id,
+                from_addr, from_name, from_domain, subject, date, company, role,
+                signal, job_id, snippet, first_seen)
+            VALUES (:id, :account, :uid, :message_id, :thread_id, :from_addr,
+                :from_name, :from_domain, :subject, :date, :company, :role,
+                :signal, :job_id, :snippet, :first_seen)
+            """,
+            {**ev.to_dict(), "first_seen": ev.first_seen or now_iso()},
+        )
+        self.conn.commit()
+        return True
+
+    def mail_events(self, job_id_: Optional[str] = None) -> list[dict[str, Any]]:
+        if job_id_:
+            rows = self.conn.execute(
+                "SELECT * FROM mail_events WHERE job_id = ? ORDER BY date, first_seen",
+                (job_id_,))
+        else:
+            rows = self.conn.execute("SELECT * FROM mail_events ORDER BY date, first_seen")
         return [dict(r) for r in rows]
 
     # ---- profile / resumes (supports multiple named base resumes) -------

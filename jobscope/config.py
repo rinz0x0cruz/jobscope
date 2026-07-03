@@ -100,6 +100,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "to_addr": "",
         "password_env": "JOBSCOPE_SMTP_PASSWORD",
     },
+    # Optional: monitor Gmail inbox(es) over read-only IMAP for the application
+    # process (confirmations / rejections / interviews / offers) and feed the
+    # funnel. App passwords live in the environment, referenced by name here.
+    "inbox": {
+        "enabled": False,
+        "accounts": [],          # [{email: "you@gmail.com", password_env: "JOBSCOPE_GMAIL_APP_PW"}]
+        "imap_host": "imap.gmail.com",
+        "imap_port": 993,
+        "folder": "INBOX",
+        "lookback_days": 90,     # first run scans this far back; later runs are incremental
+    },
     "apply": {
         "assist": False,
         "package_dir": "data/applications",
@@ -174,3 +185,10 @@ def api_key(cfg: dict) -> str:
 
 def smtp_password(cfg: dict) -> str:
     return os.environ.get(cfg.get("email", {}).get("password_env", "JOBSCOPE_SMTP_PASSWORD"), "")
+
+
+def inbox_password(cfg: dict, account: dict) -> str:
+    """Return the Gmail app password for an inbox account, read from the env var
+    named by that account's ``password_env`` (never stored in config)."""
+    env = (account or {}).get("password_env", "")
+    return os.environ.get(env, "") if env else ""

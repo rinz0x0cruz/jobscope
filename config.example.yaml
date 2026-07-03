@@ -122,6 +122,25 @@ email:
   to_addr: ""
   password_env: "JOBSCOPE_SMTP_PASSWORD"
 
+# Optional: monitor Gmail inbox(es) for the job-application process (confirmations,
+# rejections, interviews, offers) and feed the application funnel. Uses read-only
+# IMAP with a Gmail APP PASSWORD (requires 2-Step Verification on the account) and
+# never marks mail as read. App passwords live in .env, referenced by env-var name.
+#   python -m jobscope inbox            # sync new mail (incremental)
+#   python -m jobscope inbox --dry-run  # classify + print, write nothing
+inbox:
+  enabled: false
+  accounts: []
+  #   - email: "you@gmail.com"
+  #     password_env: "JOBSCOPE_GMAIL_APP_PW"       # 16-char app password, set in .env
+  #   - email: "you.two@gmail.com"
+  #     password_env: "JOBSCOPE_GMAIL_APP_PW_2"
+  #     lookback_days: 7               # optional: per-account override of the global lookback below
+  imap_host: "imap.gmail.com"
+  imap_port: 993
+  folder: "INBOX"
+  lookback_days: 90                   # first run scans this far back; later runs are incremental
+
 apply:
   assist: false                       # opt-in: assisted fill of PUBLIC ATS forms, stops before submit
   package_dir: "data/applications"

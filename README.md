@@ -86,9 +86,59 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `gaps [--top N]` | Skill-gap learning plan: skills to learn ranked by jobs unlocked |
 | `new` | New Strong/Good jobs since you last reviewed |
 | `dashboard [--open] [--public]` / `serve` | Render / serve the local HTML dashboard (click a card to expand full detail); `--public` writes a redacted copy safe to host |
-| `track [--set job_id=status]` | Application funnel, rates, and follow-up reminders |
+| `track [--set job_id=status] [--timeline job_id]` | Application funnel, rates, follow-up reminders, and a per-application email timeline |
+| `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Sync Gmail over read-only IMAP and auto-advance the funnel from application emails |
 | `export [--format json\|csv]` | Export ranked jobs |
 | `selftest` | Offline self-tests (no network, no keys) |
+
+## Inbox: auto-track applications from Gmail
+
+`jobscope inbox` reads the Gmail inbox(es) you configure and turns application
+emails into funnel updates automatically — confirmations → `applied`,
+interview/assessment invites → `interview`, offers → `offer`, rejections →
+`rejected`. Classification is **deterministic** (sender-domain + keyword rules for
+Greenhouse / Lever / Ashby / Workday / iCIMS / Workable / LinkedIn / Indeed and
+friends); AI is never required — an optional model only refines the residual
+`other` bucket when `ai.enabled`.
+
+It connects over **read-only IMAP** with a Gmail **App Password** — no Google
+Cloud project, no OAuth, and it never marks your mail as read. The first run scans
+`inbox.lookback_days` back; later runs are incremental (a per-account UID
+watermark), so it's cheap to run on a schedule. Each relevant email is stored as a
+timeline entry and linked to the matching job (or a standalone email-only
+application when you applied somewhere jobscope didn't scrape).
+
+**Setup**
+
+1. Turn on 2-Step Verification for the account, then create an App Password:
+   <https://myaccount.google.com/apppasswords>
+2. Put the 16-character password in `.env` (never in `config.yaml`):
+   ```
+   JOBSCOPE_GMAIL_APP_PW=xxxxxxxxxxxxxxxx
+   ```
+3. Enable the feature and list your account(s) in `config.yaml`:
+   ```yaml
+   inbox:
+     enabled: true
+     accounts:
+       - email: "you@gmail.com"
+         password_env: "JOBSCOPE_GMAIL_APP_PW"
+   ```
+
+**Use**
+
+```bash
+python -m jobscope inbox --dry-run            # classify + print, write nothing
+python -m jobscope inbox                      # sync (incremental) -> funnel
+python -m jobscope inbox --backfill           # rescan lookback_days
+python -m jobscope track                      # updated funnel + response/interview/offer rates
+python -m jobscope track --timeline <job_id>  # email history for one application
+python -m jobscope dashboard --open           # the funnel shows on the dashboard
+```
+
+Multiple mailboxes: add more entries under `accounts`, each with its own
+`password_env`. Everything stays local in SQLite; app passwords live only in your
+environment. Runs well from cron / Task Scheduler.
 
 ## Prioritization (company quality + location)
 

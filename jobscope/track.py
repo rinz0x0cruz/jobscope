@@ -8,7 +8,10 @@ from .model import STATUSES, Application
 from .store import now_iso
 
 
-def run(store, set_expr: Optional[str] = None, cfg: Optional[dict] = None) -> int:
+def run(store, set_expr: Optional[str] = None, cfg: Optional[dict] = None,
+        timeline: Optional[str] = None) -> int:
+    if timeline:
+        return _print_timeline(store, timeline)
     if set_expr:
         return _set_status(store, set_expr)
 
@@ -112,3 +115,20 @@ def _set_status(store, expr: str) -> int:
 
 def _pct(n: int, d: int) -> str:
     return f"{(100 * n / d):.0f}%" if d else "n/a"
+
+
+def _print_timeline(store, job_id: str) -> int:
+    """Show the email history (mail_events) behind one application's status."""
+    events = store.mail_events(job_id)
+    if not events:
+        print(f"  no email events for {job_id}. Run `python -m jobscope inbox` first.")
+        return 0
+    app = store.get_application(job_id) or {}
+    label = app.get("company") or events[0].get("company") or "?"
+    print(f"  timeline for {label} [{job_id}] -- {len(events)} email(s):\n")
+    print(f"  {'DATE':<12} {'SIGNAL':<12} SUBJECT")
+    print("  " + "-" * 74)
+    for e in events:
+        print(f"  {(e.get('date') or '')[:10]:<12} {(e.get('signal') or ''):<12} "
+              f"{(e.get('subject') or '')[:46]}")
+    return 0
