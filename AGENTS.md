@@ -41,10 +41,12 @@ Iterate with targeted tests (`pytest -q tests/test_x.py`); run the full suite + 
 - **Additive persistence only** — new columns via `store._ensure_columns()` /
   `ALTER TABLE ADD COLUMN`; never a destructive migration.
 - **Preserve public import paths when splitting a module into a package.** After splitting,
-  `from jobscope.match import score_job` (etc.) must still work — re-export the public names from
-  the package `__init__` so importers and tests don't change.
-- **Keep the Python↔TS data contract in sync.** Editing `render.build_data` / `_job_record` /
-  `_enrich_summary` / `_overview_data` means editing `web/src/lib/schema.ts` (ARCHITECTURE.md §9).
+  `from jobscope.analyze.match import score_job` (etc.) must still work — re-export the public names
+  from the package `__init__` so importers and tests don't change.
+- **Keep the Python↔TS data contract in sync.** Editing `deliver/render.py` `build_data` / `_job_record` /
+  `_enrich_summary` / `_overview_data` means editing `web/src/lib/schema.ts` — and keeping
+  `jobscope/deliver/schema/dashboard.schema.json` + `tests/test_dashboard_json.py` in step
+  (ARCHITECTURE.md §9).
 
 ## Invariants (never break)
 
@@ -52,20 +54,24 @@ Iterate with targeted tests (`pytest -q tests/test_x.py`); run the full suite + 
 - `pytest`, `jobscope selftest`, and `npm run build` all green.
 - Deterministic scoring unchanged — identical inputs produce identical scores/tiers.
 
-## Modularity roadmap & file ownership
+## Modularity — what shipped
 
-Phases run in dependency **waves**, one subagent at a time — **not** concurrently on shared files.
-Edit only the files your phase owns; if you need a change elsewhere, note it in your report for the
-orchestrator. Full detail in ARCHITECTURE.md §12.
+The incremental-refactor plan is **complete**: the data-contract/config guards (P-A/P-B/P-C), the
+`store.py`/`match.py` package splits (P-D/P-E), and the whole-package reorg (Tier 3) all landed. Full
+history in ARCHITECTURE.md §12. Landmarks, for orienting a change:
 
-| Phase | Owns (may edit) | Goal |
-|-------|-----------------|------|
-| **P-A** data-contract SSOT | `web/src/lib/schema.ts`, `tests/test_dashboard_json.py`, new `jobscope/schema/*.json` (optional) | Add `Application`/timeline types (seam #5); assert emitted `dashboard.json` matches the contract |
-| **P-B** enrich registry | `jobscope/enrich/*`, `jobscope/config.py`, `jobscope/render.py` (`_enrich_summary` only) | `@source(...)` self-registration; a new source = one file |
-| **P-C** config-drift guard | `tests/test_config*.py`, `config.example.yaml` | Test `config.example.yaml` keys ⊇ `DEFAULT_CONFIG` |
-| **P-D** split `store.py` | `jobscope/store.py` → `jobscope/store/` package | Domain stores behind a `Store` facade; same public API |
-| **P-E** split `match.py` | `jobscope/match.py` → `jobscope/match/` package | `seniority`/`experience`/`filters`/`scoring`; same public names |
-| **Tier 3** package reorg | ALL (solo, last) | Group into `core/ingest/analyze/enrich/apply/deliver/cli`; keep root `__main__.py` |
+| Phase | Landed as | What it bought |
+|-------|-----------|----------------|
+| **P-A** data-contract SSOT *(done)* | `web/src/lib/schema.ts` (`Application`/`ApplicationEvent`), `jobscope/deliver/schema/dashboard.schema.json`, `tests/test_dashboard_json.py` | `applications[]` typed end-to-end (seam #5 closed); a test guards the emitted `dashboard.json` shape |
+| **P-B** enrich registry *(done)* | `jobscope/enrich/registry.py` + `jobscope/enrich/__init__.py` | `@source(...)` self-registration; a new source = one module + a decorator |
+| **P-C** config-drift guard *(done)* | `tests/test_config.py`, `config.example.yaml` | `config.example.yaml` keys ⊇ `DEFAULT_CONFIG` |
+| **P-D** split `store.py` *(done)* | `jobscope/core/store/` package (`base` + `jobs`/`enrichment`/`applications`/`mail`/`profile`/`meta` mixins) | Domain mixins behind a `Store` facade; same public API |
+| **P-E** split `match.py` *(done)* | `jobscope/analyze/match/` package (`seniority`/`experience`/`filters`/`scoring`/`routing`/`run`) | Layered submodules; same public/private names; identical scores |
+| **Tier 3** package reorg *(done)* | `core/ingest/analyze/enrich/apply/deliver/cli` + thin root `__main__.py` | Flat package grouped by concern; `build_parser` + `cmd_*` + `main` now in `cli/__init__.py` |
 
-When invoked as a phase subagent: read this file and ARCHITECTURE.md §9/§12 first, make only your
-phase's edits, verify green with the commands above, then report changed files + test/build results.
+**Opportunistic (optional, unscheduled):** split `resume.py` per-format parsers; split `tailor.py`
+(deterministic vs AI); inline the thin `apply/brief.py`; retire `render.py`'s inline HTML template once
+the React app is canonical; generate `schema.ts` from Python so the TS mirror can't drift.
+
+When making a structural change: read this file and ARCHITECTURE.md §9/§12 first, edit by explicit path,
+verify green with the commands above, then report changed files + test/build results.

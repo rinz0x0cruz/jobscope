@@ -6,8 +6,8 @@
 > optional upgrades that degrade gracefully.
 
 This document is the living map of the codebase: what each module does, how they depend
-on each other, the Python↔TypeScript data contract, and a phased roadmap for making the
-project more modular as features are added. Keep it current (see
+on each other, the Python↔TypeScript data contract, and the modular sub-package
+structure the codebase has settled into. Keep it current (see
 [Keeping this doc current](#keeping-this-doc-current)).
 
 ---
@@ -29,7 +29,14 @@ project more modular as features are added. Keep it current (see
 ```
 jobscope/
   jobscope/          Python package (the CLI + all logic)
-    enrich/          Enrichment sub-package (one module per intel source)
+    core/            Foundation: model, config, store/ (pkg), companies, httpx, ai
+    ingest/          Acquire jobs & signals: scrape, ats, inbox, mailrules
+    analyze/         Deterministic core: match/ (pkg), classify, resume, insights
+    enrich/          Best-effort intel (one module per source) + registry
+    apply/           Tailor & submit: apply, tailor, track, brief
+    deliver/         Dashboards & exports: render, exporter, serve, pdf, email, schema/
+    cli/             build_parser + cmd_* + main (+ pipeline, scaffold, selftest)
+    __main__.py      Thin shim → cli.main (console-script + `python -m jobscope`)
   web/               Vite + React + TS dashboard (consumes the JSON contract)
     src/
   tests/             pytest suite (offline; mirrors the module layout)
@@ -42,14 +49,15 @@ jobscope/
 
 ## 3. Layered architecture
 
-Modules today live **flat** in `jobscope/`, but they form clear conceptual layers.
-The groups below double as the **target sub-package layout** (see
+Modules live in concern sub-packages under `jobscope/` (`core`, `ingest`, `analyze`,
+`enrich`, `apply`, `deliver`, `cli`); each group below is a real package on disk (see
+[§2](#2-repository-layout)). This layered shape is the one the reorg landed on (see
 [Modularity roadmap](#12-modularity-roadmap)).
 
 ```mermaid
 flowchart TB
-    CLI["cli · __main__ (argparse + lazy imports)"]
-    PIPE["pipeline / scaffold / selftest"]
+    CLI["cli (argparse + lazy imports) · __main__ shim"]
+    PIPE["cli/pipeline · cli/scaffold · cli/selftest"]
     CLI --> PIPE
 
     subgraph INGEST["ingest"]
@@ -65,7 +73,7 @@ flowchart TB
         insights
     end
     subgraph ENRICH["enrich (package)"]
-        coordinator["__init__"]
+        coordinator["__init__ + registry"]
         comp
         stock
         reddit
@@ -115,87 +123,95 @@ flowchart TB
 
 ## 4. Backend module inventory
 
-LOC are exact (source lines incl. blanks/comments). Grouped by concern (= target sub-package).
+LOC are exact (source lines incl. comments). Grouped by concern (= sub-package on disk).
 
 ### core — foundation (pure/near-pure, highest fan-in)
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [model.py](jobscope/model.py) | 228 | Core dataclasses + id/slug helpers | — | `Job`, `Resume`, `Application`, `Contact`, `MailEvent`, `job_id()`, `slugify()`, `derive_remote_scope()` |
-| [config.py](jobscope/config.py) | 176 | Load YAML/JSON, deep-merge over `DEFAULT_CONFIG`, env-only secrets | — | `DEFAULT_CONFIG`, `load_config()`, `api_key()`, `smtp_password()`, `inbox_password()` |
-| [store.py](jobscope/store.py) | 457 | SQLite persistence (10 tables) + additive migrations | model | `Store`, `now_iso()` |
-| [companies.py](jobscope/companies.py) | 128 | Curated prestige/size/funding tiers (deterministic) | — | `company_quality()`, `company_size()`, `company_funding()` |
-| [httpx.py](jobscope/httpx.py) | 37 | Thin `requests` wrapper (UA, timeout, JSON) | — | `get()`, `get_json()`, `get_text()` |
-| [ai.py](jobscope/ai.py) | 82 | OpenAI-compatible chat (Groq/Ollama); optional | config | `available()`, `chat()` |
+| [model.py](jobscope/core/model.py) | 228 | Core dataclasses + id/slug helpers | — | `Job`, `Resume`, `Application`, `Contact`, `MailEvent`, `job_id()`, `slugify()`, `derive_remote_scope()` |
+| [config.py](jobscope/core/config.py) | 176 | Load YAML/JSON, deep-merge over `DEFAULT_CONFIG`, env-only secrets | — | `DEFAULT_CONFIG`, `load_config()`, `api_key()`, `smtp_password()`, `inbox_password()` |
+| [store/](jobscope/core/store/) | 527 | **Package** — SQLite persistence (10 tables) + additive migrations, split into `base` + `jobs`/`enrichment`/`applications`/`mail`/`profile`/`meta` mixins behind a `Store` facade | model | `Store`, `now_iso()` |
+| [companies.py](jobscope/core/companies.py) | 128 | Curated prestige/size/funding tiers (deterministic) | — | `company_quality()`, `company_size()`, `company_funding()` |
+| [httpx.py](jobscope/core/httpx.py) | 37 | Thin `requests` wrapper (UA, timeout, JSON) | — | `get()`, `get_json()`, `get_text()` |
+| [ai.py](jobscope/core/ai.py) | 82 | OpenAI-compatible chat (Groq/Ollama); optional | config | `available()`, `chat()` |
 
 ### ingest — acquire jobs & signals
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [scrape.py](jobscope/scrape.py) | 153 | JobSpy + ATS boards → `Job` upserts (per-term isolation) | model, store | `run()`, `_row_to_job()` |
-| [ats.py](jobscope/ats.py) | 213 | Direct Greenhouse/Lever/Ashby board fetch | httpx, model, store | `fetch_company()`, `run()` |
-| [inbox.py](jobscope/inbox.py) | 283 | Gmail IMAP sync (read-only, incremental) → classify → `mail_events` → advance funnel | ats, config, model, store, mailrules | `run()` |
-| [mailrules.py](jobscope/mailrules.py) | 340 | Deterministic email classification + company/role parsing (pure, no I/O) | — | `classify_signal()`, `is_job_related()`, `parse_company_role()`, `signal_to_status()`, `advance_status()`, `normalize_company()` |
+| [scrape.py](jobscope/ingest/scrape.py) | 153 | JobSpy + ATS boards → `Job` upserts (per-term isolation) | model, store | `run()`, `_row_to_job()` |
+| [ats.py](jobscope/ingest/ats.py) | 213 | Direct Greenhouse/Lever/Ashby board fetch | httpx, model, store | `fetch_company()`, `run()` |
+| [inbox.py](jobscope/ingest/inbox.py) | 283 | Gmail IMAP sync (read-only, incremental) → classify → `mail_events` → advance funnel | ats, config, model, store, mailrules | `run()` |
+| [mailrules.py](jobscope/ingest/mailrules.py) | 340 | Deterministic email classification + company/role parsing (pure, no I/O) | — | `classify_signal()`, `is_job_related()`, `parse_company_role()`, `signal_to_status()`, `advance_status()`, `normalize_company()` |
 
 ### analyze — the deterministic core
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [match.py](jobscope/match.py) | 508 | Transparent fit scoring, tiers, filters, resume routing | model, resume, (companies lazy) | `score_job()`, `apply_filters()`, `select_base()`, `run()`, `SENIORITY_RANK` |
-| [classify.py](jobscope/classify.py) | 60 | Optional AI seniority + discipline tie-breaker | ai, match, model | `classify_seniority()` |
-| [resume.py](jobscope/resume.py) | 339 | Parse Markdown/JSON-Resume/PDF/text → `Resume` + skills | match, model | `import_resume()`, `parse_resume()`, `SKILL_LEXICON` |
-| [insights.py](jobscope/insights.py) | 47 | Skill-gap analysis across matched jobs | resume, store | `skill_gap()`, `run()` |
+| [match/](jobscope/analyze/match/) | 670 | **Package** — transparent fit scoring, tiers, filters, resume routing; split into `seniority`/`experience`/`filters`/`scoring`/`routing`/`run` submodules (all public + private names re-exported) | model, resume, (companies lazy) | `score_job()`, `apply_filters()`, `select_base()`, `run()`, `SENIORITY_RANK` |
+| [classify.py](jobscope/analyze/classify.py) | 60 | Optional AI seniority + discipline tie-breaker | ai, match, model | `classify_seniority()` |
+| [resume.py](jobscope/analyze/resume.py) | 339 | Parse Markdown/JSON-Resume/PDF/text → `Resume` + skills | match, model | `import_resume()`, `parse_resume()`, `SKILL_LEXICON` |
+| [insights.py](jobscope/analyze/insights.py) | 47 | Skill-gap analysis across matched jobs | resume, store | `skill_gap()`, `run()` |
 
 ### enrich — best-effort public intel (`enrich/` package)
 
 | Module | LOC | Responsibility | Internal imports |
 |--------|-----|----------------|------------------|
-| [enrich/__init__.py](jobscope/enrich/__init__.py) | 72 | Per-company coordinator (toggles each source by config) | brief, comp, contacts, glassdoor, news, reddit, stock |
-| [enrich/stock.py](jobscope/enrich/stock.py) | 128 | Stock / IPO lookup (Yahoo, keyless) + 52wk position | httpx |
+| [enrich/__init__.py](jobscope/enrich/__init__.py) | 78 | Per-company coordinator — iterates the source registry (toggles each by config) | registry, comp, stock, reddit, news, glassdoor, brief, contacts |
+| [enrich/registry.py](jobscope/enrich/registry.py) | 60 | Source registry + `@source(...)` decorator; sources self-register at import | — |
+| [enrich/stock.py](jobscope/enrich/stock.py) | 130 | Stock / IPO lookup (Yahoo, keyless) + 52wk position | httpx |
 | [enrich/brief.py](jobscope/enrich/brief.py) | 84 | Risk-forward company brief (deterministic + optional AI) | ai, match |
 | [enrich/contacts.py](jobscope/enrich/contacts.py) | 81 | Referral-lead discovery (search links + GitHub) | model, httpx |
-| [enrich/reddit.py](jobscope/enrich/reddit.py) | 58 | Reddit sentiment (lexicon-based) | httpx |
-| [enrich/news.py](jobscope/enrich/news.py) | 47 | Google News RSS + optional custom feeds | — |
-| [enrich/comp.py](jobscope/enrich/comp.py) | 39 | Compensation (posting salary + Levels.fyi links) | — |
-| [enrich/glassdoor.py](jobscope/enrich/glassdoor.py) | 25 | Glassdoor rating (defensive) | httpx |
+| [enrich/reddit.py](jobscope/enrich/reddit.py) | 60 | Reddit sentiment (lexicon-based) | httpx |
+| [enrich/news.py](jobscope/enrich/news.py) | 50 | Google News RSS + optional custom feeds | — |
+| [enrich/comp.py](jobscope/enrich/comp.py) | 42 | Compensation (posting salary + Levels.fyi links) | — |
+| [enrich/glassdoor.py](jobscope/enrich/glassdoor.py) | 27 | Glassdoor rating (defensive) | httpx |
 
 ### apply — tailor & submit
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [apply.py](jobscope/apply.py) | 243 | Prep package + human-in-loop ATS autofill (Playwright) | ai, email, tailor, model, store | `prep()`, `apply()` |
-| [tailor.py](jobscope/tailor.py) | 190 | Per-job resume + cover tailoring (deterministic + AI rewrite) | ai, pdf, model, resume, store | `run()`, `analyze()` |
-| [track.py](jobscope/track.py) | 114 | Application funnel, status, follow-up reminders | model, store | `run()`, `run_new()` |
-| [brief.py](jobscope/brief.py) | 21 | Thin CLI wrapper → `enrich.brief.build()` | enrich.brief | `run()` |
+| [apply.py](jobscope/apply/apply.py) | 245 | Prep package + human-in-loop ATS autofill (Playwright) | ai, email, tailor, model, store | `prep()`, `apply()` |
+| [tailor.py](jobscope/apply/tailor.py) | 191 | Per-job resume + cover tailoring (deterministic + AI rewrite) | ai, pdf, model, resume, store | `run()`, `analyze()` |
+| [track.py](jobscope/apply/track.py) | 114 | Application funnel, status, follow-up reminders | model, store | `run()`, `run_new()` |
+| [brief.py](jobscope/apply/brief.py) | 21 | Thin CLI wrapper → `enrich.brief.build()` | enrich.brief | `run()` |
 
 ### deliver — dashboards & exports
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [render.py](jobscope/render.py) | 850 | HTML dashboard (job buckets + **Applications** board: pipeline-flow Sankey + kanban + email timelines) **+** the JSON data contract | companies, store | `build()`, `build_data()`, `emit_json()`, `_application_records()` |
-| [pdf.py](jobscope/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
-| [email.py](jobscope/email.py) | 36 | SMTP summaries (optional) | config | `send()` |
-| [serve.py](jobscope/serve.py) | 27 | Local HTTP server for the dashboard | render, store | `run()` |
-| [exporter.py](jobscope/exporter.py) | 22 | Export ranked jobs to JSON/CSV | — | `run()` |
+| [render.py](jobscope/deliver/render.py) | 852 | HTML dashboard (job buckets + **Applications** board: pipeline-flow Sankey + kanban + email timelines) **+** the JSON data contract | companies, store | `build()`, `build_data()`, `emit_json()`, `_application_records()` |
+| [pdf.py](jobscope/deliver/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
+| [email.py](jobscope/deliver/email.py) | 36 | SMTP summaries (optional) | config | `send()` |
+| [serve.py](jobscope/deliver/serve.py) | 27 | Local HTTP server for the dashboard | render, store | `run()` |
+| [exporter.py](jobscope/deliver/exporter.py) | 22 | Export ranked jobs to JSON/CSV | — | `run()` |
 
-> **Note:** the bulk of `render.py` is the inline HTML `_TEMPLATE` string — a self-contained,
-> dependency-free dashboard, currently the **only** UI with the **Applications board** (kanban +
-> per-application email timelines) and the inline-SVG **pipeline-flow Sankey**; the React app hasn't
-> mirrored these yet. The data-contract logic (`build_data`/`_job_record`/`_application_records`/
-> `_enrich_summary`/`_overview_data`/`emit_json`) is the remainder. Once the web app supersedes the
-> HTML page, the template can shrink and `render.py` becomes a slim emitter.
+Plus [schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) — the JSON-Schema
+artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboard_json.py](tests/test_dashboard_json.py).
+
+> **Note:** the bulk of `render.py` (~852 lines, now at [deliver/render.py](jobscope/deliver/render.py))
+> is the inline HTML `_TEMPLATE` string — a self-contained, dependency-free dashboard, currently the
+> **only** UI with the **Applications board** (kanban + per-application email timelines) and the
+> inline-SVG **pipeline-flow Sankey**; the React app hasn't mirrored these yet. The data-contract logic
+> (`build_data`/`_job_record`/`_application_records`/`_enrich_summary`/`_overview_data`/`emit_json`) is
+> the remainder, and the emitted `dashboard.json` is pinned by a JSON-Schema artifact + a contract test
+> (§9). Once the web app supersedes the HTML page, the template can shrink and `render.py` becomes a
+> slim emitter.
 
 ### cli / orchestration
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [__main__.py](jobscope/__main__.py) | 195 | argparse dispatch for 18 subcommands (lazy per-command imports) | ~all (lazy) | `main()`, `build_parser()` |
-| [pipeline.py](jobscope/pipeline.py) | 42 | One-shot `scan → match → enrich → prep → digest` | apply, email, enrich, match, scrape | `run()` |
-| [selftest.py](jobscope/selftest.py) | 229 | Offline self-tests (validate the full stack, no network) | model, config, store, match, mailrules, ats, inbox | `run()` |
-| [scaffold.py](jobscope/scaffold.py) | 50 | `init`: scaffold config + data dir (non-destructive) | config | `run()` |
+| [cli/__init__.py](jobscope/cli/__init__.py) | 195 | argparse dispatch for 18 subcommands — `build_parser` + all `cmd_*` + `main` (lazy per-command imports) | ~all (lazy) | `main()`, `build_parser()` |
+| [pipeline.py](jobscope/cli/pipeline.py) | 46 | One-shot `scan → match → enrich → prep → digest` | apply, email, enrich, match, scrape | `run()` |
+| [selftest.py](jobscope/cli/selftest.py) | 229 | Offline self-tests (validate the full stack, no network) | model, config, store, match, mailrules, ats, inbox | `run()` |
+| [scaffold.py](jobscope/cli/scaffold.py) | 50 | `init`: scaffold config + data dir (non-destructive) | config | `run()` |
+| [__main__.py](jobscope/__main__.py) | 9 | Thin entry-point shim at the package root (`from .cli import main`) | cli | `main` (re-exported) |
 | [__init__.py](jobscope/__init__.py) | 6 | Package marker, `__version__` | — | `__version__` |
 
-**Totals:** 27 top-level modules + 8 enrich modules ≈ **6,050 LOC** of Python.
+**Totals:** ~56 Python modules across 8 sub-packages (incl. the `store/` and `match/` sub-packages and
+9 enrich modules) ≈ **6,000 LOC** of Python.
 
 ---
 
@@ -205,25 +221,26 @@ Fan-in = how many modules import it; fan-out = how many it imports (internal onl
 
 | Module | LOC | Fan-in | Fan-out | Read |
 |--------|-----|:------:|:-------:|------|
-| **store.py** | 457 | ~11 | 1 | **God module** — every command persists through it. Mixed concerns (jobs / enrichment / applications / mail / ai-cache in one class). Top split candidate. |
-| **model.py** | 228 | ~12 | 0 | Highest fan-in but **pure** — the ideal shape. Leave as-is. |
-| **match.py** | 508 | ~6 | 3 | Largest logic module; bundles 5 sub-concerns (seniority, experience, filters, scoring, routing). Split candidate. |
-| **render.py** | 850 | 2 | 2 | Big only because of the inline HTML template; the emitter is small. Shrinks once the HTML page retires. |
-| **__main__.py** | 195 | 0 | ~18 | Orchestrator; wide fan-out but **lazy imports** keep startup light. Healthy. |
-| **config.py** | 176 | ~6 | 0 | Pure config layer. Healthy. |
-| **enrich/__init__.py** | 72 | 2 | 7 | Coordinator over 7 isolated sources. Registry candidate (see P-B). |
-| **ai.py** | 82 | ~4 | 1 | Optional layer; all callers have deterministic fallbacks. Healthy. |
+| **core/store/** | 527 | ~11 | 1 | Every command persists through it. **Split done (P-D):** `base` + `jobs`/`enrichment`/`applications`/`mail`/`profile`/`meta` mixins behind a `Store` facade — same public API, one shared connection. |
+| **core/model.py** | 228 | ~12 | 0 | Highest fan-in but **pure** — the ideal shape. Leave as-is. |
+| **analyze/match/** | 670 | ~6 | 3 | Largest logic area. **Split done (P-E):** `seniority`/`experience`/`filters`/`scoring`/`routing`/`run` submodules, layered so leaves never import up; scores identical, all names re-exported. |
+| **deliver/render.py** | 852 | 2 | 2 | Big only because of the inline HTML template (~850 lines of `_TEMPLATE`); the emitter is small. Shrinks once the HTML page retires. |
+| **cli/__init__.py** | 195 | 0 | ~18 | Orchestrator (`build_parser` + `cmd_*` + `main`); wide fan-out but **lazy imports** keep startup light. Healthy. |
+| **core/config.py** | 176 | ~6 | 0 | Pure config layer. Healthy. |
+| **enrich/__init__.py** | 78 | 2 | 8 | Coordinator that **iterates the source registry** (P-B done); sources self-register via `@source(...)`. Healthy. |
+| **core/ai.py** | 82 | ~4 | 1 | Optional layer; all callers have deterministic fallbacks. Healthy. |
 
 ---
 
 ## 6. Runtime flows
 
-### CLI dispatch (`__main__.py`)
+### CLI dispatch (`cli/__init__.py`)
 
-`build_parser()` defines one `argparse` parser with subparsers; each subcommand does
-`set_defaults(func=cmd_<name>)`, and `main()` calls `args.func(args, cfg)` inside a
-`Store` context manager. **Feature modules are imported lazily inside each `cmd_*`** so the
-base CLI stays offline-friendly.
+The root [__main__.py](jobscope/__main__.py) is a thin shim (`from .cli import main`); the parser and
+commands live in [cli/__init__.py](jobscope/cli/__init__.py). `build_parser()` defines one `argparse`
+parser with subparsers; each subcommand does `set_defaults(func=cmd_<name>)`, and `main()` calls
+`args.func(args, cfg)` inside a `Store` context manager. **Feature modules are imported lazily inside
+each `cmd_*`** so the base CLI stays offline-friendly.
 
 18 subcommands: `init`, `resume import`, `scan`, `match`, `pipeline`, `enrich`, `tailor`,
 `prep`, `apply`, `dashboard`, `serve`, `track`, `inbox`, `new`, `gaps`, `brief`, `export`,
@@ -244,9 +261,11 @@ stage independently runnable from its own subcommand.
 
 ---
 
-## 7. Persistence model (`store.py`)
+## 7. Persistence model (`core/store/`)
 
-A single `Store` class over SQLite. **10 tables**: `jobs`, `enrichment`, `contacts`,
+A single `Store` **facade** over SQLite, composed from per-concern mixins (`base` + `jobs`/
+`enrichment`/`applications`/`mail`/`profile`/`meta`) over one shared connection. **10 tables**: `jobs`,
+`enrichment`, `contacts`,
 `applications`, `profile`, `resumes`, `meta`, `ai_cache`, `runs`, `mail_events`.
 
 **Migration pattern** — `_ensure_columns()` reads `PRAGMA table_info(...)` and issues
@@ -294,7 +313,7 @@ by hand on the other.
 
 ```mermaid
 flowchart LR
-    subgraph py["Python (render.py)"]
+    subgraph py["Python (deliver/render.py)"]
         build_data --> job["_job_record"]
         build_data --> ov["_overview_data"]
         build_data --> apprec["_application_records"]
@@ -318,7 +337,7 @@ flowchart LR
 | 2 | `JobRow` fields (27) | `_job_record()` dict keys | `JobRow` interface | A renamed Python key silently becomes `undefined` in TS |
 | 3 | `EnrichSummary` (nested) | `_enrich_summary()` | `EnrichSummary`/`StockSummary`/`CompSummary`/`RedditSummary`/`NewsItem` | Structural drift cascades |
 | 4 | `Overview` | `_overview_data()` | `Overview` | `funnel`/`gaps`/`considered`/`targets` must line up |
-| 5 | **`applications[]`** | `_application_records()` — emitted **and** rendered in the HTML dashboard's Applications board | **no React type yet** | HTML board (kanban + email timelines + pipeline-flow Sankey) is built; the **React** app still needs an `Application` type to mirror it |
+| 5 | **`applications[]`** ✅ | `_application_records()` → `applications[]` (emitted **and** rendered in the HTML dashboard's Applications board) | `Application` + `ApplicationEvent` interfaces; `applications?` on `DashboardData` | **Closed** — the TS types exist and [tests/test_dashboard_json.py](tests/test_dashboard_json.py) guards the emitted shape; the React app can now mirror the HTML board |
 | 6 | Facet keys | job fields (`base`,`country`,`place`,`remote`,`funding`,`remote_scope`) | `FACETS`, `FacetKey`, `searchSchema`, `FacetBar` | A new facet = 4 TS edits |
 | 7 | Country/place values | `_country_of()`, `_place_of()` | displayed as-is | Grouping changes fragment facet options |
 | 8 | Salary string | `_fmt_salary()` | `format.ts:compLabel()` | Python owns the format; TS cannot reparse |
@@ -326,26 +345,30 @@ flowchart LR
 | 10 | Public redaction | `_redact_public()` | no type-level public/private distinction | A missed field could leak private data |
 | 11 | `gaps` tuple | `[[skill, count]]` | `[string, number][]` | Structural change breaks index access |
 
-> **Mitigation (roadmap P-A):** emit a JSON Schema from the Python shapes and assert
-> `dashboard.json` matches it in a pytest; share the tier/facet constant lists. Later,
-> generate `schema.ts` from Python so the mirror can't drift.
+> **Mitigation (P-A · done):** a JSON-Schema artifact lives at
+> [jobscope/deliver/schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) and a
+> structural contract test ([tests/test_dashboard_json.py](tests/test_dashboard_json.py)) asserts the
+> emitted `dashboard.json` matches the shape (and that the public build is redacted). *Opportunistic
+> next:* generate `schema.ts` from Python so the mirror can't drift.
 
 ---
 
 ## 10. Extension recipes (how to add X today)
 
-**Add a CLI subcommand:** write `cmd_<name>(args, cfg)` in [__main__.py](jobscope/__main__.py),
+**Add a CLI subcommand:** write `cmd_<name>(args, cfg)` in [cli/__init__.py](jobscope/cli/__init__.py),
 add a `sub.add_parser(...)` with `set_defaults(func=cmd_<name>)`, put logic in a feature module
 (lazy-import it inside `cmd_<name>`).
 
-**Add an enrichment source:** create `enrich/<src>.py` exposing `enrich(company, ...)`; import
-and call it in [enrich/__init__.py](jobscope/enrich/__init__.py) `run()`; add its toggle to the
-`enrich` section of `DEFAULT_CONFIG`; surface fields via `_enrich_summary` + `schema.ts`.
-*(P-B turns steps 2–3 into self-registration.)*
+**Add an enrichment source:** create `enrich/<src>.py` exposing `enrich(company, ...)` and decorate it
+with `@source(section=..., config_key=...)` from [enrich/registry.py](jobscope/enrich/registry.py); add
+the module to the import line in [enrich/__init__.py](jobscope/enrich/__init__.py) so its decorator runs
+at import (import = register — no `if cfg[...]` ladder edit); add its toggle to the `enrich` section of
+`DEFAULT_CONFIG` ([core/config.py](jobscope/core/config.py)); surface fields via `_enrich_summary` +
+`schema.ts`.
 
-**Add a `Job` field end-to-end:** add it to the `Job` dataclass ([model.py](jobscope/model.py)) →
-add the column to `SCHEMA` + `_ensure_columns()` ([store.py](jobscope/store.py)) → set it in
-`scrape`/`ats` → emit it in `_job_record` ([render.py](jobscope/render.py)) → add it to `JobRow`
+**Add a `Job` field end-to-end:** add it to the `Job` dataclass ([model.py](jobscope/core/model.py)) →
+add the column to `SCHEMA` + `_ensure_columns()` ([store/base.py](jobscope/core/store/base.py)) → set it
+in `scrape`/`ats` → emit it in `_job_record` ([render.py](jobscope/deliver/render.py)) → add it to `JobRow`
   ([schema.ts](web/src/lib/schema.ts)) → use it in components.
 
 **Add a web facet:** add the key to `FACETS`, `FacetKey`, and `searchSchema`
@@ -365,70 +388,72 @@ is present on `JobRow`.
 
 ---
 
-## 12. Modularity roadmap
+## 12. Modularity roadmap — shipped
 
-Approved direction: **document now, refactor incrementally** as features land. Each item lists
-its trigger, the change, and the invariant to preserve. Nothing here is a big-bang rewrite.
+The plan was **document now, refactor incrementally**. All three tiers have since landed; this
+section is now a record of what shipped (plus the few genuinely-optional ideas left).
 
-### Tier 1 — low risk, high feature-velocity (do next)
+### Tier 1 — data-contract & config guards ✅ done
 
-- **P-A · Data-contract SSOT** — *trigger: applications board (HTML board shipped; React mirror pending).* Add a JSON Schema for the
-  `dashboard.json` payload and a pytest asserting the emitted file validates; extract shared
-  tier/facet constants. Add the missing `Application` type (seam #5) to `schema.ts` so the React app can render the board too. *Later:*
-  generate `schema.ts` from Python. *Invariant:* the JSON shape stays identical.
-- **P-B · Enrichment registry** — *trigger: new intel sources.* Replace hardcoded imports in
-  [enrich/__init__.py](jobscope/enrich/__init__.py) with a `@source("name")` decorator; sources
-  self-register; config toggles by name; `_enrich_summary` + `schema.ts` iterate the registry.
-  *Invariant:* each source stays independent and best-effort.
-- **P-C · Config-drift guard** — a pytest asserting `config.example.yaml` keys are a superset of
-  `DEFAULT_CONFIG`. *Invariant:* env-only secrets.
+- **P-A · Data-contract SSOT — done.** The `applications[]` array is typed end-to-end:
+  `Application` + `ApplicationEvent` interfaces and `applications?` on `DashboardData`
+  ([web/src/lib/schema.ts](web/src/lib/schema.ts)); a JSON-Schema artifact
+  ([jobscope/deliver/schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json))
+  and a structural contract test ([tests/test_dashboard_json.py](tests/test_dashboard_json.py))
+  assert the emitted `dashboard.json` matches the shape and that the public build is redacted
+  (seam #5 closed). *Invariant held:* the JSON shape stays identical.
+- **P-B · Enrichment registry — done.** [enrich/__init__.py](jobscope/enrich/__init__.py) iterates
+  `SECTION_SOURCES`; each source self-registers via the `@source(...)` decorator in
+  [enrich/registry.py](jobscope/enrich/registry.py). A new intel source is one module + a decorator
+  — the old `if cfg[...]` ladder is gone. *Invariant held:* each source stays independent and
+  best-effort.
+- **P-C · Config-drift guard — done.** [tests/test_config.py](tests/test_config.py) asserts
+  `config.example.yaml` covers every `DEFAULT_CONFIG` key path. *Invariant held:* env-only secrets.
 
-### Tier 2 — structural health (do per-feature)
+### Tier 2 — structural splits ✅ done
 
-- **P-D · Split `store.py`** — *trigger: next persistence change.* Break into `JobStore`,
-  `EnrichmentStore`, `ApplicationStore`, `MailStore`, `ProfileStore` behind a `Store` facade
-  that delegates. *Invariant:* additive `_ensure_columns` migrations; same public method names.
-- **P-E · Split `match.py`** — *trigger: next scoring change.* Extract
-  `match/{seniority,experience,filters,scoring}.py`; `match.py` becomes the orchestrator.
-  *Invariant:* scoring stays a pure, network-free function; identical scores.
-- **Opportunistic:** split `resume.py` per-format parsers; split `tailor.py` (deterministic
-  `analyze` vs AI rewrite); inline the thin `brief.py` wrapper; retire `render.py`'s HTML
-  template once the web app is canonical.
+- **P-D · `store.py` → [core/store/](jobscope/core/store/) package — done.** `base` (connection +
+  `SCHEMA` + additive `_ensure_columns`) plus `jobs`/`enrichment`/`applications`/`mail`/`profile`/
+  `meta` mixins composed behind the `Store` facade. `from jobscope.core.store import Store` / `now_iso`
+  unchanged; migrations still additive; same public method names.
+- **P-E · `match.py` → [analyze/match/](jobscope/analyze/match/) package — done.**
+  `seniority`/`experience`/`filters`/`scoring`/`routing`/`run` submodules, layered so leaves never
+  import up. Scoring stays a pure, network-free function — identical scores; all public *and* private
+  names are re-exported so tests/selftest are unchanged.
 
-### Tier 3 — package reorganization (staged)
+### Tier 3 — package reorganization ✅ done
 
-> `inbox`/`mailrules` are now committed and shipped, so this tier is unblocked.
-
-Group the flat package into sub-packages mirroring §3:
+The formerly-flat package is now grouped into concern sub-packages (§2/§3):
 
 ```
 jobscope/
-  core/      model, config, store, companies, httpx, ai
+  core/      model, config, store/ (pkg), companies, httpx, ai
   ingest/    scrape, ats, inbox, mailrules
-  analyze/   match, classify, resume, insights
-  enrich/    (already a package)
+  analyze/   match/ (pkg), classify, resume, insights
+  enrich/    sources + registry (already a package)
   apply/     apply, tailor, track, brief
-  deliver/   render, exporter, serve, pdf, email
-  cli/       parser + cmd_* bodies (+ pipeline, scaffold, selftest)
-  __main__.py  ← STAYS at root (thin; calls cli.main)
+  deliver/   render, exporter, serve, pdf, email, schema/
+  cli/       build_parser + cmd_* + main (+ pipeline, scaffold, selftest)
+  __main__.py  ← thin shim at the root: `from .cli import main`
 ```
 
-**Mechanics & guardrails:**
+The entry point stayed put — `pyproject.toml` maps `jobscope = "jobscope.__main__:main"` and
+`python -m jobscope` both resolve to the root `__main__.py` shim. `[tool.setuptools.packages.find]
+include = ["jobscope*"]` auto-discovers every sub-package (each has an `__init__.py`). Backend uses
+relative imports (`from ..core.model import ...` across groups, `from .` within a group); tests use
+absolute imports (`from jobscope.analyze.match import ...`). No compatibility shims — every call site
+was updated.
 
-- **Entry point stays put.** `pyproject.toml` maps `jobscope = "jobscope.__main__:main"` and
-  `python -m jobscope` both need a root `__main__.py`. Keep it as a thin shim; move only the
-  parser/`cmd_*` bodies into `cli/`.
-- **Packaging.** `[tool.setuptools.packages.find] include = ["jobscope*"]` auto-discovers
-  sub-packages **if each has an `__init__.py`** — no explicit list to maintain. Verify with
-  `pip install -e .` after.
-- **Import churn (~170 mechanical edits).** Backend uses **relative** imports (~93 sites:
-  `from .model import` → `from ..core.model import` across groups; within-group stays `from .`).
-  Tests use **absolute** imports (~79 sites: `from jobscope.match import` →
-  `from jobscope.analyze.match import`). No compatibility shims — we own every call site.
-- **Sequencing.** One feature branch; `git mv` per group (preserve history); low-fan-in groups
-  first (`deliver` → `apply` → `ingest` → `analyze`), **`core` last**; run `pytest` +
-  `npm run build` green **after each group** before moving on. `enrich/` is already a package.
-- **Invariants (all tiers):** deterministic-first, additive migrations, zero circular imports.
+### Opportunistic (optional, unscheduled)
+
+- Split `resume.py` per-format parsers; split `tailor.py` (deterministic `analyze` vs AI rewrite);
+  inline the thin [apply/brief.py](jobscope/apply/brief.py) wrapper.
+- Retire `render.py`'s inline HTML `_TEMPLATE` once the React app is the canonical UI, leaving a slim
+  emitter.
+- Generate `schema.ts` from the Python shapes (or the JSON Schema) so the TS mirror can't drift.
+
+**Invariants held across every tier:** deterministic-first, additive migrations, zero circular
+imports; `pytest` + `jobscope selftest` + `npm run build` green.
 
 ---
 
@@ -437,9 +462,11 @@ jobscope/
 Update this file when you:
 
 - add/rename/move a module (§4 inventory) or change an import edge (§3/§5);
-- change the emitted JSON shape — touch [render.py](jobscope/render.py) `build_data`/`_job_record`/
-  `_enrich_summary`/`_overview_data` or [schema.ts](web/src/lib/schema.ts) (§9 seam table);
-- complete a roadmap item (§12) — move it to "healthy" and note the commit.
+- change the emitted JSON shape — touch [render.py](jobscope/deliver/render.py) `build_data`/`_job_record`/
+  `_enrich_summary`/`_overview_data` or [schema.ts](web/src/lib/schema.ts), and keep
+  [deliver/schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) +
+  [tests/test_dashboard_json.py](tests/test_dashboard_json.py) in step (§9 seam table);
+- complete a roadmap item (§12) — move it to "shipped" and note the commit.
 
-Consider adding a lightweight pointer to this file from the README. Once P-A lands, the
-JSON-Schema test becomes the machine-checked half of §9.
+Consider adding a lightweight pointer to this file from the README. The JSON-Schema contract test
+([tests/test_dashboard_json.py](tests/test_dashboard_json.py)) is the machine-checked half of §9.
