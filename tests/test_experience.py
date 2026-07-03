@@ -58,3 +58,25 @@ def test_filter_keeps_at_or_below_cap():
 def test_filter_off_by_default():
     assert apply_filters(_job("Principal Security Engineer"), {}) is None
     assert apply_filters(_job("Staff Engineer", "10+ years"), {"max_years_experience": 0}) is None
+
+
+def test_numeric_and_code_levels_imply_years():
+    assert required_experience_years(_job("Security Engineer II")) == 2.0
+    assert required_experience_years(_job("Security Engineer III")) == 4.0
+    assert required_experience_years(_job("Sr. Security Engineer")) == 4.0
+    assert required_experience_years(_job("Security Engineer, L5")) == 6.0
+    # a plain level-less title still yields no signal
+    assert required_experience_years(_job("Cloud Security Engineer")) is None
+
+
+def test_structured_job_level_implies_years():
+    assert required_experience_years(Job(title="Security Engineer", job_level="Entry level")) == 0.0
+    assert required_experience_years(Job(title="Security Engineer", job_level="Director")) == 10.0
+    # ambiguous LinkedIn "Mid-Senior level" is deliberately ignored
+    assert required_experience_years(Job(title="Security Engineer", job_level="Mid-Senior level")) is None
+
+
+def test_cap_uses_numeric_levels():
+    f = {"max_years_experience": 3}
+    assert apply_filters(_job("Security Engineer III"), f)          # ~4y > 3 -> blocked
+    assert apply_filters(_job("Security Engineer II"), f) is None   # ~2y <= 3 -> kept

@@ -87,6 +87,47 @@ def _title_seniority(title: str) -> Optional[int]:
     return best
 
 
+# LinkedIn "Seniority level" (via JobSpy `job_level`) -> rank. Only the confident
+# buckets; "mid-senior level" is intentionally omitted (too broad to trust).
+_JOB_LEVEL_RANK = {
+    "internship": 0, "intern": 0,
+    "entry level": 1, "entry": 1, "associate": 1,
+    "director": 6, "executive": 7,
+}
+
+# Numeric / company level codes in a title -> rank (highest first; word-anchored).
+_NUMERIC_LEVEL = [
+    (re.compile(r"\b(?:l[6-9]|ic[6-9])\b", re.I), 5),
+    (re.compile(r"\b(?:l5|ic5|level\s*5)\b", re.I), 4),
+    (re.compile(r"\b(?:l4|ic4|iv|level\s*4)\b", re.I), 3),
+    (re.compile(r"\b(?:iii|l3|ic3|level\s*3)\b", re.I), 3),
+    (re.compile(r"\b(?:ii|l2|ic2|level\s*2)\b", re.I), 2),
+    (re.compile(r"\b(?:l1|ic1|level\s*1)\b", re.I), 1),
+]
+
+
+def _job_seniority(job: Job) -> Optional[int]:
+    """Best seniority rank from the title, the structured ``job_level``, and numeric
+    level codes (Sr., II/III, L5, IC4). Highest signal wins; None when the posting
+    gives no seniority cue at all."""
+    ranks: list[int] = []
+    title = job.title or ""
+    for variant in (title, re.sub(r"[./]", " ", title)):
+        r = _title_seniority(variant)
+        if r is not None:
+            ranks.append(r)
+    jl = (getattr(job, "job_level", "") or "").lower()
+    for key, rank in _JOB_LEVEL_RANK.items():
+        if key in jl:
+            ranks.append(rank)
+            break
+    for rx, rank in _NUMERIC_LEVEL:
+        if rx.search(title):
+            ranks.append(rank)
+            break
+    return max(ranks) if ranks else None
+
+
 # Rough minimum years of experience implied by a seniority word in the title.
 _SENIORITY_MIN_YEARS = {0: 0, 1: 0, 2: 2, 3: 4, 4: 6, 5: 8, 6: 10, 7: 12, 8: 15}
 
@@ -115,7 +156,7 @@ def required_experience_years(job: Job) -> Optional[float]:
         nums.append(int(m.group(1)))
     explicit = max((n for n in nums if 1 <= n <= 25), default=None)
 
-    rank = _title_seniority(title)
+    rank = _job_seniority(job)
     tmin = _SENIORITY_MIN_YEARS.get(rank) if rank is not None else None
 
     vals = [v for v in (explicit, tmin) if v is not None]
@@ -156,19 +197,22 @@ def _title_score(resume: Resume, job: Job) -> float:
     return best
 
 
-def _seniority_score(resume: Resume, job: Job) -> float:
-    want = SENIORITY_RANK.get((resume.seniority or "").lower())
-    have = _title_seniority(job.title)
+def _seniority_score(resume: Resume, job: Job, target: str = "") -> float:
+    # `target` (config match.target_seniority) overrides the resume-inferred level
+    # when set. The penalty is ASYMMETRIC: a role more senior than you (you'd be
+    # under-qualified) is punished hard; being over-qualified is only mildly damped.
+    want = SENIORITY_RANK.get((target or resume.seniority or "").lower())
+    have = _job_seniority(job)
     if want is None or have is None:
         return 0.6  # unknown -> mildly neutral
-    dist = abs(have - want)
-    if dist == 0:
-        return 1.0
-    if dist == 1:
-        return 0.75
-    if dist == 2:
-        return 0.45
-    return 0.2
+    diff = have - want          # > 0 = role is more senior than you
+    if diff <= 0:
+        return 1.0 if diff >= -1 else 0.85
+    if diff == 1:
+        return 0.7
+    if diff == 2:
+        return 0.4
+    return 0.15
 
 
 def _comp_score(job: Job, min_salary: float) -> float:
@@ -305,7 +349,7 @@ def score_job(job: Job, resume: Resume, match_cfg: dict) -> tuple[float, str, st
     parts = {
         "skills": skill,
         "title": _title_score(resume, job),
-        "seniority": _seniority_score(resume, job),
+        "seniority": _seniority_score(resume, job, match_cfg.get("target_seniority", "")),
         "comp": _comp_score(job, match_cfg.get("min_salary", 0) or 0),
         "location": _location_score(resume, job, match_cfg.get("want_remote", True),
                                     match_cfg.get("prefer_locations"),

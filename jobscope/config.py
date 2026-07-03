@@ -46,7 +46,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "company": 0.12,
         },
         "min_salary": 0,
-        "seniority": "mid",
+        "target_seniority": "",   # "" = infer from resume; else junior/mid/senior... (down-ranks roles above it)
         "prefer_locations": [],
         "prefer_companies": [],
         "prefer_company_size": "any",

@@ -165,6 +165,7 @@ def _row_to_job(row) -> Job:
         salary_interval=str(_val(row, "interval", default="") or ""),
         currency=str(_val(row, "currency", default="") or ""),
         job_type=str(_val(row, "job_type", default="") or ""),
+        job_level=str(_val(row, "job_level", default="") or ""),
         company_industry=str(_val(row, "company_industry", default="") or ""),
         company_url=str(_val(row, "company_url", default="") or ""),
         date_posted=str(_val(row, "date_posted", default="") or ""),

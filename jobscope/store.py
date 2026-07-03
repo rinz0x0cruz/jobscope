@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     salary_interval TEXT,
     currency TEXT,
     job_type TEXT,
+    job_level TEXT,
     company_industry TEXT,
     company_url TEXT,
     date_posted TEXT,
@@ -135,6 +136,7 @@ class Store:
             ("closed_at", "TEXT"),
             ("remote_scope", "TEXT"),
             ("raw_is_remote", "INTEGER"),
+            ("job_level", "TEXT"),
         ):
             if col not in existing:
                 self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
@@ -165,12 +167,12 @@ class Store:
             INSERT INTO jobs (id, source, title, company, location, is_remote,
                 remote_scope, raw_is_remote, url,
                 description, salary_min, salary_max, salary_interval, currency,
-                job_type, company_industry, company_url, date_posted, score, tier,
+                job_type, job_level, company_industry, company_url, date_posted, score, tier,
                 rationale, first_seen, last_seen, status, closed_at)
             VALUES (:id, :source, :title, :company, :location, :is_remote,
                 :remote_scope, :raw_is_remote, :url,
                 :description, :salary_min, :salary_max, :salary_interval, :currency,
-                :job_type, :company_industry, :company_url, :date_posted, :score, :tier,
+                :job_type, :job_level, :company_industry, :company_url, :date_posted, :score, :tier,
                 :rationale, :first_seen, :last_seen, :status, :closed_at)
             ON CONFLICT(id) DO UPDATE SET
                 source=excluded.source, title=excluded.title, company=excluded.company,
@@ -180,6 +182,7 @@ class Store:
                 description=excluded.description, salary_min=excluded.salary_min,
                 salary_max=excluded.salary_max, salary_interval=excluded.salary_interval,
                 currency=excluded.currency, job_type=excluded.job_type,
+                job_level=excluded.job_level,
                 company_industry=excluded.company_industry, company_url=excluded.company_url,
                 date_posted=excluded.date_posted, last_seen=excluded.last_seen,
                 status='open', closed_at=''

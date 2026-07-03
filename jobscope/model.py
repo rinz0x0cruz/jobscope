@@ -157,6 +157,7 @@ class Job:
     salary_interval: str = ""                                # yearly/monthly/hourly...
     currency: str = ""
     job_type: str = ""                                       # fulltime/contract/intern...
+    job_level: str = ""                                      # structured seniority, e.g. LinkedIn "Mid-Senior level"
     company_industry: str = ""
     company_url: str = ""
     date_posted: str = ""
