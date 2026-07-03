@@ -13,7 +13,7 @@ import sqlite3
 import time
 from typing import Any, Iterable, Optional
 
-from .model import Job, MailEvent, Resume
+from .model import Job, Resume
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
