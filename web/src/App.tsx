@@ -23,6 +23,7 @@ import { ActiveChips } from '@/components/filters/ActiveChips'
 import { SearchPalette } from '@/components/filters/SearchPalette'
 import { JobList } from '@/components/JobList'
 import { Overview } from '@/components/overview/Overview'
+import { Applications } from '@/components/applications/Applications'
 import { JobDrawer } from '@/components/JobDrawer'
 import { Toaster } from 'sonner'
 
@@ -33,7 +34,7 @@ export default function App() {
 
   const tabCounts = useMemo(() => {
     const base = tabPool(rows, 'all', state.hideClosed)
-    const c: Record<TabValue, number> = { overview: base.length, all: base.length, Strong: 0, Good: 0, Stretch: 0, Skip: 0 }
+    const c: Record<TabValue, number> = { overview: base.length, applications: dashboard.applications?.length ?? 0, all: base.length, Strong: 0, Good: 0, Stretch: 0, Skip: 0 }
     for (const r of base) c[r.tier] += 1
     return c
   }, [rows, state.hideClosed])
@@ -96,6 +97,8 @@ export default function App() {
         <Tabs value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
         {state.tab === 'overview' ? (
           <Overview rows={rows} stats={dashboard.overview} onOpen={openDrawer} />
+        ) : state.tab === 'applications' ? (
+          <Applications apps={dashboard.applications ?? []} />
         ) : (
           <>
             <FacetBar

@@ -4,6 +4,7 @@ import { TAB_VALUES } from '@/lib/urlState'
 
 const LABELS: Record<TabValue, string> = {
   overview: 'Overview',
+  applications: 'Applications',
   all: 'All',
   Strong: 'Strong',
   Good: 'Good',
