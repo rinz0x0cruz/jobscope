@@ -7,10 +7,10 @@ public job info and fit scores are kept. Fully offline -- no network.
 import os
 import tempfile
 
-from jobscope import render
-from jobscope.config import load_config
-from jobscope.model import Application, Contact, Job
-from jobscope.store import Store
+from jobscope.deliver import render
+from jobscope.core.config import load_config
+from jobscope.core.model import Application, Contact, Job
+from jobscope.core.store import Store
 
 
 def _seed(store):

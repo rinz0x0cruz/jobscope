@@ -23,7 +23,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "detect-secrets>=1.5"]
+# Optional OS-keychain storage for secrets (Windows Credential Manager / macOS
+# Keychain / Secret Service). The tool falls back to environment/.env without it.
+secure = ["keyring>=24"]
+# Optional multi-model AI backend (routes ai.chat through a quorum deliberation).
+# Pinned to an immutable release; bump the tag to adopt a newer quorum.
+quorum = ["quorum @ git+https://github.com/rinz0x0cruz/quorum.git@v0.2.0"]
 
 [project.scripts]
 jobscope = "jobscope.__main__:main"

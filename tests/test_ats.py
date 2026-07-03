@@ -2,9 +2,9 @@
 import os
 import tempfile
 
-from jobscope import ats
-from jobscope.config import load_config
-from jobscope.store import Store
+from jobscope.ingest import ats
+from jobscope.core.config import load_config
+from jobscope.core.store import Store
 
 
 GREENHOUSE = {
@@ -133,7 +133,7 @@ def test_no_companies_is_noop(monkeypatch):
 
 
 def test_matches_unit():
-    from jobscope.model import Job
+    from jobscope.core.model import Job
     locs, roles = {"india"}, {"security engineer"}
     india = Job(title="Security Engineer", location="Bengaluru, India")
     remote = Job(title="Security Engineer", location="Remote - US", is_remote=True)
@@ -190,7 +190,7 @@ def test_failed_fetch_does_not_close(monkeypatch):
 
 
 def test_reopen_on_reappearance():
-    from jobscope.model import Job
+    from jobscope.core.model import Job
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
         store = Store(cfg["output"]["db_path"])

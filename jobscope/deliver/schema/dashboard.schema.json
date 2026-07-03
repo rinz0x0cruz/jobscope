@@ -1,0 +1,165 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://jobscope/schema/dashboard.schema.json",
+  "title": "jobscope dashboard payload",
+  "description": "Machine-readable mirror of render.build_data() (render.py). Single source of truth for the Python->TypeScript data contract (ARCHITECTURE.md section 9). Keep 1:1 with web/src/lib/schema.ts and tests/test_dashboard_json.py. Emitted by `jobscope dashboard --emit-json` to data/dashboard.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["generated", "total", "rows", "overview", "applications"],
+  "properties": {
+    "generated": {"type": "string", "description": "ISO timestamp (now_iso())."},
+    "total": {"type": "integer", "description": "len(rows)."},
+    "rows": {"type": "array", "items": {"$ref": "#/definitions/JobRow"}},
+    "overview": {"$ref": "#/definitions/Overview"},
+    "applications": {
+      "type": "array",
+      "description": "Empty ([]) for the public build; _application_records() otherwise.",
+      "items": {"$ref": "#/definitions/Application"}
+    }
+  },
+  "definitions": {
+    "Tier": {"type": "string", "enum": ["Strong", "Good", "Stretch", "Skip"]},
+    "JobRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "title", "company", "location", "remote", "remote_scope", "url",
+        "source", "score", "tier", "base", "salary", "size", "funding",
+        "country", "place", "industry", "rationale", "blocked", "posted",
+        "first_seen", "status", "last_seen", "closed_at", "enrich", "brief",
+        "contacts"
+      ],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "company": {"type": "string"},
+        "location": {"type": "string"},
+        "remote": {"type": "boolean"},
+        "remote_scope": {"type": "string"},
+        "url": {"type": "string"},
+        "source": {"type": "string"},
+        "score": {"type": "number"},
+        "tier": {"$ref": "#/definitions/Tier"},
+        "base": {"type": "string"},
+        "salary": {"type": "string"},
+        "size": {"type": "string"},
+        "funding": {"type": "string"},
+        "country": {"type": "string"},
+        "place": {"type": "string"},
+        "industry": {"type": ["string", "null"]},
+        "rationale": {"type": "string"},
+        "blocked": {"type": "boolean"},
+        "posted": {"type": ["string", "null"]},
+        "first_seen": {"type": "string"},
+        "status": {"type": "string"},
+        "last_seen": {"type": "string"},
+        "closed_at": {"type": "string"},
+        "enrich": {"$ref": "#/definitions/EnrichSummary"},
+        "brief": {"type": "string"},
+        "contacts": {"type": "array", "items": {"$ref": "#/definitions/Contact"}}
+      }
+    },
+    "Contact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": ["string", "null"]},
+        "title": {"type": ["string", "null"]},
+        "url": {"type": ["string", "null"]}
+      }
+    },
+    "EnrichSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "All sub-objects optional; _enrich_summary() omits empty sections.",
+      "properties": {
+        "stock": {"$ref": "#/definitions/StockSummary"},
+        "comp": {"type": "object"},
+        "reddit": {"$ref": "#/definitions/RedditSummary"},
+        "news": {"type": "array", "items": {"$ref": "#/definitions/NewsItem"}},
+        "glassdoor": {"type": "object"}
+      }
+    },
+    "StockSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ticker": {"type": ["string", "null"]},
+        "price": {"type": ["number", "null"]},
+        "change_pct": {"type": ["number", "null"]},
+        "market_cap": {"type": ["string", "null"]},
+        "public": {"type": ["boolean", "null"]},
+        "currency": {"type": ["string", "null"]},
+        "week52_low": {"type": ["number", "null"]},
+        "week52_high": {"type": ["number", "null"]},
+        "week52_pos_pct": {"type": ["number", "null"]}
+      }
+    },
+    "RedditSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sentiment": {"type": ["string", "null"]},
+        "summary": {"type": ["string", "null"]},
+        "count": {"type": ["integer", "null"]}
+      }
+    },
+    "NewsItem": {
+      "type": "object",
+      "properties": {
+        "title": {"type": ["string", "null"]},
+        "link": {"type": ["string", "null"]},
+        "published": {"type": ["string", "null"]},
+        "source": {"type": ["string", "null"]}
+      }
+    },
+    "Overview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["funnel", "gaps", "considered", "targets"],
+      "properties": {
+        "funnel": {"type": "object", "additionalProperties": {"type": "integer"}},
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": [{"type": "string"}, {"type": "number"}]
+          }
+        },
+        "considered": {"type": "integer"},
+        "targets": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "Application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_id", "company", "title", "status", "applied_at", "updated",
+        "source", "timeline"
+      ],
+      "properties": {
+        "job_id": {"type": "string"},
+        "company": {"type": "string"},
+        "title": {"type": "string"},
+        "status": {"type": "string"},
+        "applied_at": {"type": "string"},
+        "updated": {"type": "string"},
+        "source": {"type": "string"},
+        "timeline": {"type": "array", "items": {"$ref": "#/definitions/ApplicationEvent"}}
+      }
+    },
+    "ApplicationEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "signal", "subject", "from"],
+      "properties": {
+        "date": {"type": "string"},
+        "signal": {"type": "string"},
+        "subject": {"type": "string"},
+        "from": {"type": "string"}
+      }
+    }
+  }
+}

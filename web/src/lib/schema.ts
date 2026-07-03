@@ -1,6 +1,6 @@
 // Typed mirror of the Python data contract emitted by
 // `jobscope dashboard --emit-json` (render.py: build_data / _job_record /
-// _overview_data). Keep this 1:1 with the Python shapes.
+// _overview_data / _application_records). Keep this 1:1 with the Python shapes.
 
 export type Tier = 'Strong' | 'Good' | 'Stretch' | 'Skip'
 
@@ -91,11 +91,34 @@ export interface Overview {
   targets: string[]
 }
 
+// One row of an application's email timeline (render.py: _application_records,
+// the `timeline[]` items). Every key is always emitted (Python defaults to '').
+export interface ApplicationEvent {
+  date: string
+  signal: string
+  subject: string
+  from: string
+}
+
+// A tracked application for the Applications board (render.py: _application_records).
+// Emitted only for the private build; the public payload sends `applications: []`.
+export interface Application {
+  job_id: string
+  company: string
+  title: string
+  status: string
+  applied_at: string
+  updated: string
+  source: string
+  timeline: ApplicationEvent[]
+}
+
 export interface DashboardData {
   generated: string
   total: number
   rows: JobRow[]
   overview: Overview
+  applications?: Application[]
 }
 
 export const TIERS: Tier[] = ['Strong', 'Good', 'Stretch', 'Skip']

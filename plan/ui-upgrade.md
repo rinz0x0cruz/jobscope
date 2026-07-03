@@ -22,14 +22,17 @@ virtualization, rich animation, accessibility, URL-shareable views, and a PWA fo
 1. **Offline / "your data stays local".** Opens from `file://`, no network at view time. → data is
    **baked in at build time** (no runtime server/API); fonts, icons, JS all bundled locally (no
    runtime CDN, no telemetry).
-2. **Static hosting on GitHub Pages** (Actions-based) from the separate **public**
-   `rinz0x0cruz/jobscope-dashboard` repo. → the app must **static-export** to plain HTML/JS. A
-   multi-file export also fixes today's "single 487 KB line breaks Jekyll" gotcha.
+2. **Static hosting on GitHub Pages** from **jobscope's own `gh-pages` branch** (branch-based,
+   served at `/jobscope/`; the separate `jobscope-dashboard` repo is retired). → the app must
+   **static-export** to plain HTML/JS with a `.nojekyll` marker. A multi-file export also fixes
+   today's "single 487 KB line breaks Jekyll" gotcha.
 3. **Redaction model.** Full local build vs a redacted public build (`_redact_public` strips per-job
    `contacts`/`rationale`/`resume_base` + Overview `funnel`/`targets`). → two JSON payloads, one UI.
 4. **Python pipeline untouched.** Only presentation changes. `scan/match/enrich/store` stay.
-5. **Source stays private.** Code lives in the private `jobscope` repo; only the redacted built
-   output is pushed to the public dashboard repo (early git history has a work-email author).
+5. **Redacted output only.** Only the redacted built output is published (to the public `gh-pages`
+   branch); the local DB/config never leave the machine. `jobscope` is a **public** repo (for free
+   Pages); its history was audited clean — only `rinz0x0cruz` + GitHub noreply, no work-email — so the
+   source being public exposes code only. (See next-steps §5.)
 
 ## 3. Stack (chosen — "your best", tuned for static + offline + heavy motion)
 
@@ -74,7 +77,7 @@ SQLite → `jobscope dashboard --emit-json`  → data/dashboard.json         (fu
         (+ `--public`)                      → data/dashboard.public.json  (redacted)
      → web build (`vite build --base=./`, imports the JSON, bakes it in) → web/dist/
      → local:   `jobscope serve` serves web/dist/
-     → publish: build from dashboard.public.json → push web/dist/ → jobscope-dashboard (Pages)
+     → publish: build from dashboard.public.json → push web/dist/ → jobscope `gh-pages` (Pages)
 ```
 
 - The Python emitter reuses `_job_record` / `_overview_data` / `_redact_public` unchanged; emits a
@@ -126,7 +129,7 @@ SQLite → `jobscope dashboard --emit-json`  → data/dashboard.json         (fu
    empty states, a11y + reduced-motion pass.
 7. **CLI + publishing** — `jobscope dashboard` = emit JSON → `vite build --base=./` → output to
    `data/dashboard/` (served by `jobscope serve`). Update `scripts/publish.ps1`/`publish.sh` to
-   build from the redacted JSON and push `web/dist/`; keep Actions Pages + `.nojekyll`.
+   build from the redacted JSON and push `web/dist/`; keep branch-based Pages + `.nojekyll`.
 8. **Delete the legacy renderer** — remove `_TEMPLATE` / `card()` / inline JS from render.py;
    `render.build()` becomes the JSON emitter. Update FEATURES.md, README, config docs.
 
@@ -138,8 +141,8 @@ SQLite → `jobscope dashboard --emit-json`  → data/dashboard.json         (fu
    TanStack Router"; Next.js is widely seen as overkill/costly for a no-SSR static site.
 2. **Full replacement — no `--legacy` fallback.** The single-file Python renderer is deleted once
    the web app reaches parity; building the dashboard then requires Node (accepted).
-3. **Repo placement — source in private `jobscope`; push built `web/dist/` to public
-   `jobscope-dashboard`.** Unchanged hosting model.
+3. **Repo placement — source in `jobscope`; push built `web/dist/` to its own public
+   `gh-pages` branch.** Consolidated hosting model (`jobscope-dashboard` retired).
 4. **Scope — full parity, motion-first throughout** (not a bare MVP), sequenced per §6.
 
 ## 8. Animation & dynamics
@@ -210,8 +213,8 @@ index is built once.
 - `jobscope dashboard` → emit JSON → `vite build --base=./` → copy `web/dist` to `data/dashboard/`.
   `--public` builds from the redacted JSON.
 - `jobscope serve` → static-serves `data/dashboard/`.
-- `scripts/publish.*` → build public → push `web/dist` (site root) to `jobscope-dashboard`; Actions
-  Pages unchanged; keep `.nojekyll`.
+- `scripts/publish.*` → build public → push `web/dist` (site root) to jobscope's `gh-pages` branch
+  (branch-based Pages); keep `.nojekyll`.
 - **CI** — existing Python `selftest`/`pytest` gates unchanged; add a separate **web** job (Node:
   install, typecheck, `build`, schema test) that runs only on `web/**` changes and does **not** gate
   the Python checks.

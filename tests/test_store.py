@@ -1,8 +1,8 @@
 import os
 import tempfile
 
-from jobscope.model import Application, Job, Resume
-from jobscope.store import Store
+from jobscope.core.model import Application, Job, Resume
+from jobscope.core.store import Store
 
 
 def _store():

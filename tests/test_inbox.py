@@ -5,10 +5,10 @@ import os
 import tempfile
 from email.message import EmailMessage
 
-from jobscope import inbox, mailrules
-from jobscope.config import load_config
-from jobscope.model import Application, Job, MailEvent
-from jobscope.store import Store
+from jobscope.ingest import inbox, mailrules
+from jobscope.core.config import load_config
+from jobscope.core.model import Application, Job, MailEvent
+from jobscope.core.store import Store
 
 
 # --- helpers ----------------------------------------------------------------

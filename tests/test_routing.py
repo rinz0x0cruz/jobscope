@@ -1,10 +1,11 @@
 """Integration: the AI ``discipline`` hint breaks the resume-routing tie for a
 lean-AMBIGUOUS posting, and is a strict no-op when AI is off (routing stays the
 deterministic best-fit). ai.chat / ai.available are monkeypatched -- no network."""
-from jobscope import ai, match
-from jobscope.config import load_config
-from jobscope.model import Job, Resume
-from jobscope.store import Store
+from jobscope.core import ai
+from jobscope.analyze import match
+from jobscope.core.config import load_config
+from jobscope.core.model import Job, Resume
+from jobscope.core.store import Store
 
 
 def _technical_resume() -> Resume:

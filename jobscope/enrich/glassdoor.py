@@ -10,9 +10,11 @@ import re
 from typing import Any, Optional
 from urllib.parse import quote_plus
 
-from .. import httpx
+from jobscope.core import httpx
+from .registry import source
 
 
+@source(section="glassdoor", config_key="glassdoor")
 def enrich(company: str) -> Optional[dict[str, Any]]:
     search_url = f"https://www.glassdoor.com/Search/results.htm?keyword={quote_plus(company)}"
     out: dict[str, Any] = {"search_url": search_url, "rating": None}

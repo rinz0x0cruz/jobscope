@@ -1,6 +1,6 @@
-from jobscope.config import DEFAULT_CONFIG
-from jobscope.match import ghost_flags, score_job
-from jobscope.model import Job, Resume
+from jobscope.core.config import DEFAULT_CONFIG
+from jobscope.analyze.match import ghost_flags, score_job
+from jobscope.core.model import Job, Resume
 
 
 def _resume():

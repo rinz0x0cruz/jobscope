@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import ai
-from ..match import clearance_flags, ghost_flags, no_sponsorship
+from jobscope.core import ai
+from jobscope.analyze.match import clearance_flags, ghost_flags, no_sponsorship
 
 
 def build(cfg: dict, store, company: str, job, enr: dict) -> dict[str, Any]:

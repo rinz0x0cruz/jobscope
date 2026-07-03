@@ -1,6 +1,6 @@
 import os
 
-from jobscope.resume import parse_resume
+from jobscope.analyze.resume import parse_resume
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "resume.md")
 

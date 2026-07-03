@@ -2,10 +2,10 @@
 import os
 import tempfile
 
-from jobscope import render
-from jobscope.config import load_config
-from jobscope.model import Job
-from jobscope.store import Store
+from jobscope.deliver import render
+from jobscope.core.config import load_config
+from jobscope.core.model import Job
+from jobscope.core.store import Store
 
 
 def _cfg(tmp):

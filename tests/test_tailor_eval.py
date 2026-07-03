@@ -16,9 +16,10 @@ Plus: with AI unavailable, the summary is deterministic and fabricates nothing.
 import json
 from pathlib import Path
 
-from jobscope import ai, tailor
-from jobscope.config import load_config
-from jobscope.model import Job, Resume
+from jobscope.apply import tailor
+from jobscope.core import ai
+from jobscope.core.config import load_config
+from jobscope.core.model import Job, Resume
 
 FIXTURES = Path(__file__).parent / "fixtures" / "tailor_eval.jsonl"
 

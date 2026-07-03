@@ -1,31 +1,33 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Render the redacted jobscope dashboard and publish it to the public
-    jobscope-dashboard repo so it is viewable from a phone via GitHub Pages.
+    Build the redacted jobscope web dashboard and publish it to jobscope's own
+    gh-pages branch, served via GitHub Pages.
 
 .DESCRIPTION
-    Runs `jobscope dashboard --public` to produce a redacted, self-contained HTML
-    (no referral contacts, application funnel, or search terms), then pushes it as
-    index.html to a separate PUBLIC repo (jobscope-dashboard) whose Pages site serves
-    it. The jobscope code repo can stay private; only the redacted snapshot is public,
-    in a repo with a clean history. Your database/packages never leave your machine.
+    Emits a redacted dashboard payload (`jobscope dashboard --emit-json --public` -- no
+    referral contacts, rationale, resume labels, application funnel, or search terms),
+    bakes it into the Vite/React app in web/, builds it, and publishes web/dist to this
+    repo's `gh-pages` branch, which GitHub Pages serves at
+    https://rinz0x0cruz.github.io/jobscope/. Only the redacted build is published;
+    `main` is never touched and your database/config never leave your machine.
 
-    Safe to run from a scheduled task. Commits use the local rinz0x0cruz identity.
+    Requires Node.js/npm for the web build. Safe to run from a scheduled task;
+    commits use the local rinz0x0cruz identity.
 
 .PARAMETER Repo
-    HTTPS URL of the public dashboard repo to publish to.
+    HTTPS URL of the repo whose gh-pages branch hosts the dashboard.
 
 .PARAMETER Branch
-    Branch GitHub Pages serves from on that repo. Default "main".
+    Branch GitHub Pages serves from. Default "gh-pages".
 
 .EXAMPLE
     ./scripts/publish.ps1
 #>
 [CmdletBinding()]
 param(
-    [string]$Repo = "https://github.com/rinz0x0cruz/jobscope-dashboard.git",
-    [string]$Branch = "main",
+    [string]$Repo = "https://github.com/rinz0x0cruz/jobscope.git",
+    [string]$Branch = "gh-pages",
     [switch]$Force
 )
 
@@ -43,14 +45,27 @@ Set-Location $RepoRoot
 $Py = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Py)) { $Py = "python" }
 
-# 1. Render the redacted dashboard.
-Write-Host "==> Rendering redacted dashboard (jobscope dashboard --public)"
+# 1. Emit the redacted dashboard payload and bake it into the web app.
+Write-Host "==> Emitting redacted dashboard JSON (jobscope dashboard --emit-json --public)"
 $env:PYTHONPATH = "."
-& $Py -m jobscope dashboard --public
-if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --public failed (exit $LASTEXITCODE)" }
+& $Py -m jobscope dashboard --emit-json --public
+if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json --public failed (exit $LASTEXITCODE)" }
 
-$PublicHtml = Join-Path $RepoRoot "data\public-dashboard.html"
-if (-not (Test-Path $PublicHtml)) { throw "expected dashboard not found: $PublicHtml" }
+$PublicJson = Join-Path $RepoRoot "data\dashboard.public.json"
+if (-not (Test-Path $PublicJson)) { throw "expected payload not found: $PublicJson" }
+Copy-Item $PublicJson (Join-Path $RepoRoot "web\src\data\dashboard.json") -Force
+
+# 2. Build the web dashboard (Vite/React) with the redacted data baked in.
+Write-Host "==> Building web dashboard (npm run build)"
+Push-Location (Join-Path $RepoRoot "web")
+try {
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw "web build failed (exit $LASTEXITCODE)" }
+}
+finally { Pop-Location }
+
+$Dist = Join-Path $RepoRoot "web\dist"
+if (-not (Test-Path (Join-Path $Dist "index.html"))) { throw "expected build output not found: $Dist\index.html" }
 
 # Publish gate: only the designated publisher (the machine that ran
 # register-publish-task.ps1, which wrote .publish-primary) pushes, to avoid double
@@ -63,25 +78,26 @@ if (-not $Force) {
     if ($MarkerHost -and $MarkerHost -ne $env:COMPUTERNAME) { Write-Host "==> Marker names '$MarkerHost', not this machine '$env:COMPUTERNAME'. Skipping push. Pass -Force to override."; return }
 }
 
-# 2. Publish index.html to the separate public dashboard repo via a persistent
-#    (gitignored) clone. Only this machine pushes there, so a plain push is safe.
+# 3. Publish web/dist to this repo's gh-pages branch via a persistent, single-branch
+#    (gitignored) clone. Only this machine pushes there, so a plain push is safe, and
+#    main is never touched.
 $DashDir = Join-Path $RepoRoot ".dashboard-repo"
 $Name  = "rinz0x0cruz"
 $Email = "rinz0x0cruz@users.noreply.github.com"
 
 if (-not (Test-Path (Join-Path $DashDir ".git"))) {
-    git clone --quiet $Repo $DashDir
-    if ($LASTEXITCODE -ne 0) { throw "clone of $Repo failed (is a credential cached?)" }
+    git clone --quiet --branch $Branch --single-branch $Repo $DashDir
+    if ($LASTEXITCODE -ne 0) { throw "clone of $Repo ($Branch) failed (is a credential cached?)" }
 }
 
-Copy-Item $PublicHtml (Join-Path $DashDir "index.html") -Force
+# Replace the published files with the fresh build (hashed asset names change per build).
+Get-ChildItem $DashDir -Force | Where-Object { $_.Name -ne ".git" } | Remove-Item -Recurse -Force
+Copy-Item (Join-Path $Dist "*") $DashDir -Recurse -Force
 New-Item -ItemType File -Path (Join-Path $DashDir ".nojekyll") -Force | Out-Null
 
 Push-Location $DashDir
 try {
-    # Ensure we're on $Branch (create it on the first publish to an empty repo).
-    git rev-parse --verify --quiet $Branch 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { git checkout -q $Branch } else { git checkout -q -B $Branch }
+    git checkout -q $Branch
 
     git add -A
     git diff --cached --quiet
@@ -91,9 +107,9 @@ try {
         $stamp = (Get-Date).ToUniversalTime().ToString("o")
         git -c user.name=$Name -c user.email=$Email commit -q -m "chore: publish dashboard $stamp"
         if ($LASTEXITCODE -ne 0) { throw "commit failed" }
-        git push -q -u origin $Branch
+        git push -q origin $Branch
         if ($LASTEXITCODE -ne 0) { throw "push failed (is a credential cached / remote reachable?)" }
-        Write-Host "==> Published to $Repo ($Branch)."
+        Write-Host "==> Published -> https://rinz0x0cruz.github.io/jobscope/"
     }
 }
 finally {

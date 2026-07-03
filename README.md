@@ -17,7 +17,9 @@ Design principles:
   LinkedIn/Indeed/Workday. An opt-in `--assist` mode can pre-fill *public* ATS forms
   (Greenhouse/Lever/Ashby) but always **stops before submit**.
 - **Local-first & private.** Your resume, data, and secrets stay on your machine
-  (SQLite + gitignored files).
+  (SQLite + gitignored files). Secrets live in your OS keychain (`jobscope secrets`,
+  with `.env` fallback), the local DB is owner-only, and the published dashboard is
+  redacted. See [SECURITY.md](SECURITY.md).
 
 > Built as a sibling to [threatscope](../threatscope) / [exploitrank](../exploitrank):
 > stdlib CLI, SQLite persistence, concurrent feeds, static dashboard, `selftest`.
@@ -137,8 +139,14 @@ python -m jobscope dashboard --open           # Applications board: pipeline col
 ```
 
 Multiple mailboxes: add more entries under `accounts`, each with its own
-`password_env`. Everything stays local in SQLite; app passwords live only in your
-environment. Runs well from cron / Task Scheduler.
+`password_env`. Everything stays local in SQLite; app passwords resolve from your OS
+keychain (`jobscope secrets set JOBSCOPE_GMAIL_APP_PW`) or `.env`. Email bodies are
+classified in memory and **not stored** unless `inbox.store_snippets` is on, and you can
+wipe stored mail/applications anytime with `jobscope purge`. Runs well from cron /
+Task Scheduler.
+
+> **Tip:** point jobscope at a **dedicated job-search Gmail account** (forward recruiter
+> mail to it) so its app password can't touch your primary inbox. See [SECURITY.md](SECURITY.md).
 
 ## Prioritization (company quality + location)
 
@@ -176,26 +184,25 @@ or search country (off by default; global remote is never penalized).
 
 ## Publish to GitHub Pages (view on mobile)
 
-The dashboard is a single self-contained HTML file, so you can host it and open it
-from your phone. The full dashboard embeds private data (referral contacts, your
-application funnel, and search terms), so publish the **redacted** copy:
+The published dashboard is the **Vite/React app** in `web/`. It embeds only a
+**redacted** snapshot (no referral contacts, rationale, resume labels, application
+funnel, or search terms), so it is safe to host publicly:
 
 ```bash
-python -m jobscope dashboard --public   # -> data/public-dashboard.html (no contacts / funnel / search terms)
+python -m jobscope dashboard --emit-json --public   # -> data/dashboard.public.json (redacted)
 ```
 
-`scripts/publish.ps1` (Windows) / `scripts/publish.sh` (macOS/Linux) render that
-redacted copy and push it as `index.html` to a **separate public repo** whose Pages
-site serves it — so this repo can stay private. Your database never leaves your
-machine. One-time setup:
+`scripts/publish.ps1` (Windows) / `scripts/publish.sh` (macOS/Linux) emit that redacted
+payload, bake it into the web app, `npm run build`, and publish `web/dist` to this
+repo's **`gh-pages` branch**, which GitHub Pages serves. `main` is never touched and
+your database never leaves your machine. Requires Node.js/npm. One-time setup:
 
-1. Create the public dashboard repo (once): `gh repo create <user>/jobscope-dashboard --public`
-2. Run the publish script once by hand to push the first `index.html` and cache your
-   git credential.
-3. Enable Pages on that repo: **Settings → Pages → Deploy from a branch → `main` / root**.
-   The dashboard is then live at `https://<user>.github.io/jobscope-dashboard/`.
-4. Auto-refresh (Windows): `scripts/register-publish-task.ps1` registers a daily
-   Scheduled Task that re-renders and pushes while you're logged on.
+1. Run the publish script once by hand to push the first build to `gh-pages` and cache
+   your git credential.
+2. Enable Pages: **Settings → Pages → Deploy from a branch → `gh-pages` / root**.
+   The dashboard is then live at `https://<user>.github.io/jobscope/`.
+3. Auto-refresh (Windows): `scripts/register-publish-task.ps1` registers a daily
+   Scheduled Task that re-builds and pushes while you're logged on.
 
 > GitHub Pages is **public**. Only the redacted copy is published, but treat the URL
 > as shareable — keep real data in the local (`dashboard`) view.
@@ -294,6 +301,10 @@ Set `ai.enabled: true` and `JOBSCOPE_AI_API_KEY` in `.env`.
 With the optional [`quorum`](https://github.com/rinz0x0cruz/quorum) package installed,
 set `quorum.enabled: true` to route the AI layer through a multi-model deliberation
 (`strategy: ensemble | council | refine | debate | moa`) instead of a single model.
+
+```bash
+pip install -e ".[quorum]"   # fetches quorum from GitHub; then set quorum.enabled: true + the AI key
+```
 
 When AI is on, jobscope also runs a **seniority tie-breaker**: only for postings that
 have no deterministic level signal *and* still landed in a good tier (i.e. actually

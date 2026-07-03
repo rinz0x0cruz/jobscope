@@ -11,8 +11,8 @@ import hashlib
 import os
 from urllib.parse import quote_plus
 
-from ..model import Contact
-from .. import httpx
+from jobscope.core.model import Contact
+from jobscope.core import httpx
 
 GH_SEARCH = "https://api.github.com/search/users"
 

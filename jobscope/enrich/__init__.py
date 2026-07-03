@@ -4,12 +4,25 @@ For the top-ranked jobs (or a single job), gather public intel per company and
 persist it. Every source is best-effort and independent; a failure in one is
 logged and skipped. Deterministic by default -- AI summaries are layered on in
 Phase 3 via `tailor`/`ai`.
+
+The per-source `if cfg[...]: sections[...] = X.enrich(...)` ladder is gone: each
+*section* source self-registers via the `@source(...)` decorator (see
+`registry.py`), so adding an intel source is one new module + a decorator, not an
+edit here -- `run()` just iterates `SECTION_SOURCES`. `contacts` (returns leads
+-> `save_contacts`) and `brief` (AI synthesis over the gathered sections ->
+`save_enrichment(brief=...)`) have distinct storage semantics and stay wired
+explicitly below.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from . import brief, comp, contacts, glassdoor, news, reddit, stock
+from .registry import SECTION_SOURCES, EnrichContext
+# Importing the source modules runs their `@source(...)` decorators, which
+# self-register into SECTION_SOURCES (registration order = the order listed here:
+# comp, stock, reddit, news, glassdoor -- matching the old hardcoded ladder).
+from . import comp, stock, reddit, news, glassdoor  # noqa: F401 - import = register
+from . import brief, contacts
 
 
 def run(cfg: dict, store, job_id: Optional[str] = None) -> int:
@@ -29,16 +42,10 @@ def run(cfg: dict, store, job_id: Optional[str] = None) -> int:
     for company, job in by_company.items():
         sections = {}
         try:
-            if ecfg.get("compensation"):
-                sections["comp"] = comp.enrich(company, job)
-            if ecfg.get("stock"):
-                sections["stock"] = stock.enrich(company)
-            if ecfg.get("reddit"):
-                sections["reddit"] = reddit.enrich(company)
-            if ecfg.get("news"):
-                sections["news"] = news.enrich(company, ecfg.get("news_feeds", []))
-            if ecfg.get("glassdoor"):
-                sections["glassdoor"] = glassdoor.enrich(company)
+            ctx = EnrichContext(company=company, job=job, ecfg=ecfg)
+            for src in SECTION_SOURCES:
+                if ecfg.get(src.config_key):
+                    sections[src.section] = src.call(src.fn, ctx)
             store.save_enrichment(company, **{k: v for k, v in sections.items() if v})
             if ecfg.get("contacts"):
                 leads = contacts.find(company, job)

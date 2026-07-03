@@ -4,10 +4,10 @@ import sys
 import tempfile
 import types
 
-from jobscope import scrape
-from jobscope.config import load_config
-from jobscope.model import derive_remote_scope
-from jobscope.store import Store
+from jobscope.ingest import scrape
+from jobscope.core.config import load_config
+from jobscope.core.model import derive_remote_scope
+from jobscope.core.store import Store
 
 
 class _FakeDF:

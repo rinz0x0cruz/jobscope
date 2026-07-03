@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .. import httpx
+from jobscope.core import httpx
+from .registry import source
 
 SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 
@@ -43,6 +44,7 @@ KNOWN_TICKERS: dict[str, Optional[str]] = {
 }
 
 
+@source(section="stock", config_key="stock")
 def enrich(company: str) -> Optional[dict[str, Any]]:
     ticker, longname = _resolve_ticker(company)
     if not ticker:
