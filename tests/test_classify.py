@@ -49,3 +49,31 @@ def test_short_circuits_empty_posting(monkeypatch):
     monkeypatch.setattr(ai, "chat", lambda *a, **k: called.append(1) or "{}")
     assert classify.classify_seniority({}, None, Job(title="", description="")) is None
     assert not called
+
+
+def test_parses_discipline_technical(monkeypatch):
+    monkeypatch.setattr(ai, "chat", lambda *a, **k:
+                        '{"level":"senior","required_years":6,"discipline":"technical"}')
+    out = classify.classify_seniority({}, None, _job())
+    assert out["discipline"] == "technical"
+    assert out["level"] == "senior" and out["required_years"] == 6.0   # level/years intact
+
+
+def test_parses_discipline_advisory_case_insensitive(monkeypatch):
+    monkeypatch.setattr(ai, "chat", lambda *a, **k:
+                        '{"level":"mid","required_years":3,"discipline":"  ADVISORY "}')
+    assert classify.classify_seniority({}, None, _job())["discipline"] == "advisory"
+
+
+def test_discipline_omitted_when_invalid(monkeypatch):
+    monkeypatch.setattr(ai, "chat", lambda *a, **k:
+                        '{"level":"senior","required_years":6,"discipline":"wizard"}')
+    out = classify.classify_seniority({}, None, _job())
+    assert "discipline" not in out
+    assert out == {"level": "senior", "required_years": 6.0}            # legacy shape kept
+
+
+def test_discipline_absent_keeps_legacy_shape(monkeypatch):
+    monkeypatch.setattr(ai, "chat", lambda *a, **k: '{"level":"staff","required_years":8}')
+    out = classify.classify_seniority({}, None, _job())
+    assert out == {"level": "staff", "required_years": 8.0}             # no discipline key added

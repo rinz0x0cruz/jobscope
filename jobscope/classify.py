@@ -16,18 +16,23 @@ from .match import SENIORITY_RANK
 from .model import Job
 
 _VALID = ("intern", "junior", "mid", "senior", "staff", "principal", "lead", "director")
+_VALID_DISC = ("technical", "advisory")
 
 _SYSTEM = (
     "You are a precise job-seniority classifier. Judge the level from the SCOPE and "
-    "RESPONSIBILITIES of the posting, not just the title. Reply with STRICT JSON only, "
+    "RESPONSIBILITIES of the posting, not just the title. Also judge the DISCIPLINE: "
+    "\"technical\" = hands-on / read-code / detection / appsec / reverse-engineering, "
+    "\"advisory\" = consulting / GRC / audit / compliance. Reply with STRICT JSON only, "
     "no prose: {\"level\": <one of "
     + "|".join(_VALID)
-    + ">, \"required_years\": <integer 0-20>}."
+    + ">, \"required_years\": <integer 0-20>, \"discipline\": <one of "
+    + "|".join(_VALID_DISC)
+    + ">}."
 )
 
 
 def classify_seniority(cfg: dict, store, job: Job) -> Optional[dict]:
-    """Ask the AI/quorum layer for {level, required_years}. None if off/failed/empty."""
+    """Ask the AI/quorum layer for {level, required_years[, discipline]}. None if off/failed/empty."""
     title = (job.title or "").strip()
     desc = (job.description or "").strip()[:1500]
     if not title and not desc:
@@ -57,4 +62,8 @@ def _parse(raw: str) -> Optional[dict]:
     except (TypeError, ValueError):
         years = float(SENIORITY_RANK.get(level, 0) * 2)  # fall back from the level
     years = max(0.0, min(20.0, years))
-    return {"level": level, "required_years": years}
+    out = {"level": level, "required_years": years}
+    disc = str(data.get("discipline", "")).strip().lower()
+    if disc in _VALID_DISC:
+        out["discipline"] = disc
+    return out

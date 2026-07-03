@@ -567,6 +567,13 @@ def run(cfg: dict, store) -> int:
                 store.update_ai_seniority(job.id, job.ai_seniority, job.ai_required_years)
                 score, tier, rationale, base, was_blocked = _score(job)
                 rationale = f"{rationale} · AI:{job.ai_seniority}~{int(job.ai_required_years)}y"
+                disc = c.get("discipline")
+                if (multi and disc in ("technical", "advisory")
+                        and abs(_job_lean(job)) < LEAN_DECISIVE):
+                    # lean-ambiguous posting: let the AI discipline break the routing tie
+                    pick = max if disc == "technical" else min
+                    base = pick(resumes, key=lambda nr: _resume_lean(nr[1]))[0]
+                    rationale = f"{rationale} · AI-route:{disc}"
                 ai_used += 1
         if was_blocked:
             blocked += 1
