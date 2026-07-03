@@ -69,6 +69,9 @@ match:
   target_seniority: ""                # "" = infer from resume; else intern/junior/mid/senior/staff -> down-ranks roles above it (asymmetric)
   ai_seniority_tiebreak: true         # when ai.enabled: AI-classify ambiguous non-Skip postings (no title level / no stated years)
   ai_tiebreak_max_calls: 0            # 0 = unbounded; else cap AI classify calls per match run
+  ai_score_review: false              # off by default; needs quorum.enabled. CLI-only judge second-opinion on boundary jobs
+  ai_score_margin: 8                  # review jobs within this many points of a tier cut
+  ai_score_max_calls: 12              # 0 = unbounded; else cap judge calls per match run
   prefer_locations: []                # e.g. ["Remote", "India", "Bengaluru"] -> full location score
   prefer_companies: []                # your own must-boost employers (substring match)
   prefer_company_size: "any"          # any | large | mid | small -> bias ranking by headcount
