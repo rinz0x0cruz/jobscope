@@ -25,14 +25,13 @@ def build(cfg: dict, store, public: bool = False) -> str:
         enr = store.get_enrichment(j.company) if j.company else {}
         rows.append(_job_record(j, enr, store))
     overview = _overview_data(cfg, store)
-    apps = [] if public else _application_records(store)
     if public:
         _redact_public(rows, overview)
         path = cfg["output"].get("public_dashboard_path") or cfg["output"]["dashboard_path"]
     else:
         path = cfg["output"]["dashboard_path"]
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    htmltext = _render(rows, overview, apps)
+    htmltext = _render(rows, overview)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(htmltext)
     return path
@@ -281,14 +280,12 @@ def _fmt_salary(job) -> str:
     return f"{f(lo or hi)}{unit}"
 
 
-def _render(rows: list[dict], overview: dict | None = None, apps: list | None = None) -> str:
+def _render(rows: list[dict], overview: dict | None = None) -> str:
     data = json.dumps(rows).replace("</", "<\\/")
     ov = json.dumps(overview or {}).replace("</", "<\\/")
-    ap = json.dumps(apps or []).replace("</", "<\\/")
     return (_TEMPLATE
             .replace("__DATA__", data)
             .replace("__OVERVIEW__", ov)
-            .replace("__APPS__", ap)
             .replace("__GENERATED__", html.escape(now_iso()))
             .replace("__TOTAL__", str(len(rows))))
 
@@ -515,26 +512,6 @@ main{padding:12px 24px 60px; display:grid; gap:11px}
 .empty{text-align:center; color:var(--mute); padding:80px 20px}
 .empty code{background:var(--card); border:1px solid var(--border); border-radius:6px; padding:2px 7px; font:12px var(--mono)}
 footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
-/* applications board */
-.appboard{display:grid; grid-template-columns:repeat(auto-fill,minmax(268px,1fr)); gap:14px; padding:0 24px 28px}
-.appcol{background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); padding:12px; display:flex; flex-direction:column; gap:10px; align-self:start}
-.appcol-h{display:flex; align-items:center; gap:8px; font-weight:650; font-size:13px}
-.appcol-h .dot{width:9px; height:9px; border-radius:50%}
-.appcol-h b{margin-left:auto; color:var(--dim); font-variant-numeric:tabular-nums}
-.appcard{background:var(--card); border:1px solid var(--border); border-radius:10px; padding:11px 12px; transition:.14s}
-.appcard:hover{border-color:var(--border-h); background:var(--card-h)}
-.appcard-h{display:flex; align-items:baseline; gap:8px}
-.appco{font-weight:650; font-size:14px; letter-spacing:-.2px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.appdate{margin-left:auto; color:var(--mute); font-size:11px; flex:none}
-.apptitle{color:var(--dim); font-size:12.5px; margin-top:2px}
-.apptl{margin-top:9px; display:flex; flex-direction:column; gap:5px; border-top:1px solid var(--border); padding-top:9px}
-.apptl-row{display:flex; align-items:center; gap:7px; font-size:11.5px; min-width:0}
-.sig{font:10px var(--mono); font-weight:700; color:var(--c); border:1px solid color-mix(in srgb,var(--c) 40%,transparent); border-radius:5px; padding:0 5px; flex:none; text-transform:capitalize}
-.apptl-sub{color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1}
-.apptl-date{color:var(--mute); flex:none}
-.sankey-panel{margin:0 24px 16px}
-.sankey{width:100%; height:auto; display:block; margin-top:6px; max-width:820px}
-.snlab{fill:var(--fg); font:600 12px var(--font); paint-order:stroke; stroke:var(--card); stroke-width:3.5px; stroke-linejoin:round}
 @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
 </style></head><body>
 <header>
@@ -565,7 +542,6 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
 </header>
 <nav class="tabs" id="tabs"></nav>
 <section id="overview" class="view"></section>
-<section id="apps" class="view" hidden></section>
 <main id="list" class="view" hidden></main>
 <div id="overlay"></div>
 <aside id="drawer" aria-label="Job details"></aside>
@@ -573,15 +549,10 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
 <script>
 const DATA = __DATA__;
 const OVERVIEW = __OVERVIEW__;
-const APPS = __APPS__;
 const TIERC = {Strong:'#22c55e',Good:'#3b82f6',Stretch:'#f59e0b',Skip:'#71717a'};
 const BARC = ['#7c6cff','#22c55e','#3b82f6','#f59e0b','#71717a','#e879f9'];
-const TABS = ['overview','applications','Strong','Good','Stretch','Skip'];
+const TABS = ['overview','Strong','Good','Stretch','Skip'];
 let activeTab = 'overview';
-const APP_STATUS_ORDER = ['applied','interview','offer','rejected'];
-const APP_STATUS_LABEL = {new:'New',prepared:'Prepared',applied:'Applied',interview:'Interview',offer:'Offer',rejected:'Rejected',skipped:'Skipped'};
-const APP_STATUS_COLOR = {applied:'#3b82f6',interview:'#f59e0b',offer:'#22c55e',rejected:'#ef4444',new:'#71717a',prepared:'#a855f7',skipped:'#6a6a73'};
-const SIGC = {confirmation:'#3b82f6',recruiter:'#8b8b93',assessment:'#a855f7',interview:'#f59e0b',offer:'#22c55e',rejection:'#ef4444',other:'#6a6a73'};
 const q = document.getElementById('q'), resumeSel = document.getElementById('resume'), countrySel = document.getElementById('country'), placeSel = document.getElementById('place'), workmodeSel = document.getElementById('workmode'), fundingSel = document.getElementById('funding'), scopeSel = document.getElementById('scopeSel'), groupSel = document.getElementById('group'), hideClosed = document.getElementById('hideclosed');
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const isNew = r => r.first_seen && (Date.now()-Date.parse(r.first_seen) < 864e5);
@@ -709,10 +680,9 @@ function groupItems(items){
 function buildTabs(base){
   const c=counts(base);
   document.getElementById('tabs').innerHTML=TABS.map(t=>{
-    const lab=t==='overview'?'Overview':t==='applications'?'Applications':t;
+    const lab=t==='overview'?'Overview':t;
     let badge,col;
     if(t==='overview'){ badge=''; col='var(--accent)'; }
-    else if(t==='applications'){ badge=`<b>${(APPS||[]).length}</b>`; col='#f59e0b'; }
     else { badge=`<b>${c[t]||0}</b>`; col=TIERC[t]; }
     return `<button class="tab ${activeTab===t?'active':''}" data-tab="${t}" style="--c:${col}">${lab}${badge}</button>`;
   }).join('');
@@ -753,85 +723,12 @@ function renderOverview(base){
       <tbody>${rows}</tbody></table></div>`;
   document.querySelectorAll('.ovtable tbody tr').forEach(tr=>tr.onclick=()=>openDrawer(+tr.dataset.i));
 }
-function pipeline(apps){
-  const rel=apps.filter(a=>['applied','interview','offer','rejected'].includes(a.status));
-  const hasIv=a=>a.status==='interview'||a.status==='offer'||(a.timeline||[]).some(e=>e.signal==='interview'||e.signal==='assessment');
-  let submitted=rel.length,reachedIv=0,offers=0,rejBefore=0,rejAfter=0,noResp=0,inProc=0;
-  rel.forEach(a=>{const iv=hasIv(a);
-    if(a.status==='offer'){reachedIv++;offers++;}
-    else if(a.status==='rejected'){ if(iv){reachedIv++;rejAfter++;} else rejBefore++; }
-    else if(a.status==='interview'){reachedIv++;inProc++;}
-    else noResp++;});
-  return {submitted,reachedIv,offers,rejBefore,rejAfter,noResp,inProc};
-}
-function _syNode(x,y,w,h,c){return h>0?`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${c}"/>`:'';}
-function _syBand(x1,y1,h1,x2,y2,h2,c){const xm=(x1+x2)/2;return h1>0?`<path d="M${x1} ${y1} C${xm} ${y1} ${xm} ${y2} ${x2} ${y2} L${x2} ${y2+h2} C${xm} ${y2+h2} ${xm} ${y1+h1} ${x1} ${y1+h1} Z" fill="${c}" opacity=".2"/>`:'';}
-function _syLab(x,y,anchor,text){return `<text x="${x}" y="${y}" text-anchor="${anchor}" class="snlab" dominant-baseline="middle">${esc(text)}</text>`;}
-function renderPipeline(apps){
-  const p=pipeline(apps);
-  if(p.submitted<1) return '';
-  const W=760,H=300,top=26,gap=18,nw=14,xA=120,xM=378,xR=626;
-  const scale=(H-2*top-2*gap)/p.submitted;
-  const hIv=p.reachedIv*scale,hRb=p.rejBefore*scale,hNr=p.noResp*scale,aH=p.submitted*scale;
-  const hOff=p.offers*scale,hRa=p.rejAfter*scale,hIp=p.inProc*scale;
-  const C={acc:'#3b82f6',iv:'#f59e0b',rej:'#ef4444',nr:'#8b8b93',off:'#22c55e'};
-  let s='';
-  let my=top; const M={};
-  [['iv',hIv],['rb',hRb],['nr',hNr]].forEach(([k,h])=>{if(h>0){M[k]=my;my+=h+gap;}});
-  let ry=top; const R={};
-  [['off',hOff],['ra',hRa],['ip',hIp]].forEach(([k,h])=>{if(h>0){R[k]=ry;ry+=h+gap;}});
-  let ay=top;
-  s+=_syBand(xA+nw,ay,hIv,xM,M.iv,hIv,C.iv); ay+=hIv;
-  s+=_syBand(xA+nw,ay,hRb,xM,M.rb,hRb,C.rej); ay+=hRb;
-  s+=_syBand(xA+nw,ay,hNr,xM,M.nr,hNr,C.nr); ay+=hNr;
-  if(hIv>0){ let iy=M.iv;
-    s+=_syBand(xM+nw,iy,hOff,xR,R.off,hOff,C.off); iy+=hOff;
-    s+=_syBand(xM+nw,iy,hRa,xR,R.ra,hRa,C.rej); iy+=hRa;
-    s+=_syBand(xM+nw,iy,hIp,xR,R.ip,hIp,C.acc); iy+=hIp;
-  }
-  s+=_syNode(xA,top,nw,aH,C.acc);
-  s+=_syNode(xM,M.iv,nw,hIv,C.iv)+_syNode(xM,M.rb,nw,hRb,C.rej)+_syNode(xM,M.nr,nw,hNr,C.nr);
-  s+=_syNode(xR,R.off,nw,hOff,C.off)+_syNode(xR,R.ra,nw,hRa,C.rej)+_syNode(xR,R.ip,nw,hIp,C.acc);
-  s+=_syLab(xA-9,top+aH/2,'end',`Applied ${p.submitted}`);
-  if(hIv>0) s+=_syLab(xM+nw/2,M.iv-9,'middle',`Interview ${p.reachedIv}`);
-  if(hRb>0) s+=_syLab(xM+nw/2,M.rb-9,'middle',`Rejected ${p.rejBefore}`);
-  if(hNr>0) s+=_syLab(xM+nw/2,M.nr-9,'middle',`No response ${p.noResp}`);
-  if(hOff>0) s+=_syLab(xR+nw+9,R.off+hOff/2,'start',`Offer ${p.offers}`);
-  if(hRa>0) s+=_syLab(xR+nw+9,R.ra+hRa/2,'start',`Rejected ${p.rejAfter}`);
-  if(hIp>0) s+=_syLab(xR+nw+9,R.ip+hIp/2,'start',`In process ${p.inProc}`);
-  return `<div class="panel sankey-panel"><h3>Pipeline flow \u2014 how far each application got</h3><svg class="sankey" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Application pipeline flow">${s}</svg></div>`;
-}
-function appCard(a){
-  const tl=(a.timeline||[]);
-  const rows=tl.map(e=>`<div class="apptl-row"><span class="sig" style="--c:${SIGC[e.signal]||'#6a6a73'}">${esc(e.signal||'')}</span><span class="apptl-sub" title="${esc(e.subject||'')}">${esc(e.subject||'')}</span><span class="apptl-date tnum">${esc(e.date||'')}</span></div>`).join('');
-  return `<article class="appcard">
-    <div class="appcard-h"><span class="appco">${esc(a.company||'\u2014')}</span>${a.applied_at?`<span class="appdate tnum">${esc((a.applied_at||'').slice(0,10))}</span>`:''}</div>
-    ${a.title?`<div class="apptitle">${esc(a.title)}</div>`:''}
-    ${tl.length?`<div class="apptl">${rows}</div>`:''}
-  </article>`;
-}
-function renderApplications(){
-  const apps=APPS||[], el=document.getElementById('apps');
-  if(!apps.length){ el.innerHTML=`<div class="empty">No applications tracked yet.<br>Run <code>python -m jobscope inbox</code> to sync your Gmail \u2014 or <code>prep &lt;id&gt;</code> then <code>track</code>.</div>`; return; }
-  const cnt={}; apps.forEach(a=>cnt[a.status]=(cnt[a.status]||0)+1);
-  const submitted=(cnt.applied||0)+(cnt.interview||0)+(cnt.offer||0)+(cnt.rejected||0);
-  const interviews=(cnt.interview||0)+(cnt.offer||0), offers=(cnt.offer||0), responded=interviews+(cnt.rejected||0);
-  const kpis=[['Applications',apps.length],['Submitted',submitted],['Response',pct(responded,submitted)+'%'],['Interview',pct(interviews,submitted)+'%'],['Offer',pct(offers,submitted)+'%'],['Rejected',cnt.rejected||0]]
-    .map(([l,v])=>`<div class="kpi"><div class="lab">${l}</div><div class="val tnum">${v}</div></div>`).join('');
-  const present=[...APP_STATUS_ORDER,...[...new Set(apps.map(a=>a.status))].filter(s=>!APP_STATUS_ORDER.includes(s))].filter(s=>apps.some(a=>a.status===s));
-  const board=present.map(s=>{
-    const list=apps.filter(a=>a.status===s).sort((a,b)=>(b.updated||'').localeCompare(a.updated||''));
-    return `<div class="appcol"><div class="appcol-h"><span class="dot" style="background:${APP_STATUS_COLOR[s]||'var(--accent)'}"></span>${APP_STATUS_LABEL[s]||s}<b>${list.length}</b></div>${list.map(appCard).join('')}</div>`;
-  }).join('');
-  el.innerHTML=`<div class="kpis">${kpis}</div>${renderPipeline(apps)}<div class="appboard">${board}</div>`;
-}
 function render(){
   const base=scoped();
   buildTabs(base);
-  const ov=document.getElementById('overview'), list=document.getElementById('list'), appsV=document.getElementById('apps');
-  ov.hidden=true; list.hidden=true; appsV.hidden=true;
+  const ov=document.getElementById('overview'), list=document.getElementById('list');
+  ov.hidden=true; list.hidden=true;
   if(activeTab==='overview'){ ov.hidden=false; renderOverview(base); return; }
-  if(activeTab==='applications'){ appsV.hidden=false; renderApplications(); return; }
   list.hidden=false;
   let items=base.filter(r=>r.tier===activeTab);
   if(groupSel.value!=='off') items=groupItems(items);

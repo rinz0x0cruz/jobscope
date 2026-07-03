@@ -181,7 +181,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [render.py](jobscope/deliver/render.py) | 852 | HTML dashboard (job buckets + **Applications** board: pipeline-flow Sankey + kanban + email timelines) **+** the JSON data contract | companies, store | `build()`, `build_data()`, `emit_json()`, `_application_records()` |
+| [render.py](jobscope/deliver/render.py) | 749 | Legacy local HTML dashboard (job buckets + overview) **+** the JSON data contract — incl. the **Applications** board data (pipeline + kanban + email timelines) now consumed by the React app | companies, store | `build()`, `build_data()`, `emit_json()`, `_application_records()` |
 | [pdf.py](jobscope/deliver/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
 | [email.py](jobscope/deliver/email.py) | 36 | SMTP summaries (optional) | config | `send()` |
 | [serve.py](jobscope/deliver/serve.py) | 27 | Local HTTP server for the dashboard | render, store | `run()` |
