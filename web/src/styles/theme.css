@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+/* Map jobscope's design tokens into Tailwind's theme. `inline` makes the
+   generated utilities reference the CSS vars at runtime, so toggling the
+   `.light` / `.dark` class re-themes everything without rebuilding classes. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg2: var(--bg2);
+  --color-card: var(--card);
+  --color-card-h: var(--card-h);
+  --color-border: var(--border);
+  --color-border-h: var(--border-h);
+  --color-fg: var(--fg);
+  --color-dim: var(--dim);
+  --color-mute: var(--mute);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-strong: var(--strong);
+  --color-good: var(--good);
+  --color-stretch: var(--stretch);
+  --color-skip: var(--skip);
+
+  --radius-card: var(--radius);
+
+  --font-sans: var(--font);
+  --font-mono: var(--mono);
+}
+
+/* Dark (default) — ported verbatim from render.py's _TEMPLATE. */
+:root {
+  --bg: #0a0a0b; --bg2: #0e0e10; --card: #121214; --card-h: #17171b;
+  --border: #1f1f23; --border-h: #2c2c33; --fg: #ededef; --dim: #a1a1aa; --mute: #6a6a73;
+  --accent: #7c6cff; --accent-dim: rgba(124, 108, 255, .14);
+  --strong: #22c55e; --good: #3b82f6; --stretch: #f59e0b; --skip: #71717a;
+  --radius: 14px; --shadow: 0 10px 30px -12px rgba(0, 0, 0, .6);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  --mono: "SF Mono", ui-monospace, "Cascadia Code", "Segoe UI Mono", Menlo, Consolas, monospace;
+}
+
+html.light {
+  --bg: #fafafa; --bg2: #f4f4f5; --card: #ffffff; --card-h: #fbfbfd;
+  --border: #e7e7ea; --border-h: #d9d9de; --fg: #18181b; --dim: #52525b; --mute: #8a8a93;
+  --accent: #6d5cf0; --accent-dim: rgba(109, 92, 240, .10); --shadow: 0 8px 24px -14px rgba(0, 0, 0, .25);
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    background-image: radial-gradient(900px 500px at 88% -8%, var(--accent-dim), transparent 60%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  a { color: inherit; }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}

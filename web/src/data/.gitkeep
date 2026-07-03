@@ -1,0 +1,3 @@
+Baked dashboard data lives here as dashboard.json (gitignored).
+Generate it with:  jobscope dashboard --emit-json
+Then copy data/dashboard.json into web/src/data/dashboard.json.

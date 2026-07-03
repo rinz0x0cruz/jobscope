@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>jobscope</title>
+    <script>
+      // no-FOUC theme: apply the saved theme before first paint.
+      (function () {
+        try {
+          var t = localStorage.getItem('jobscope-theme');
+          var d = document.documentElement;
+          d.classList.remove('dark', 'light');
+          d.classList.add(t === 'light' ? 'light' : 'dark');
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
