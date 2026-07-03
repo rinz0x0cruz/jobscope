@@ -47,6 +47,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
         "min_salary": 0,
         "target_seniority": "",   # "" = infer from resume; else junior/mid/senior... (down-ranks roles above it)
+        "ai_seniority_tiebreak": True,   # if ai.enabled: AI-classify ambiguous non-Skip postings
+        "ai_tiebreak_max_calls": 0,      # 0 = unbounded; else cap AI classify calls per match run
         "prefer_locations": [],
         "prefer_companies": [],
         "prefer_company_size": "any",

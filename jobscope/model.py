@@ -166,6 +166,8 @@ class Job:
     tier: str = ""                                           # Strong/Good/Stretch/Skip
     rationale: str = ""
     resume_base: str = ""                                    # which base resume scored best
+    ai_seniority: str = ""                                   # AI-classified level for ambiguous postings (tie-breaker)
+    ai_required_years: Optional[float] = None                # AI-estimated required years (ambiguous postings)
     first_seen: str = ""
     last_seen: str = ""
     status: str = "open"                                     # open | closed (taken down)

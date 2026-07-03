@@ -185,6 +185,30 @@ search:
 Results are de-duplicated by URL, so overlapping profiles won't create duplicates.
 Leave `profiles: []` for a single search from the base fields.
 
+## Seniority & experience level ("stop showing me senior roles")
+
+Security listings skew senior, so a level-agnostic search returns lots of Senior/Staff/
+Principal roles. jobscope curbs that **deterministically** (no AI needed):
+
+```yaml
+match:
+  target_seniority: "junior"   # "" = infer from your resume; else intern/junior/mid/senior/staff
+filters:
+  max_years_experience: 3      # 0 = off; else Skip roles that clearly ask for more
+```
+
+- **`target_seniority`** sets the level you're aiming at. The seniority score is
+  **asymmetric** — a role *above* your target is penalized hard, being over-qualified
+  only mildly. It reads the title, LinkedIn's structured "Seniority level", and numeric
+  codes (`Sr.`, `II`/`III`, `L5`, `IC4`).
+- **`max_years_experience`** is a hard cap: a posting implying more years than this
+  (Senior≈4y, Staff≈6y, Principal≈8y, or explicit "5+ years") is forced to `Skip`
+  with a reason. On a real 584-job scan, `junior` + cap `3` moved **353 of 360**
+  senior-ish titles out of the good tiers.
+
+For postings with **no** level cue at all (plain title, no stated years), an optional
+AI/quorum tie-breaker can classify them — see *Free AI backends* below.
+
 ## Filters (clearance / sponsorship / block-list)
 
 Set `filters` in `config.yaml` to force irrelevant jobs to `Skip` with a reason.
@@ -214,6 +238,24 @@ AI is optional. When enabled, jobscope talks to any OpenAI-compatible endpoint:
 - **Google Gemini** free tier, **OpenRouter** free models, or **Ollama** (fully local)
 
 Set `ai.enabled: true` and `JOBSCOPE_AI_API_KEY` in `.env`.
+
+### Multi-model deliberation (quorum) + seniority tie-breaker
+
+With the optional [`quorum`](https://github.com/rinz0x0cruz/quorum) package installed,
+set `quorum.enabled: true` to route the AI layer through a multi-model deliberation
+(`strategy: ensemble | council | refine | debate | moa`) instead of a single model.
+
+When AI is on, jobscope also runs a **seniority tie-breaker**: only for postings that
+have no deterministic level signal *and* still landed in a good tier (i.e. actually
+leaking), it asks the model for a normalized level + required years, then re-applies the
+same cap/score. It's bounded to that ambiguous set, cached, and a complete no-op when
+`ai.enabled` is false:
+
+```yaml
+match:
+  ai_seniority_tiebreak: true   # classify only ambiguous, non-Skip postings
+  ai_tiebreak_max_calls: 0      # 0 = unbounded; else cap AI calls per match run
+```
 
 ## Responsible use
 

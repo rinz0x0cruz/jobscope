@@ -34,3 +34,14 @@ def test_target_seniority_overrides_resume():
     assert _seniority_score(senior_resume, senior_job) == 1.0
     # target "junior" -> the senior role is now clearly over the bar
     assert _seniority_score(senior_resume, senior_job, target="junior") < 0.5
+
+
+def test_ai_fields_feed_seniority_and_years():
+    from jobscope.match import required_experience_years
+    j = Job(title="Security Engineer", ai_seniority="senior", ai_required_years=6.0)
+    assert _job_seniority(j) == 3                    # AI level fills the missing signal
+    assert required_experience_years(j) == 6.0       # AI years feed the experience cap
+    # a plain posting with no AI signal stays ambiguous (None)
+    plain = Job(title="Security Engineer")
+    assert _job_seniority(plain) is None
+    assert required_experience_years(plain) is None

@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     tier TEXT,
     rationale TEXT,
     resume_base TEXT,
+    ai_seniority TEXT,
+    ai_required_years REAL,
     first_seen TEXT,
     last_seen TEXT,
     status TEXT DEFAULT 'open',
@@ -137,6 +139,8 @@ class Store:
             ("remote_scope", "TEXT"),
             ("raw_is_remote", "INTEGER"),
             ("job_level", "TEXT"),
+            ("ai_seniority", "TEXT"),
+            ("ai_required_years", "REAL"),
         ):
             if col not in existing:
                 self.conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
@@ -206,6 +210,14 @@ class Store:
         self.conn.execute(
             "UPDATE jobs SET score = ?, tier = ?, rationale = ?, resume_base = ? WHERE id = ?",
             (score, tier, rationale, resume_base, job_id_),
+        )
+        self.conn.commit()
+
+    def update_ai_seniority(self, job_id_: str, level: str, years) -> None:
+        """Persist an AI-classified seniority level + required years for a posting."""
+        self.conn.execute(
+            "UPDATE jobs SET ai_seniority = ?, ai_required_years = ? WHERE id = ?",
+            (level, years, job_id_),
         )
         self.conn.commit()
 
