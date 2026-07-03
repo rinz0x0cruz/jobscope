@@ -64,9 +64,10 @@ Run notes: `python -m jobscope` needs the repo root as CWD and `PYTHONPATH="."` 
 
 ## 5. Guardrails (don't regress these)
 
-- Keep the **code repo private** (early history has a work-email author; making it public would expose it).
-  ⚠ **jobscope is CURRENTLY PUBLIC** — this guardrail is not met: `main`'s code + that early history are
-  exposed. Decide: make the repo private again, or scrub the work-email author from history.
+- **Repo visibility.** jobscope is **public** (required for free `gh-pages` Pages hosting). History was
+  audited 2026-07-03: all 65 commits use the name `rinz0x0cruz` + GitHub **noreply** emails only — **no
+  work-email / real name in history** — so the old "keep it private or the work-email leaks" caution does
+  **not** apply. Being public exposes the code only; the local DB/config stay gitignored.
 - Publish only the **redacted** copy (`dashboard --public`) — never `data/dashboard.html`.
 - jobscope's own **`gh-pages`** branch hosts Pages (branch-based, `build_type=legacy`); keep a
   **`.nojekyll`** file so the single-file dashboard isn't mangled by the Jekyll builder. (The separate

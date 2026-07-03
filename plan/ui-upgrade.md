@@ -29,9 +29,10 @@ virtualization, rich animation, accessibility, URL-shareable views, and a PWA fo
 3. **Redaction model.** Full local build vs a redacted public build (`_redact_public` strips per-job
    `contacts`/`rationale`/`resume_base` + Overview `funnel`/`targets`). → two JSON payloads, one UI.
 4. **Python pipeline untouched.** Only presentation changes. `scan/match/enrich/store` stay.
-5. **Source stays private.** Code lives in the `jobscope` repo; only the redacted built
-   output is published to the public `gh-pages` branch (early git history has a work-email author).
-   ⚠ NOTE: `jobscope` is currently a **public** repo — this constraint is not met; see next-steps §5.
+5. **Redacted output only.** Only the redacted built output is published (to the public `gh-pages`
+   branch); the local DB/config never leave the machine. `jobscope` is a **public** repo (for free
+   Pages); its history was audited clean — only `rinz0x0cruz` + GitHub noreply, no work-email — so the
+   source being public exposes code only. (See next-steps §5.)
 
 ## 3. Stack (chosen — "your best", tuned for static + offline + heavy motion)
 
