@@ -8,7 +8,8 @@
 ## 1. Where things stand
 
 - Branch `main`, CI green (py3.11 + py3.12: `selftest` + `pytest`).
-- Live public dashboard: <https://rinz0x0cruz.github.io/jobscope-dashboard/> (redacted, HTTP 200).
+- Live public dashboard: <https://rinz0x0cruz.github.io/jobscope/> (redacted, HTTP 200), served from
+  this repo's own `gh-pages` branch.
 - Recent shipped features (see `FEATURES.md` for behaviour):
   - **ATS-direct company boards** (`643daa2`) — `search.companies` pulls Greenhouse/Lever/Ashby public boards.
   - **Experience cap** (`3c7db0e`) — `filters.max_years_experience` hides over-senior roles (local cap = 2).
@@ -64,8 +65,12 @@ Run notes: `python -m jobscope` needs the repo root as CWD and `PYTHONPATH="."` 
 ## 5. Guardrails (don't regress these)
 
 - Keep the **code repo private** (early history has a work-email author; making it public would expose it).
+  ⚠ **jobscope is CURRENTLY PUBLIC** — this guardrail is not met: `main`'s code + that early history are
+  exposed. Decide: make the repo private again, or scrub the work-email author from history.
 - Publish only the **redacted** copy (`dashboard --public`) — never `data/dashboard.html`.
-- `jobscope-dashboard` Pages must stay **Actions-based** (`build_type=workflow`), not legacy Jekyll.
+- jobscope's own **`gh-pages`** branch hosts Pages (branch-based, `build_type=legacy`); keep a
+  **`.nojekyll`** file so the single-file dashboard isn't mangled by the Jekyll builder. (The separate
+  `jobscope-dashboard` repo is retired.)
 - Publishing must originate **locally** (the DB is local/gitignored; CI can't regenerate the dashboard).
 - CI installs only `pyyaml requests feedparser markdown pytest` — new code + tests must degrade gracefully
   without `pandas`/`python-jobspy`.
