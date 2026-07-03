@@ -31,8 +31,11 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
           value={query}
           onChange={(e) => onQuery(e.target.value)}
           placeholder="Search title, company, place…"
-          className="w-64 rounded-[10px] border border-border bg-card py-2 pl-9 pr-3 text-[13px] text-fg outline-none transition-[width,box-shadow,border-color] focus:w-72 focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-dim)]"
+          className="w-64 rounded-[10px] border border-border bg-card py-2 pl-9 pr-9 text-[13px] text-fg outline-none transition-[width,box-shadow,border-color] focus:w-72 focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-dim)]"
         />
+        <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-border px-1.5 py-0.5 text-[10px] text-mute">
+          /
+        </kbd>
       </label>
 
       <button

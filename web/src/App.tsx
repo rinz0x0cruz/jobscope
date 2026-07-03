@@ -1,65 +1,108 @@
 import { useMemo, useState } from 'react'
 import { dashboard } from '@/data'
-import type { Tier } from '@/lib/schema'
-import { TIERS } from '@/lib/schema'
+import type { FacetKey, TabValue } from '@/lib/urlState'
+import { FACET_KEYS } from '@/lib/urlState'
+import type { FacetOption } from '@/lib/filters'
+import {
+  activeChips,
+  applyFacets,
+  buildDisplayItems,
+  countActive,
+  facetOptions,
+  tabPool,
+  toggleValue,
+} from '@/lib/filters'
+import { fuzzy, makeFuse } from '@/lib/search'
 import { fmtGenerated } from '@/lib/format'
+import { useSearchState } from '@/hooks/useSearchState'
 import { Header } from '@/components/Header'
 import { Kpis } from '@/components/Kpis'
+import { Tabs } from '@/components/Tabs'
+import { FacetBar } from '@/components/filters/FacetBar'
+import { ActiveChips } from '@/components/filters/ActiveChips'
+import { SearchPalette } from '@/components/filters/SearchPalette'
 import { JobList } from '@/components/JobList'
 
-const FILTERS: (Tier | 'All')[] = ['All', ...TIERS]
-
 export default function App() {
-  const [query, setQuery] = useState('')
-  const [tier, setTier] = useState<Tier | 'All'>('All')
-
   const rows = dashboard.rows
+  const { state, set } = useSearchState()
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return rows.filter((r) => {
-      if (tier !== 'All' && r.tier !== tier) return false
-      if (!q) return true
-      return (
-        r.title.toLowerCase().includes(q) ||
-        r.company.toLowerCase().includes(q) ||
-        r.place.toLowerCase().includes(q)
-      )
+  const tabCounts = useMemo(() => {
+    const base = tabPool(rows, 'all', state.hideClosed)
+    const c: Record<TabValue, number> = { all: base.length, Strong: 0, Good: 0, Stretch: 0, Skip: 0 }
+    for (const r of base) c[r.tier] += 1
+    return c
+  }, [rows, state.hideClosed])
+
+  const tabbed = useMemo(
+    () => tabPool(rows, state.tab, state.hideClosed),
+    [rows, state.tab, state.hideClosed],
+  )
+  const faceted = useMemo(() => applyFacets(tabbed, state), [tabbed, state])
+  const fuse = useMemo(() => makeFuse(faceted), [faceted])
+  const searched = useMemo(() => fuzzy(fuse, faceted, state.q), [fuse, faceted, state.q])
+
+  const options = useMemo(() => {
+    const o = {} as Record<FacetKey, FacetOption[]>
+    for (const k of FACET_KEYS) o[k] = facetOptions(tabbed, state, k)
+    return o
+  }, [tabbed, state])
+
+  const selected = useMemo(() => {
+    const s = {} as Record<FacetKey, string[]>
+    for (const k of FACET_KEYS) s[k] = state[k]
+    return s
+  }, [state])
+
+  const items = useMemo(
+    () => buildDisplayItems(searched, state.group, collapsed),
+    [searched, state.group, collapsed],
+  )
+  const chips = useMemo(() => activeChips(state), [state])
+  const nActive = countActive(state)
+
+  const toggleFacet = (key: FacetKey, value: string) =>
+    set({ [key]: toggleValue(state[key], value) } as Partial<typeof state>)
+  const removeChip = (key: FacetKey, value: string) =>
+    set({ [key]: state[key].filter((v) => v !== value) } as Partial<typeof state>)
+  const clearAll = () =>
+    set(Object.fromEntries(FACET_KEYS.map((k) => [k, []])) as Partial<typeof state>)
+  const toggleCollapse = (company: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(company)) next.delete(company)
+      else next.add(company)
+      return next
     })
-  }, [rows, query, tier])
 
   return (
     <div className="min-h-screen">
       <Header
         total={rows.length}
-        shown={filtered.length}
+        shown={searched.length}
         generated={fmtGenerated(dashboard.generated)}
-        query={query}
-        onQuery={setQuery}
+        query={state.q}
+        onQuery={(v) => set({ q: v }, { replace: true })}
       />
-      <main className="mx-auto flex max-w-5xl flex-col gap-5 px-6 py-6">
+      <main className="mx-auto flex max-w-5xl flex-col gap-4 px-6 py-6">
         <Kpis rows={rows} />
-
-        <div className="flex flex-wrap gap-2">
-          {FILTERS.map((f) => (
-            <button
-              type="button"
-              key={f}
-              onClick={() => setTier(f)}
-              className={
-                'rounded-full border px-3 py-1.5 text-[13px] transition ' +
-                (tier === f
-                  ? 'border-accent bg-accent-dim text-accent'
-                  : 'border-border bg-card text-dim hover:border-border-h hover:text-fg')
-              }
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-
-        <JobList rows={filtered} />
+        <Tabs value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
+        <FacetBar
+          options={options}
+          selected={selected}
+          onToggle={toggleFacet}
+          group={state.group}
+          onGroup={(v) => set({ group: v })}
+          hideClosed={state.hideClosed}
+          onHideClosed={(v) => set({ hideClosed: v })}
+          activeCount={nActive}
+          onClear={clearAll}
+        />
+        <ActiveChips chips={chips} onRemove={removeChip} />
+        <JobList items={items} collapsed={collapsed} onToggleCollapse={toggleCollapse} />
       </main>
+      <SearchPalette rows={rows} />
     </div>
   )
 }
