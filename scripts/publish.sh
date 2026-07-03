@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Render the redacted jobscope dashboard and publish it to jobscope's own gh-pages
-# branch for GitHub Pages (mobile-viewable), served at
-# https://rinz0x0cruz.github.io/jobscope/. Only the redacted snapshot is published;
-# main is never touched and your database/config never leave your machine. Commits
-# use the rinz0x0cruz identity.
+# Build the redacted jobscope web dashboard and publish it to jobscope's own gh-pages
+# branch for GitHub Pages, served at https://rinz0x0cruz.github.io/jobscope/. Emits a
+# redacted payload, bakes it into the Vite/React app (web/), builds it, and publishes
+# web/dist. Only the redacted build is published; main is never touched and your
+# database/config never leave your machine. Requires Node.js/npm. Commits use the
+# rinz0x0cruz identity.
 #
 # Usage: scripts/publish.sh [repo-url] [branch]
 #   defaults: https://github.com/rinz0x0cruz/jobscope.git  gh-pages
@@ -30,12 +31,20 @@ cd "$REPO_ROOT"
 PY="$REPO_ROOT/.venv/bin/python"
 [ -x "$PY" ] || PY="python3"
 
-# 1. Render the redacted dashboard.
-echo "==> Rendering redacted dashboard (jobscope dashboard --public)"
-PYTHONPATH=. "$PY" -m jobscope dashboard --public
+# 1. Emit the redacted dashboard payload and bake it into the web app.
+echo "==> Emitting redacted dashboard JSON (jobscope dashboard --emit-json --public)"
+PYTHONPATH=. "$PY" -m jobscope dashboard --emit-json --public
 
-PUBLIC_HTML="$REPO_ROOT/data/public-dashboard.html"
-[ -f "$PUBLIC_HTML" ] || { echo "expected dashboard not found: $PUBLIC_HTML" >&2; exit 1; }
+PUBLIC_JSON="$REPO_ROOT/data/dashboard.public.json"
+[ -f "$PUBLIC_JSON" ] || { echo "expected payload not found: $PUBLIC_JSON" >&2; exit 1; }
+cp "$PUBLIC_JSON" "$REPO_ROOT/web/src/data/dashboard.json"
+
+# 2. Build the web dashboard (Vite/React) with the redacted data baked in.
+echo "==> Building web dashboard (npm run build)"
+( cd "$REPO_ROOT/web" && npm run build )
+
+DIST="$REPO_ROOT/web/dist"
+[ -f "$DIST/index.html" ] || { echo "expected build output not found: $DIST/index.html" >&2; exit 1; }
 
 # Publish gate: only the designated publisher (the machine that ran
 # register-publish-task.ps1, which wrote .publish-primary) pushes, to avoid double
@@ -49,7 +58,7 @@ if [ -z "${FORCE:-}" ]; then
     if [ -n "$MHOST" ] && [ "$MHOST" != "$HOSTN" ]; then echo "==> Marker names '$MHOST', not this machine '$HOSTN'. Skipping push. Pass --force to override."; exit 0; fi
 fi
 
-# 2. Publish index.html to this repo's gh-pages branch via a persistent, single-branch
+# 3. Publish web/dist to this repo's gh-pages branch via a persistent, single-branch
 #    (gitignored) clone. Only this machine pushes there, so a plain push is safe, and
 #    main is never touched.
 DASH_DIR="$REPO_ROOT/.dashboard-repo"
@@ -60,7 +69,9 @@ if [ ! -d "$DASH_DIR/.git" ]; then
     git clone --quiet --branch "$BRANCH" --single-branch "$REPO" "$DASH_DIR"
 fi
 
-cp "$PUBLIC_HTML" "$DASH_DIR/index.html"
+# Replace the published files with the fresh build (hashed asset names change per build).
+find "$DASH_DIR" -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+cp -R "$DIST/." "$DASH_DIR/"
 touch "$DASH_DIR/.nojekyll"
 
 cd "$DASH_DIR"

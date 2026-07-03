@@ -315,15 +315,17 @@ Fed by `track` + `inbox` — your application pipeline, not the job search.
 
 ## Public dashboard & hosting (mobile viewing)
 
-- `dashboard --public` renders a **redacted** self-contained copy to `output.public_dashboard_path`
-  (default `data/public-dashboard.html`, gitignored). `render._redact_public` strips per-job `contacts`,
-  `rationale`, and `resume_base`, plus the Overview `funnel` and `targets`; it keeps company, title, location,
-  score, tier, salary, brief, enrichment, and links.
-- **Hosting:** the code repo is **public**; its dashboard is served by GitHub Pages from a dedicated
-  **`gh-pages`** branch (kept separate from `main`) at <https://rinz0x0cruz.github.io/jobscope/>.
-- `scripts/publish.ps1` / `publish.sh` render the redacted copy and push it (as `index.html` + `.nojekyll`)
-  to the `gh-pages` branch via a gitignored persistent single-branch clone (`.dashboard-repo/`), pinned to
-  the `rinz0x0cruz` identity. `scripts/register-publish-task.ps1` runs it as a daily Windows Scheduled Task.
+- `dashboard --emit-json --public` emits a **redacted** payload to `data/dashboard.public.json` (gitignored).
+  `render._redact_public` strips per-job `contacts`, `rationale`, and `resume_base`, plus the Overview
+  `funnel`/`targets` and all `applications`; it keeps company, title, location, score, tier, salary, brief,
+  enrichment, and links. (`dashboard --public` still writes the redacted single-file HTML for local viewing.)
+- **Hosting:** the code repo is **public**; the published dashboard is the **Vite/React app** (`web/`),
+  served by GitHub Pages from a dedicated **`gh-pages`** branch (kept separate from `main`) at
+  <https://rinz0x0cruz.github.io/jobscope/>.
+- `scripts/publish.ps1` / `publish.sh` emit the redacted payload, bake it into the web app, `npm run build`,
+  and push `web/dist` (+ `.nojekyll`) to the `gh-pages` branch via a gitignored persistent single-branch clone
+  (`.dashboard-repo/`), pinned to the `rinz0x0cruz` identity. `scripts/register-publish-task.ps1` runs it as a
+  daily Windows Scheduled Task.
 - **Rules:** publishing originates locally (the SQLite DB is local/gitignored, so CI can't regenerate it);
   only ever publish the **redacted** copy — never `data/dashboard.html`.
 

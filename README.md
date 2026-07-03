@@ -176,25 +176,25 @@ or search country (off by default; global remote is never penalized).
 
 ## Publish to GitHub Pages (view on mobile)
 
-The dashboard is a single self-contained HTML file, so you can host it and open it
-from your phone. The full dashboard embeds private data (referral contacts, your
-application funnel, and search terms), so publish the **redacted** copy:
+The published dashboard is the **Vite/React app** in `web/`. It embeds only a
+**redacted** snapshot (no referral contacts, rationale, resume labels, application
+funnel, or search terms), so it is safe to host publicly:
 
 ```bash
-python -m jobscope dashboard --public   # -> data/public-dashboard.html (no contacts / funnel / search terms)
+python -m jobscope dashboard --emit-json --public   # -> data/dashboard.public.json (redacted)
 ```
 
-`scripts/publish.ps1` (Windows) / `scripts/publish.sh` (macOS/Linux) render that
-redacted copy and publish it as `index.html` to this repo's **`gh-pages` branch**,
-which GitHub Pages serves. `main` is never touched and your database never leaves your
-machine. One-time setup:
+`scripts/publish.ps1` (Windows) / `scripts/publish.sh` (macOS/Linux) emit that redacted
+payload, bake it into the web app, `npm run build`, and publish `web/dist` to this
+repo's **`gh-pages` branch**, which GitHub Pages serves. `main` is never touched and
+your database never leaves your machine. Requires Node.js/npm. One-time setup:
 
-1. Run the publish script once by hand to push the first `index.html` to `gh-pages`
-   and cache your git credential.
+1. Run the publish script once by hand to push the first build to `gh-pages` and cache
+   your git credential.
 2. Enable Pages: **Settings → Pages → Deploy from a branch → `gh-pages` / root**.
    The dashboard is then live at `https://<user>.github.io/jobscope/`.
 3. Auto-refresh (Windows): `scripts/register-publish-task.ps1` registers a daily
-   Scheduled Task that re-renders and pushes while you're logged on.
+   Scheduled Task that re-builds and pushes while you're logged on.
 
 > GitHub Pages is **public**. Only the redacted copy is published, but treat the URL
 > as shareable — keep real data in the local (`dashboard`) view.

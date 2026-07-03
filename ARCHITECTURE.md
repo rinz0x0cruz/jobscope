@@ -191,9 +191,10 @@ Plus [schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.jso
 artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboard_json.py](tests/test_dashboard_json.py).
 
 > **Note:** the bulk of `render.py` (~852 lines, now at [deliver/render.py](jobscope/deliver/render.py))
-> is the inline HTML `_TEMPLATE` string — a self-contained, dependency-free dashboard, currently the
-> **only** UI with the **Applications board** (kanban + per-application email timelines) and the
-> inline-SVG **pipeline-flow Sankey**; the React app hasn't mirrored these yet. The data-contract logic
+> is the inline HTML `_TEMPLATE` string — the **local** self-contained dashboard (`jobscope dashboard`),
+> still the **only** UI with the **Applications board** (kanban + per-application email timelines) and the
+> inline-SVG **pipeline-flow Sankey**; the React app hasn't mirrored these yet. The **published** (public)
+> dashboard is now the React app in `web/`, built from the redacted emitter. The data-contract logic
 > (`build_data`/`_job_record`/`_application_records`/`_enrich_summary`/`_overview_data`/`emit_json`) is
 > the remainder, and the emitted `dashboard.json` is pinned by a JSON-Schema artifact + a contract test
 > (§9). Once the web app supersedes the HTML page, the template can shrink and `render.py` becomes a
@@ -448,8 +449,8 @@ was updated.
 
 - Split `resume.py` per-format parsers; split `tailor.py` (deterministic `analyze` vs AI rewrite);
   inline the thin [apply/brief.py](jobscope/apply/brief.py) wrapper.
-- Retire `render.py`'s inline HTML `_TEMPLATE` once the React app is the canonical UI, leaving a slim
-  emitter.
+- Retire `render.py`'s inline HTML `_TEMPLATE` once the React app mirrors the local-only Applications
+  board + pipeline Sankey (the React app is already the **published** dashboard), leaving a slim emitter.
 - Generate `schema.ts` from the Python shapes (or the JSON Schema) so the TS mirror can't drift.
 
 **Invariants held across every tier:** deterministic-first, additive migrations, zero circular

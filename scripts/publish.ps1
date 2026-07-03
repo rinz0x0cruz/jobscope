@@ -1,17 +1,19 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Render the redacted jobscope dashboard and publish it to jobscope's own
-    gh-pages branch so it is viewable from a phone via GitHub Pages.
+    Build the redacted jobscope web dashboard and publish it to jobscope's own
+    gh-pages branch, served via GitHub Pages.
 
 .DESCRIPTION
-    Runs `jobscope dashboard --public` to produce a redacted, self-contained HTML
-    (no referral contacts, application funnel, or search terms), then publishes it as
-    index.html to this repo's `gh-pages` branch, which GitHub Pages serves at
-    https://rinz0x0cruz.github.io/jobscope/. Only the redacted snapshot is published;
+    Emits a redacted dashboard payload (`jobscope dashboard --emit-json --public` -- no
+    referral contacts, rationale, resume labels, application funnel, or search terms),
+    bakes it into the Vite/React app in web/, builds it, and publishes web/dist to this
+    repo's `gh-pages` branch, which GitHub Pages serves at
+    https://rinz0x0cruz.github.io/jobscope/. Only the redacted build is published;
     `main` is never touched and your database/config never leave your machine.
 
-    Safe to run from a scheduled task. Commits use the local rinz0x0cruz identity.
+    Requires Node.js/npm for the web build. Safe to run from a scheduled task;
+    commits use the local rinz0x0cruz identity.
 
 .PARAMETER Repo
     HTTPS URL of the repo whose gh-pages branch hosts the dashboard.
@@ -43,14 +45,27 @@ Set-Location $RepoRoot
 $Py = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Py)) { $Py = "python" }
 
-# 1. Render the redacted dashboard.
-Write-Host "==> Rendering redacted dashboard (jobscope dashboard --public)"
+# 1. Emit the redacted dashboard payload and bake it into the web app.
+Write-Host "==> Emitting redacted dashboard JSON (jobscope dashboard --emit-json --public)"
 $env:PYTHONPATH = "."
-& $Py -m jobscope dashboard --public
-if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --public failed (exit $LASTEXITCODE)" }
+& $Py -m jobscope dashboard --emit-json --public
+if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json --public failed (exit $LASTEXITCODE)" }
 
-$PublicHtml = Join-Path $RepoRoot "data\public-dashboard.html"
-if (-not (Test-Path $PublicHtml)) { throw "expected dashboard not found: $PublicHtml" }
+$PublicJson = Join-Path $RepoRoot "data\dashboard.public.json"
+if (-not (Test-Path $PublicJson)) { throw "expected payload not found: $PublicJson" }
+Copy-Item $PublicJson (Join-Path $RepoRoot "web\src\data\dashboard.json") -Force
+
+# 2. Build the web dashboard (Vite/React) with the redacted data baked in.
+Write-Host "==> Building web dashboard (npm run build)"
+Push-Location (Join-Path $RepoRoot "web")
+try {
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw "web build failed (exit $LASTEXITCODE)" }
+}
+finally { Pop-Location }
+
+$Dist = Join-Path $RepoRoot "web\dist"
+if (-not (Test-Path (Join-Path $Dist "index.html"))) { throw "expected build output not found: $Dist\index.html" }
 
 # Publish gate: only the designated publisher (the machine that ran
 # register-publish-task.ps1, which wrote .publish-primary) pushes, to avoid double
@@ -63,7 +78,7 @@ if (-not $Force) {
     if ($MarkerHost -and $MarkerHost -ne $env:COMPUTERNAME) { Write-Host "==> Marker names '$MarkerHost', not this machine '$env:COMPUTERNAME'. Skipping push. Pass -Force to override."; return }
 }
 
-# 2. Publish index.html to this repo's gh-pages branch via a persistent, single-branch
+# 3. Publish web/dist to this repo's gh-pages branch via a persistent, single-branch
 #    (gitignored) clone. Only this machine pushes there, so a plain push is safe, and
 #    main is never touched.
 $DashDir = Join-Path $RepoRoot ".dashboard-repo"
@@ -75,7 +90,9 @@ if (-not (Test-Path (Join-Path $DashDir ".git"))) {
     if ($LASTEXITCODE -ne 0) { throw "clone of $Repo ($Branch) failed (is a credential cached?)" }
 }
 
-Copy-Item $PublicHtml (Join-Path $DashDir "index.html") -Force
+# Replace the published files with the fresh build (hashed asset names change per build).
+Get-ChildItem $DashDir -Force | Where-Object { $_.Name -ne ".git" } | Remove-Item -Recurse -Force
+Copy-Item (Join-Path $Dist "*") $DashDir -Recurse -Force
 New-Item -ItemType File -Path (Join-Path $DashDir ".nojekyll") -Force | Out-Null
 
 Push-Location $DashDir
