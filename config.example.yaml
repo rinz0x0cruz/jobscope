@@ -103,6 +103,15 @@ ai:
   max_tokens: 1200
   api_key_env: "JOBSCOPE_AI_API_KEY"  # set this in .env
 
+# Optional: route the AI layer through a quorum deliberation (multi-model or
+# self-refine) instead of one model. Off by default; needs the `quorum` package
+# installed (pip install -e path\to\quorum). Set enabled: true to use it.
+quorum:
+  enabled: false
+  strategy: refine                    # refine | debate | council | moa | ensemble
+  # members:                          # optional extra models; omit to self-refine ai.model
+  #   - { name: a, provider: openrouter, model: google/gemma-4-31b-it:free }
+
 email:
   enabled: false
   smtp_host: "smtp.gmail.com"

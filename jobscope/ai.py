@@ -29,6 +29,15 @@ def chat(cfg: dict, store, system: str, user: str, *, cache: bool = True,
     """Return the assistant text, or None if AI is unavailable/failed."""
     if not available(cfg):
         return None
+    # Optional multi-model deliberation backend (quorum). Falls through to the
+    # single-model path below if quorum is absent, disabled, or returns nothing.
+    try:
+        from quorum.api import chat as _quorum_chat
+        out = _quorum_chat(cfg, store, system, user, temperature=temperature)
+        if out is not None:
+            return out
+    except ImportError:
+        pass
     ai = cfg["ai"]
     model = ai.get("model", "")
     key = _cache_key(model, system, user)

@@ -83,6 +83,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_tokens": 1200,
         "api_key_env": "JOBSCOPE_AI_API_KEY",
     },
+    # Optional: route the AI layer through a quorum deliberation (multi-model or
+    # self-refine) instead of one model. Off by default; needs the `quorum`
+    # package installed (github.com/rinz0x0cruz/quorum).
+    "quorum": {
+        "enabled": False,      # true + ai.enabled + key -> deliberate instead of single-shot
+        "strategy": "refine",  # refine | debate | council | moa | ensemble
+    },
     "email": {
         "enabled": False,
         "smtp_host": "smtp.gmail.com",
