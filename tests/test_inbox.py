@@ -226,6 +226,15 @@ def test_parse_company_from_direct_domain():
     assert company.lower() == "zscaler"
 
 
+def test_parse_company_prefers_display_over_domain_acronym():
+    # A real display name ("Millennium Recruiting Team") beats a bare domain
+    # acronym (careers.mlp.com) when the subject names no company.
+    company, _ = mailrules.parse_company_role(
+        "Millennium Recruiting Team", "careers.mlp.com",
+        "Mohit, we have received your application", "")
+    assert company == "Millennium"
+
+
 def test_parse_company_rejects_body_filler():
     # "application at this time" must never yield the company "this time".
     company, _ = mailrules.parse_company_role(

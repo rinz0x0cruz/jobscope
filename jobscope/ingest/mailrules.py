@@ -408,17 +408,15 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
         if m:
             company = _pick(_strip_company_noise(m.group("company")))
 
-    # A direct employer domain (ey.com, zscaler.com) beats a system sender
-    # display like "HRMS"; ATS/board/relay domains yield "" here.
-    if not company:
-        company = _pick(company_from_domain(from_domain))
-
     if not company:                      # body as a last resort (subject wins)
         m = _APPLICATION_TO.search(body or "")
         if m:
             company = _pick(_strip_company_noise(m.group("company")))
 
-    # Sender display name is often the real company ("Databricks Recruiting").
+    # Sender display name is usually the real company ("Databricks Recruiting" ->
+    # Databricks). Its own fallback derives a direct employer domain when the
+    # display is noise/empty (zscaler.com -> Zscaler), so a real display name is
+    # preferred over a bare domain acronym (mlp.com).
     if not company:
         company = _pick(_company_from_sender(from_name, from_domain))
 
