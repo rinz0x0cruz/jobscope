@@ -5,7 +5,11 @@ email is enabled, sends a single digest instead of one message per job.
 """
 from __future__ import annotations
 
-from . import apply, email, enrich, match, scrape
+from .. import enrich
+from ..analyze import match
+from ..apply import apply
+from ..deliver import email
+from ..ingest import scrape
 
 
 def run(cfg: dict, store, do_prep: bool = True) -> int:

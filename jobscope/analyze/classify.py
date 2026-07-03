@@ -11,9 +11,9 @@ import json
 import re
 from typing import Optional
 
-from . import ai
+from jobscope.core import ai
 from .match import SENIORITY_RANK
-from .model import Job
+from jobscope.core.model import Job
 
 _VALID = ("intern", "junior", "mid", "senior", "staff", "principal", "lead", "director")
 _VALID_DISC = ("technical", "advisory")

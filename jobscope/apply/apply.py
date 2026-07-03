@@ -11,9 +11,11 @@ from __future__ import annotations
 import os
 import webbrowser
 
-from . import ai, email, tailor
-from .model import Application
-from .store import now_iso
+from jobscope.core import ai
+from jobscope.deliver import email
+from . import tailor
+from jobscope.core.model import Application
+from jobscope.core.store import now_iso
 
 PUBLIC_ATS = ("greenhouse.io", "lever.co", "ashbyhq.com", "workable.com",
               "smartrecruiters.com", "breezy.hr", "recruitee.com", "myworkdayjobs.com")
@@ -48,7 +50,7 @@ def prep(cfg: dict, store, job_id: str, notify: bool = True) -> int:
     # blunt company brief (build on demand if enrichment hasn't yet)
     brief_data = (enr or {}).get("brief")
     if not brief_data:
-        from .enrich import brief as _brief
+        from jobscope.enrich import brief as _brief
         brief_data = _brief.build(cfg, store, job.company, job, enr or {})
     _write(pkg, "company-brief.md",
            f"# Company brief -- {job.company} ({job.title})\n\n{brief_data.get('text', '')}\n")
@@ -270,7 +272,7 @@ def _is_public_ats(url: str) -> bool:
 
 
 def _default_pkg(cfg: dict, job) -> str:
-    from .model import slugify
+    from jobscope.core.model import slugify
     return os.path.join(cfg["apply"]["package_dir"], f"{job.id}-{slugify(job.company)}")
 
 

@@ -2,11 +2,12 @@
 is a strict no-op when AI is off."""
 import os
 
-from jobscope import ai, match
-from jobscope.config import load_config
-from jobscope.model import Job
-from jobscope.resume import parse_resume
-from jobscope.store import Store
+from jobscope.core import ai
+from jobscope.analyze import match
+from jobscope.core.config import load_config
+from jobscope.core.model import Job
+from jobscope.analyze.resume import parse_resume
+from jobscope.core.store import Store
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "resume.md")
 

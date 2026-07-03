@@ -10,7 +10,7 @@ import re
 from typing import Any, Optional
 from urllib.parse import quote_plus
 
-from .. import httpx
+from jobscope.core import httpx
 from .registry import source
 
 

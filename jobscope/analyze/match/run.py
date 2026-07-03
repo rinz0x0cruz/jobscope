@@ -33,12 +33,12 @@ def run(cfg: dict, store) -> int:
 
     # Optional AI/quorum tie-breaker: only for postings with NO deterministic seniority
     # cue that still land non-Skip (i.e. actually leaking). No-op unless ai.enabled.
-    from .. import ai
+    from jobscope.core import ai
     ai_on = ai.available(cfg) and match_cfg.get("ai_seniority_tiebreak", True)
     max_calls = int(match_cfg.get("ai_tiebreak_max_calls", 0) or 0)
     classify = None
     if ai_on:
-        from ..classify import classify_seniority as classify
+        from jobscope.analyze.classify import classify_seniority as classify
     ai_calls = 0
     ai_used = 0
 

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .model import Job, derive_remote_scope
-from .store import now_iso
+from jobscope.core.model import Job, derive_remote_scope
+from jobscope.core.store import now_iso
 
 
 def run(cfg: dict, store) -> int:

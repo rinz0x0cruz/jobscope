@@ -3,7 +3,7 @@
 import os
 import tempfile
 
-from jobscope.resume import parse_resume
+from jobscope.analyze.resume import parse_resume
 
 CATEGORIZED = """# Alex Roe
 

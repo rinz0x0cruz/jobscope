@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..model import Job
+from jobscope.core.model import Job
 from .experience import required_experience_years
 
 GHOST_SIGNALS = [

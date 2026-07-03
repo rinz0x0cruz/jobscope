@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from ..model import Job, Resume
+from jobscope.core.model import Job, Resume
 from .filters import ghost_flags
 from .seniority import _seniority_score
 
@@ -106,7 +106,7 @@ def _size_signal(company: str, prefer: str) -> tuple[float, str]:
     Returns (preference_score 0-1, band label). Unknown companies get a neutral
     0.5 with an empty band so size never penalizes an unrecognized employer.
     """
-    from .. import companies
+    from jobscope.core import companies
     bigness, band = companies.company_size(company)
     if not band:
         return 0.5, ""
@@ -127,7 +127,7 @@ def _company_score(job: Job, match_cfg: dict) -> tuple[float, str]:
     drives the score (60%) with the curated prestige tier as a tie-breaker (40%).
     With no size preference the behaviour is prestige-only (backwards compatible).
     """
-    from .. import companies
+    from jobscope.core import companies
     c = (job.company or "").lower()
     for p in match_cfg.get("prefer_companies", []) or []:
         if p and p.lower() in c:

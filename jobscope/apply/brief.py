@@ -5,7 +5,7 @@ demand from whatever enrichment exists (plus job-level red flags).
 """
 from __future__ import annotations
 
-from .enrich import brief as _brief
+from jobscope.enrich import brief as _brief
 
 
 def run(cfg: dict, store, job_id: str) -> int:

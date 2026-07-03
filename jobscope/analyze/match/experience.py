@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from ..model import Job
+from jobscope.core.model import Job
 from .seniority import _job_seniority
 
 # Rough minimum years of experience implied by a seniority word in the title.

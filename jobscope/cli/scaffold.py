@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import shutil
 
-from .config import DEFAULT_CONFIG, load_config
+from ..core.config import DEFAULT_CONFIG, load_config
 
 
 def run(args) -> int:

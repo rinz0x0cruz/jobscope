@@ -7,16 +7,17 @@ import json
 import os
 import tempfile
 
-from jobscope import match, render
-from jobscope.config import load_config
-from jobscope.model import Job, Resume
-from jobscope.store import Store
+from jobscope.analyze import match
+from jobscope.deliver import render
+from jobscope.core.config import load_config
+from jobscope.core.model import Job, Resume
+from jobscope.core.store import Store
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "resume.md")
 
 
 def _seed(store):
-    from jobscope.resume import parse_resume
+    from jobscope.analyze.resume import parse_resume
     store.save_resume(parse_resume(FIX))
     jobs = [
         Job(source="indeed", title="Senior Security Engineer", company="Acme",

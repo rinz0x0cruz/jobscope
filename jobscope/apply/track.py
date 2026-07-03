@@ -4,8 +4,8 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Optional
 
-from .model import STATUSES, Application
-from .store import now_iso
+from jobscope.core.model import STATUSES, Application
+from jobscope.core.store import now_iso
 
 
 def run(store, set_expr: Optional[str] = None, cfg: Optional[dict] = None,

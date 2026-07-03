@@ -1,7 +1,8 @@
 """Unit tests for the optional AI seniority classifier (ai.chat is monkeypatched;
 no network)."""
-from jobscope import ai, classify
-from jobscope.model import Job
+from jobscope.core import ai
+from jobscope.analyze import classify
+from jobscope.core.model import Job
 
 
 def _job():

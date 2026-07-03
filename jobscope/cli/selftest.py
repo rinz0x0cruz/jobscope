@@ -30,7 +30,7 @@ def run() -> int:
     c = _Check()
 
     # --- model ------------------------------------------------------------
-    from .model import Job, job_id, slugify
+    from ..core.model import Job, job_id, slugify
 
     id1 = job_id("indeed", "Security Engineer", "Acme", "https://x/y")
     id2 = job_id("indeed", "Security Engineer", "Acme", "https://x/y")
@@ -42,7 +42,7 @@ def run() -> int:
     c.ok("job.ensure_id fills id", bool(j.id))
 
     # --- config -----------------------------------------------------------
-    from .config import DEFAULT_CONFIG, _deep_merge, load_config
+    from ..core.config import DEFAULT_CONFIG, _deep_merge, load_config
 
     merged = _deep_merge(DEFAULT_CONFIG, {"search": {"location": "Berlin"}})
     c.ok("deep_merge overrides leaf", merged["search"]["location"] == "Berlin")
@@ -53,8 +53,8 @@ def run() -> int:
     c.ok("load_config returns defaults", cfg["ai"]["provider"] == "groq")
 
     # --- store ------------------------------------------------------------
-    from .model import Application, Resume
-    from .store import Store
+    from ..core.model import Application, Resume
+    from ..core.store import Store
 
     with tempfile.TemporaryDirectory() as tmp:
         store = Store(os.path.join(tmp, "t.db"))
@@ -87,7 +87,7 @@ def run() -> int:
 
     # --- match (deterministic scoring + filters) -------------------------
     try:
-        from . import match  # noqa: F401
+        from ..analyze import match  # noqa: F401
         _selftest_match(c)
         _selftest_filters(c)
     except ImportError:
@@ -97,7 +97,7 @@ def run() -> int:
     _selftest_inbox(c)
 
     # --- ats (direct company boards; HTTP stubbed, no network) -----------
-    from . import ats
+    from ..ingest import ats
 
     def _stub(url, **_kw):
         if "greenhouse" in url:
@@ -141,9 +141,9 @@ def run() -> int:
 
 
 def _selftest_inbox(c: "_Check") -> None:
-    from . import mailrules
-    from .model import Application, MailEvent
-    from .store import Store
+    from ..ingest import mailrules
+    from ..core.model import Application, MailEvent
+    from ..core.store import Store
 
     c.ok("mail: confirmation classified",
          mailrules.classify_signal("no-reply@greenhouse.io",
@@ -176,8 +176,8 @@ def _selftest_inbox(c: "_Check") -> None:
 
 
 def _selftest_match(c: "_Check") -> None:
-    from .match import score_job
-    from .model import Job, Resume
+    from ..analyze.match import score_job
+    from ..core.model import Job, Resume
 
     resume = Resume(
         full_name="Test",
@@ -198,8 +198,8 @@ def _selftest_match(c: "_Check") -> None:
 
 
 def _selftest_filters(c: "_Check") -> None:
-    from .match import apply_filters, clearance_flags, no_sponsorship, select_base
-    from .model import Job, Resume
+    from ..analyze.match import apply_filters, clearance_flags, no_sponsorship, select_base
+    from ..core.model import Job, Resume
 
     clr = Job(title="Engineer", company="A", description="Active security clearance required")
     c.ok("clearance detected", bool(clearance_flags(clr)))
@@ -209,7 +209,7 @@ def _selftest_filters(c: "_Check") -> None:
     c.ok("filter blocks company",
          apply_filters(Job(company="Acme"), {"block_companies": ["acme"]}) is not None)
     c.ok("filter passes clean job", apply_filters(Job(company="Z", description="ok"), {}) is None)
-    from .match import required_experience_years
+    from ..analyze.match import required_experience_years
     c.ok("exp: senior title implies ~4y",
          required_experience_years(Job(title="Senior Software Engineer")) == 4.0)
     c.ok("exp: explicit N+ years parsed",
@@ -220,7 +220,7 @@ def _selftest_filters(c: "_Check") -> None:
          apply_filters(Job(title="Staff Engineer"), {"max_years_experience": 2}) is not None)
     c.ok("exp filter keeps at/below cap",
          apply_filters(Job(title="Engineer", description="2+ years"), {"max_years_experience": 2}) is None)
-    from . import scrape
+    from ..ingest import scrape
     c.ok("remote: concrete city overrides stray flag",
          scrape._derive_remote(True, "Dublin, County Dublin, Ireland", "Security Engineer") is False)
     c.ok("remote: explicit keyword is remote",
@@ -230,7 +230,7 @@ def _selftest_filters(c: "_Check") -> None:
     job = Job(title="Malware Analyst", description="yara malware analysis " * 5)
     _, _, _, base = select_base(job, [("research", r1), ("consulting", r2)], _default_match_cfg())
     c.ok("select_base picks best resume", base == "research", base)
-    from .companies import company_quality, company_size, company_funding
+    from ..core.companies import company_quality, company_size, company_funding
     c.ok("company_quality: elite", company_quality("Google")[0] == 1.0)
     c.ok("company_quality: unknown neutral", company_quality("Obscure Widgets LLC")[0] == 0.5)
     c.ok("company_size: mega", company_size("Amazon Web Services") == (1.00, "mega"))
@@ -239,13 +239,13 @@ def _selftest_filters(c: "_Check") -> None:
     c.ok("company_funding: public", company_funding("CrowdStrike") == "public")
     c.ok("company_funding: unicorn", company_funding("Wiz") == "unicorn")
     c.ok("company_funding: unknown blank", company_funding("Obscure Widgets LLC") == "")
-    from .match import _company_score
+    from ..analyze.match import _company_score
     big = {"prefer_company_size": "large"}
     small = {"prefer_company_size": "small"}
     c.ok("prefer large ranks mega high", _company_score(Job(company="Amazon"), big)[0] > 0.9)
     c.ok("prefer small demotes mega",
          _company_score(Job(company="Amazon"), small)[0] < _company_score(Job(company="Amazon"), big)[0])
-    from .match import _job_lean, _resume_lean
+    from ..analyze.match import _job_lean, _resume_lean
     c.ok("discipline: technical job leans +",
          _job_lean(Job(title="Malware Reverse Engineer", description="ghidra exploit disassembly")) > 0.3)
     c.ok("discipline: advisory job leans -",
@@ -261,5 +261,5 @@ def _selftest_filters(c: "_Check") -> None:
 
 
 def _default_match_cfg() -> dict:
-    from .config import DEFAULT_CONFIG
+    from ..core.config import DEFAULT_CONFIG
     return DEFAULT_CONFIG["match"]

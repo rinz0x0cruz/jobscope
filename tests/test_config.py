@@ -2,7 +2,7 @@ import pathlib
 
 import yaml
 
-from jobscope.config import DEFAULT_CONFIG, _deep_merge, load_config
+from jobscope.core.config import DEFAULT_CONFIG, _deep_merge, load_config
 
 EXAMPLE_CONFIG = pathlib.Path(__file__).resolve().parents[1] / "config.example.yaml"
 

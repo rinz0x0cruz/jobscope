@@ -1,10 +1,10 @@
 import os
 import tempfile
 
-from jobscope import tailor
-from jobscope.config import load_config
-from jobscope.model import Job, Resume
-from jobscope.store import Store
+from jobscope.apply import tailor
+from jobscope.core.config import load_config
+from jobscope.core.model import Job, Resume
+from jobscope.core.store import Store
 
 
 def _resume():

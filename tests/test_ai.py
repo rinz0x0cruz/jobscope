@@ -1,9 +1,9 @@
 import os
 import tempfile
 
-from jobscope import ai
-from jobscope.config import load_config
-from jobscope.store import Store
+from jobscope.core import ai
+from jobscope.core.config import load_config
+from jobscope.core.store import Store
 
 
 def _cfg(**ai_over):

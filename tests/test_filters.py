@@ -2,10 +2,10 @@
 import os
 import tempfile
 
-from jobscope import match
-from jobscope.config import load_config
-from jobscope.model import Job, Resume
-from jobscope.store import Store
+from jobscope.analyze import match
+from jobscope.core.config import load_config
+from jobscope.core.model import Job, Resume
+from jobscope.core.store import Store
 
 
 def _mcfg(**over):
@@ -90,7 +90,7 @@ def test_multi_resume_selects_best_base():
 
 
 def test_company_quality_tiers():
-    from jobscope.companies import company_quality
+    from jobscope.core.companies import company_quality
     assert company_quality("Google")[0] == 1.0
     assert company_quality("Meta Platforms, Inc.")[0] == 1.0      # token subset
     assert company_quality("Palo Alto Networks")[0] == 0.90
@@ -125,7 +125,7 @@ def test_prefer_locations_boost():
 
 
 def test_company_size_bands():
-    from jobscope.companies import company_size
+    from jobscope.core.companies import company_size
     assert company_size("Amazon")[1] == "mega"
     assert company_size("Wiz")[1] == "small"
     assert company_size("Mistral AI")[1] == "startup"
@@ -133,7 +133,7 @@ def test_company_size_bands():
 
 
 def test_company_funding_tiers():
-    from jobscope.companies import company_funding
+    from jobscope.core.companies import company_funding
     assert company_funding("CrowdStrike") == "public"            # publicly traded
     assert company_funding("Palo Alto Networks, Inc.") == "public"
     assert company_funding("Wiz") == "unicorn"                   # private $1B+

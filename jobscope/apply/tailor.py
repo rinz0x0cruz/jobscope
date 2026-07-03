@@ -11,10 +11,11 @@ from __future__ import annotations
 import os
 import re
 
-from . import ai, pdf
-from .model import Application, Resume, slugify
-from .resume import SKILL_LEXICON
-from .store import now_iso
+from jobscope.core import ai
+from jobscope.deliver import pdf
+from jobscope.core.model import Application, Resume, slugify
+from jobscope.analyze.resume import SKILL_LEXICON
+from jobscope.core.store import now_iso
 
 
 def run(cfg: dict, store, job_id: str) -> int:

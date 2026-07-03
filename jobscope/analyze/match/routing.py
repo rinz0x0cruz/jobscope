@@ -7,7 +7,7 @@ to the best-fitting résumé. Depends on :mod:`.scoring` for the per-framing fit
 """
 from __future__ import annotations
 
-from ..model import Job, Resume
+from jobscope.core.model import Job, Resume
 from .scoring import score_job
 
 # Discipline signals used to route a job to the best-fit resume when several are

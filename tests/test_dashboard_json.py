@@ -7,10 +7,10 @@ import json
 import os
 import tempfile
 
-from jobscope import render
-from jobscope.config import load_config
-from jobscope.model import Application, Job, MailEvent
-from jobscope.store import Store
+from jobscope.deliver import render
+from jobscope.core.config import load_config
+from jobscope.core.model import Application, Job, MailEvent
+from jobscope.core.store import Store
 
 
 def _seed(store):

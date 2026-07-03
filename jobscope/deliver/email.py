@@ -11,7 +11,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
 
-from .config import smtp_password
+from jobscope.core.config import smtp_password
 
 
 def send(cfg: dict, subject: str, text: str, html: Optional[str] = None) -> bool:

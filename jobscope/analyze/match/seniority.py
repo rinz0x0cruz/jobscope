@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from ..model import Job, Resume
+from jobscope.core.model import Job, Resume
 
 # seniority ladder -> rank
 SENIORITY_RANK = {

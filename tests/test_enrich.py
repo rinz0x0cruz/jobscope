@@ -1,6 +1,6 @@
 """Offline enrichment tests -- all network calls are monkeypatched."""
 from jobscope.enrich import comp, contacts, news, reddit, stock
-from jobscope.model import Job
+from jobscope.core.model import Job
 
 
 # ---- comp (pure) --------------------------------------------------------

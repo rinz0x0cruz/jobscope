@@ -1,6 +1,6 @@
 """Tests for experience-requirement detection and the max-years-experience filter."""
-from jobscope.match import apply_filters, required_experience_years
-from jobscope.model import Job
+from jobscope.analyze.match import apply_filters, required_experience_years
+from jobscope.core.model import Job
 
 
 def _job(title, desc=""):

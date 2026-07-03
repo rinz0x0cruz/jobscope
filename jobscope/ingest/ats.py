@@ -16,9 +16,9 @@ import html as _html
 import re
 from typing import Any
 
-from . import httpx
-from .model import Job, derive_remote_scope
-from .store import now_iso
+from jobscope.core import httpx
+from jobscope.core.model import Job, derive_remote_scope
+from jobscope.core.store import now_iso
 
 # Curated company -> (provider, board slug). Slugs are the board token in the
 # careers URL (usually the lowercased company name). Extend freely; unknown or

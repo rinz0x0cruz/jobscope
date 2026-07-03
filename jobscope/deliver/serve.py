@@ -10,7 +10,7 @@ import webbrowser
 
 def run(cfg: dict, port: int = 8799, open_browser: bool = False) -> int:
     from . import render
-    from .store import Store
+    from jobscope.core.store import Store
 
     with Store(cfg["output"]["db_path"]) as store:
         path = render.build(cfg, store)

@@ -12,8 +12,8 @@ import os
 import re
 from typing import Any
 
-from . import companies
-from .store import now_iso
+from jobscope.core import companies
+from jobscope.core.store import now_iso
 
 TIER_COLORS = {"Strong": "#16a34a", "Good": "#2563eb", "Stretch": "#d97706", "Skip": "#6b7280"}
 
@@ -100,7 +100,7 @@ def _overview_data(cfg: dict, store) -> dict:
     gaps: list = []
     considered = 0
     try:
-        from .insights import skill_gap
+        from jobscope.analyze.insights import skill_gap
         considered, ranked = skill_gap(store, top=8)
         gaps = [[s, c] for s, c, _ex in ranked]
     except Exception:  # noqa: BLE001

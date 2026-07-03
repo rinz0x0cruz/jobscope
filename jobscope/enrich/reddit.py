@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any, Optional
 from urllib.parse import quote_plus
 
-from .. import httpx
+from jobscope.core import httpx
 from .registry import source
 
 SEARCH_URL = "https://www.reddit.com/search.json"

@@ -1,6 +1,6 @@
 """Tests for combined seniority detection and the asymmetric seniority score."""
-from jobscope.match import _job_seniority, _seniority_score
-from jobscope.model import Job, Resume
+from jobscope.analyze.match import _job_seniority, _seniority_score
+from jobscope.core.model import Job, Resume
 
 
 def test_job_seniority_from_title_level_and_codes():
@@ -37,7 +37,7 @@ def test_target_seniority_overrides_resume():
 
 
 def test_ai_fields_feed_seniority_and_years():
-    from jobscope.match import required_experience_years
+    from jobscope.analyze.match import required_experience_years
     j = Job(title="Security Engineer", ai_seniority="senior", ai_required_years=6.0)
     assert _job_seniority(j) == 3                    # AI level fills the missing signal
     assert required_experience_years(j) == 6.0       # AI years feed the experience cap

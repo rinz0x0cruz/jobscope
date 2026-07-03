@@ -29,9 +29,9 @@ from email.header import decode_header, make_header
 from typing import Optional
 
 from .ats import _strip_html
-from .config import inbox_password
-from .model import Application, MailEvent
-from .store import now_iso
+from jobscope.core.config import inbox_password
+from jobscope.core.model import Application, MailEvent
+from jobscope.core.store import now_iso
 from . import mailrules
 
 _HEADER_FIELDS = "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)])"
@@ -234,7 +234,7 @@ def _ai_refine(cfg: dict, store, subject: str, snippet: str) -> Optional[str]:
     """Ask the optional AI layer to bucket an ambiguous email. Returns a valid
     signal or None (when AI is disabled, unreachable, or unsure)."""
     try:
-        from . import ai
+        from jobscope.core import ai
     except ImportError:
         return None
     if not ai.available(cfg):
