@@ -3,14 +3,13 @@
 Exercises the P1 pipeline without touching the network (no JobSpy), so CI can
 validate the whole core loop.
 """
-import json
 import os
 import tempfile
 
 from jobscope.analyze import match
 from jobscope.deliver import render
 from jobscope.core.config import load_config
-from jobscope.core.model import Job, Resume
+from jobscope.core.model import Job
 from jobscope.core.store import Store
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "resume.md")

@@ -196,7 +196,7 @@ def _target_locations(search: dict) -> set[str]:
 
 def _matches(job: Job, locs: set[str], roles: set[str], want_remote: bool) -> bool:
     loc = (job.location or "").lower()
-    loc_ok = (want_remote and job.is_remote) or (not locs) or any(l in loc for l in locs)
+    loc_ok = (want_remote and job.is_remote) or (not locs) or any(s in loc for s in locs)
     title = (job.title or "").lower()
     role_ok = (not roles) or any(k in title for k in roles)
     return loc_ok and role_ok

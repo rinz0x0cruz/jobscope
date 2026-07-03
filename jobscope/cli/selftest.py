@@ -245,7 +245,7 @@ def _selftest_filters(c: "_Check") -> None:
     c.ok("prefer large ranks mega high", _company_score(Job(company="Amazon"), big)[0] > 0.9)
     c.ok("prefer small demotes mega",
          _company_score(Job(company="Amazon"), small)[0] < _company_score(Job(company="Amazon"), big)[0])
-    from ..analyze.match import _job_lean, _resume_lean
+    from ..analyze.match import _job_lean
     c.ok("discipline: technical job leans +",
          _job_lean(Job(title="Malware Reverse Engineer", description="ghidra exploit disassembly")) > 0.3)
     c.ok("discipline: advisory job leans -",
