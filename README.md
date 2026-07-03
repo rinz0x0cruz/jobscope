@@ -294,6 +294,10 @@ With the optional [`quorum`](https://github.com/rinz0x0cruz/quorum) package inst
 set `quorum.enabled: true` to route the AI layer through a multi-model deliberation
 (`strategy: ensemble | council | refine | debate | moa`) instead of a single model.
 
+```bash
+pip install -e ".[quorum]"   # fetches quorum from GitHub; then set quorum.enabled: true + the AI key
+```
+
 When AI is on, jobscope also runs a **seniority tie-breaker**: only for postings that
 have no deterministic level signal *and* still landed in a good tier (i.e. actually
 leaking), it asks the model for a normalized level + required years, then re-applies the

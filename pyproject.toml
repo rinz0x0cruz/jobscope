@@ -24,6 +24,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Optional multi-model AI backend (routes ai.chat through a quorum deliberation).
+# Tracks quorum's default branch; pin a tag (…/quorum.git@v0.2.0) for reproducibility.
+quorum = ["quorum @ git+https://github.com/rinz0x0cruz/quorum.git"]
 
 [project.scripts]
 jobscope = "jobscope.__main__:main"
