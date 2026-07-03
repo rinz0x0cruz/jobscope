@@ -5,9 +5,13 @@ import type { JobRow } from '@/lib/schema'
 import { TIER_COLOR } from '@/lib/schema'
 import { compLabel, daysAgo, stockChange, stockLabel } from '@/lib/format'
 
-function Pill({ children }: { children: ReactNode }) {
+function Pill({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <span className="rounded-md border border-border bg-bg2 px-1.5 py-0.5 text-[11px] text-dim">
+    <span
+      className={
+        'rounded-md border border-border bg-bg2 px-1.5 py-0.5 text-[11px] text-dim ' + className
+      }
+    >
       {children}
     </span>
   )
@@ -68,7 +72,9 @@ export function JobCard({ row, onOpen }: { row: JobRow; onOpen: (id: string) => 
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Pill>{row.tier}</Pill>
+            <Pill className={row.tier === 'Strong' && !reduce ? 'js-strong-pulse' : ''}>
+              {row.tier}
+            </Pill>
             {comp && <Pill>{comp}</Pill>}
             {stock && (
               <Pill>

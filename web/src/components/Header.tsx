@@ -1,3 +1,4 @@
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Moon, Search, Sun } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
 
@@ -11,6 +12,7 @@ interface Props {
 
 export function Header({ total, shown, generated, query, onQuery }: Props) {
   const { theme, toggle } = useTheme()
+  const reduce = useReducedMotion()
   return (
     <header className="sticky top-0 z-20 flex flex-wrap items-center gap-4 border-b border-border bg-bg/70 px-6 py-3.5 backdrop-blur-lg backdrop-saturate-150">
       <div className="flex items-center gap-2.5">
@@ -41,10 +43,21 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
       <button
         type="button"
         onClick={toggle}
-        aria-label="Toggle theme"
-        className="grid h-9 w-9 place-items-center rounded-[10px] border border-border bg-card text-dim transition hover:border-border-h hover:text-fg"
+        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        className="relative grid h-9 w-9 place-items-center overflow-hidden rounded-[10px] border border-border bg-card text-dim transition hover:border-border-h hover:text-fg"
       >
-        {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+        <AnimatePresence initial={false}>
+          <motion.span
+            key={theme}
+            initial={reduce ? false : { rotate: -90, scale: 0, opacity: 0 }}
+            animate={reduce ? { opacity: 1 } : { rotate: 0, scale: 1, opacity: 1 }}
+            exit={reduce ? { opacity: 0 } : { rotate: 90, scale: 0, opacity: 0 }}
+            transition={{ duration: reduce ? 0 : 0.22, ease: 'easeInOut' }}
+            className="absolute grid place-items-center"
+          >
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </motion.span>
+        </AnimatePresence>
       </button>
     </header>
   )

@@ -58,6 +58,17 @@ html.light {
     min-height: 100vh;
   }
   a { color: inherit; }
+
+  /* Visible keyboard focus for anything that doesn't opt out with an
+     `outline-none` utility (those provide their own focus ring instead).
+     The outline follows each element's own radius; the fallback radius here
+     only applies to focusables lacking a Tailwind radius utility (utilities
+     layer wins over base, so rounded-full pills etc. keep their shape). */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
 }
 
 @utility tnum {
@@ -76,6 +87,26 @@ html.light {
 .js-drawer[data-state="open"] { animation: jsDrawerIn 0.26s cubic-bezier(0.32, 0.72, 0, 1); }
 .js-drawer[data-state="closed"] { animation: jsDrawerOut 0.2s ease-in forwards; }
 
+/* Strong-tier pill: a gentle glow loop to draw the eye to the best matches.
+   CSS-driven so it can't freeze the way an rAF loop can, and neutralized by
+   the global reduced-motion guard below. */
+@keyframes jsStrongPulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--strong) 26%, transparent); }
+  50% { box-shadow: 0 0 7px 1px color-mix(in srgb, var(--strong) 32%, transparent); }
+}
+.js-strong-pulse {
+  animation: jsStrongPulse 2.2s ease-in-out infinite;
+  border-color: color-mix(in srgb, var(--strong) 40%, var(--border));
+  color: var(--strong);
+}
+
+/* Global reduced-motion kill-switch: neutralize every animation/transition
+   (Motion-driven components additionally gate on useReducedMotion). */
 @media (prefers-reduced-motion: reduce) {
-  .js-overlay[data-state], .js-drawer[data-state] { animation-duration: 0.01ms; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
