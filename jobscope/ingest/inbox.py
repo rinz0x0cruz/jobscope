@@ -184,7 +184,8 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
         from_addr=from_addr, from_name=from_name, from_domain=from_domain,
         subject=subject, date=_parse_date(hdr.get("Date", "")),
         company=company, role=role, signal=sig, job_id=job_id,
-        snippet=snippet[:500], first_seen=now_iso(),
+        snippet=(snippet[:500] if cfg.get("inbox", {}).get("store_snippets", False) else ""),
+        first_seen=now_iso(),
     ).ensure_id()
 
     if dry_run:

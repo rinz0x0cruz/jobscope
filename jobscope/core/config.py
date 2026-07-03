@@ -110,6 +110,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "imap_port": 993,
         "folder": "INBOX",
         "lookback_days": 90,     # first run scans this far back; later runs are incremental
+        "store_snippets": False, # persist a short email-body excerpt? off = classify in memory then discard (less PII at rest)
     },
     "apply": {
         "assist": False,
@@ -179,16 +180,41 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     return json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy
 
 
+KEYRING_SERVICE = "jobscope"
+
+
+def _secret(name: str, default: str = "") -> str:
+    """Resolve a secret referenced by env-var NAME, keychain-first.
+
+    Order: the OS keychain (Windows Credential Manager / macOS Keychain / Secret
+    Service, via the optional ``keyring`` package) then the process environment
+    (real env or ``.env``). Keyring is optional and best-effort -- if it isn't
+    installed or has no backend, we silently fall back to the environment so the
+    tool stays portable. Secrets are never read from the config file itself.
+    """
+    if not name:
+        return default
+    try:
+        import keyring  # optional dependency
+        val = keyring.get_password(KEYRING_SERVICE, name)
+        if val:
+            return val
+    except Exception:  # noqa: BLE001 - keyring missing / no backend -> env fallback
+        pass
+    return os.environ.get(name, default)
+
+
 def api_key(cfg: dict) -> str:
-    return os.environ.get(cfg.get("ai", {}).get("api_key_env", "JOBSCOPE_AI_API_KEY"), "")
+    return _secret(cfg.get("ai", {}).get("api_key_env", "JOBSCOPE_AI_API_KEY"))
 
 
 def smtp_password(cfg: dict) -> str:
-    return os.environ.get(cfg.get("email", {}).get("password_env", "JOBSCOPE_SMTP_PASSWORD"), "")
+    return _secret(cfg.get("email", {}).get("password_env", "JOBSCOPE_SMTP_PASSWORD"))
 
 
 def inbox_password(cfg: dict, account: dict) -> str:
-    """Return the Gmail app password for an inbox account, read from the env var
-    named by that account's ``password_env`` (never stored in config)."""
+    """Return the Gmail app password for an inbox account, referenced by the env-var
+    name in that account's ``password_env`` and resolved keychain-first (never stored
+    in the config file)."""
     env = (account or {}).get("password_env", "")
-    return os.environ.get(env, "") if env else ""
+    return _secret(env) if env else ""

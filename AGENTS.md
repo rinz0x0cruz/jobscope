@@ -54,6 +54,30 @@ Iterate with targeted tests (`pytest -q tests/test_x.py`); run the full suite + 
 - `pytest`, `jobscope selftest`, and `npm run build` all green.
 - Deterministic scoring unchanged — identical inputs produce identical scores/tiers.
 
+## Security & privacy (never regress)
+
+jobscope reads the user's Gmail and stores recruiter/résumé PII in a local SQLite DB, then publishes
+a **redacted** dashboard to GitHub Pages. Treat these as hard rules — see [SECURITY.md](SECURITY.md)
+for the threat model:
+
+- **Never print, log, or echo a secret value.** Secrets resolve by env-var *name* only,
+  keychain-first via `config._secret()` (OS keyring → env / `.env`); never read them from
+  `config.yaml`, and never write them to disk, the DB, or dashboard output. A new secret gets a
+  `*_env` name in config and goes through `_secret()`.
+- **The public build must stay redacted.** `dashboard --public` / `emit_json(public=True)` strips
+  contacts, rationale, resume base, the funnel, search targets, and all applications. If you touch
+  `_redact_public` / `build_data`, the redaction tests in `tests/test_dashboard_json.py`
+  (`test_public_build_data_redacts_all_pii`, `test_public_json_has_no_pii_markers`) must stay green.
+- **No new PII in the public payload.** Adding a row field means deciding its redaction and updating
+  `_JOB_ROW` + `dashboard.schema.json` + the redaction tests. A new *private* column is redacted by
+  default — never emit it in the public build.
+- **`.gitignore` stays airtight:** `.env`, `config.*`, and `data/*` are never committed, and no new
+  path writes secrets/PII outside `data/`. CI runs `detect-secrets`; keep `.secrets.baseline` current
+  (only benign env-var *names* belong there — never a real secret value).
+- **Least privilege + minimize at rest.** New sensitive files get owner-only perms (`_harden_perms`,
+  best-effort `0600`/`0700`). Don't persist email bodies unless `inbox.store_snippets` is on (classify
+  in memory, then discard). Keep IMAP **read-only** (`readonly=True`, `BODY.PEEK`).
+
 ## Modularity — what shipped
 
 The incremental-refactor plan is **complete**: the data-contract/config guards (P-A/P-B/P-C), the

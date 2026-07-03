@@ -49,3 +49,10 @@ class ApplicationsMixin:
             "LEFT JOIN jobs j ON j.id = a.job_id ORDER BY a.updated DESC"
         )
         return [dict(r) for r in rows]
+
+    def purge_applications(self) -> int:
+        """Delete every tracked application (empties the funnel). Returns the count
+        removed. Stored emails are handled separately by ``purge_mail_events``."""
+        cur = self.conn.execute("DELETE FROM applications")
+        self.conn.commit()
+        return cur.rowcount

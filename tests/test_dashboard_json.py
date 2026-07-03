@@ -9,7 +9,7 @@ import tempfile
 
 from jobscope.deliver import render
 from jobscope.core.config import load_config
-from jobscope.core.model import Application, Job, MailEvent
+from jobscope.core.model import Application, Contact, Job, MailEvent
 from jobscope.core.store import Store
 
 
@@ -247,3 +247,79 @@ def test_dashboard_schema_artifact_matches_contract():
     assert set(defs["Overview"]["required"]) == set(_OVERVIEW)
     assert set(defs["Application"]["required"]) == set(_APPLICATION)
     assert set(defs["ApplicationEvent"]["required"]) == set(_TIMELINE_EVENT)
+
+
+def test_public_build_data_redacts_all_pii():
+    """Regression lock: the public payload strips every private field -- referral
+    contacts, score rationale, resume base, the application funnel, and search
+    targets -- drops the whole applications list, and public rows expose no key
+    beyond the documented safe set (so a new PII column can't silently ship).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = load_config(None)
+        cfg["output"]["db_path"] = os.path.join(tmp, "p.db")
+        cfg["output"]["dashboard_path"] = os.path.join(tmp, "dash.html")
+        cfg["search"] = {"terms": ["ZZ_SECRET_TARGET"]}
+        store = Store(cfg["output"]["db_path"])
+        _seed(store)
+        jid = store.jobs()[0].id
+        store.save_contacts([Contact(
+            id="c1", company="Acme", name="ZZ_SECRET_CONTACT", title="Recruiter",
+            profile_url="https://example.test/zz")])
+        store.set_application(Application(job_id=jid, status="applied"))
+
+        full = render.build_data(cfg, store, public=False)
+        pub = render.build_data(cfg, store, public=True)
+        store.close()
+
+    # sanity: the full build carries the PII the public build is meant to drop
+    assert full["rows"][0]["contacts"], "seed should give the full build contacts"
+    assert full["rows"][0]["rationale"], "seed should give the full build a rationale"
+    assert full["overview"]["funnel"] and full["overview"]["targets"]
+    assert full["applications"], "seed should give the full build an application"
+
+    # public build strips all of it
+    row = pub["rows"][0]
+    assert row["contacts"] == []
+    assert row["rationale"] == ""
+    assert row["base"] == ""
+    assert pub["overview"]["funnel"] == {}
+    assert pub["overview"]["targets"] == []
+    assert pub["applications"] == []
+    # PII-contract: a public row carries no key beyond the known-safe contract set
+    assert set(row) <= set(_JOB_ROW), f"unexpected public row keys: {set(row) - set(_JOB_ROW)}"
+
+
+def test_public_json_has_no_pii_markers():
+    """The emitted public dashboard JSON file must contain no private string --
+    contact name, score rationale, search target, or email subject. A blunt
+    substring guard so a redaction regression can't quietly leak PII to Pages.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = load_config(None)
+        cfg["output"]["db_path"] = os.path.join(tmp, "p.db")
+        cfg["output"]["dashboard_path"] = os.path.join(tmp, "dash.html")
+        cfg["search"] = {"terms": ["ZZ_SECRET_TARGET"]}
+        store = Store(cfg["output"]["db_path"])
+        store.upsert_job(Job(
+            source="indeed", title="Security Engineer", company="Acme",
+            url="https://example.test/1",
+            rationale="ZZ_SECRET_RATIONALE").ensure_id())
+        jid = store.jobs()[0].id
+        store.save_contacts([Contact(
+            id="c1", company="Acme", name="ZZ_SECRET_CONTACT", title="Recruiter",
+            profile_url="https://example.test/zz")])
+        store.set_application(Application(
+            job_id=jid, status="applied", company="Acme", title="Security Engineer"))
+        store.upsert_mail_event(MailEvent(
+            account="me@example.com", message_id="<m1@acme>", from_domain="acme.com",
+            subject="ZZ_SECRET_SUBJECT", date="2026-06-01T10:00:00",
+            signal="confirmation", job_id=jid))
+
+        path = render.emit_json(cfg, store, public=True)
+        store.close()
+        text = open(path, encoding="utf-8").read()
+
+    for marker in ("ZZ_SECRET_CONTACT", "ZZ_SECRET_RATIONALE",
+                   "ZZ_SECRET_TARGET", "ZZ_SECRET_SUBJECT"):
+        assert marker not in text, f"PII leaked into the public dashboard JSON: {marker}"

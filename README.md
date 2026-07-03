@@ -17,7 +17,9 @@ Design principles:
   LinkedIn/Indeed/Workday. An opt-in `--assist` mode can pre-fill *public* ATS forms
   (Greenhouse/Lever/Ashby) but always **stops before submit**.
 - **Local-first & private.** Your resume, data, and secrets stay on your machine
-  (SQLite + gitignored files).
+  (SQLite + gitignored files). Secrets live in your OS keychain (`jobscope secrets`,
+  with `.env` fallback), the local DB is owner-only, and the published dashboard is
+  redacted. See [SECURITY.md](SECURITY.md).
 
 > Built as a sibling to [threatscope](../threatscope) / [exploitrank](../exploitrank):
 > stdlib CLI, SQLite persistence, concurrent feeds, static dashboard, `selftest`.
@@ -137,8 +139,14 @@ python -m jobscope dashboard --open           # Applications board: pipeline col
 ```
 
 Multiple mailboxes: add more entries under `accounts`, each with its own
-`password_env`. Everything stays local in SQLite; app passwords live only in your
-environment. Runs well from cron / Task Scheduler.
+`password_env`. Everything stays local in SQLite; app passwords resolve from your OS
+keychain (`jobscope secrets set JOBSCOPE_GMAIL_APP_PW`) or `.env`. Email bodies are
+classified in memory and **not stored** unless `inbox.store_snippets` is on, and you can
+wipe stored mail/applications anytime with `jobscope purge`. Runs well from cron /
+Task Scheduler.
+
+> **Tip:** point jobscope at a **dedicated job-search Gmail account** (forward recruiter
+> mail to it) so its app password can't touch your primary inbox. See [SECURITY.md](SECURITY.md).
 
 ## Prioritization (company quality + location)
 

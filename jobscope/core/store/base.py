@@ -139,6 +139,20 @@ def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _harden_perms(path: str) -> None:
+    """Best-effort: restrict the DB file (0600) and its data dir (0700) to the
+    owner. On POSIX this enforces owner-only access; on Windows ``os.chmod`` only
+    toggles the read-only bit, so it's effectively a no-op there (see SECURITY.md
+    for NTFS ACL guidance). Never fatal -- permission tightening is defense in depth.
+    """
+    for target, mode in ((path, 0o600),
+                         (os.path.dirname(os.path.abspath(path)), 0o700)):
+        try:
+            os.chmod(target, mode)
+        except OSError:
+            pass
+
+
 class _StoreBase:
     def __init__(self, path: str):
         parent = os.path.dirname(os.path.abspath(path))
@@ -149,6 +163,7 @@ class _StoreBase:
         self.conn.executescript(SCHEMA)
         self.conn.commit()
         self._ensure_columns()
+        _harden_perms(path)
 
     def _ensure_columns(self) -> None:
         """Additive migrations for older databases (mirrors threatscope)."""

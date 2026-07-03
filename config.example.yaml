@@ -140,6 +140,7 @@ inbox:
   imap_port: 993
   folder: "INBOX"
   lookback_days: 90                   # first run scans this far back; later runs are incremental
+  store_snippets: false               # persist a short email-body excerpt? off = classify in memory then discard (less PII at rest)
 
 apply:
   assist: false                       # opt-in: assisted fill of PUBLIC ATS forms, stops before submit

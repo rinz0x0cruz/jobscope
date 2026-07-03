@@ -17,6 +17,8 @@ Usage:
     python -m jobscope track [--set job_id=status] Funnel + follow-up reminders
     python -m jobscope inbox [--dry-run]           Sync Gmail (IMAP) -> application funnel
     python -m jobscope export [--format json|csv]  Export ranked jobs
+    python -m jobscope purge [--mail --applications --older-than N]  Wipe stored email PII / apps
+    python -m jobscope secrets [set|list|rm|import-env]  Store secrets in the OS keychain
     python -m jobscope selftest                     Offline self-tests (no network)
 """
 from __future__ import annotations
@@ -154,6 +156,98 @@ def cmd_selftest(args, cfg):
     return selftest.run()
 
 
+def _secret_names(cfg) -> list[str]:
+    """The env-var NAMES this config references for secrets (values are never touched)."""
+    names = [
+        cfg.get("ai", {}).get("api_key_env", "JOBSCOPE_AI_API_KEY"),
+        cfg.get("email", {}).get("password_env", "JOBSCOPE_SMTP_PASSWORD"),
+    ]
+    for acct in (cfg.get("inbox", {}).get("accounts") or []):
+        env = (acct or {}).get("password_env")
+        if env:
+            names.append(env)
+    seen: set[str] = set()
+    out: list[str] = []
+    for n in names:
+        if n and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def cmd_secrets(args, cfg):
+    """Manage secrets in the OS keychain (keyring). Values are never printed."""
+    import os
+    try:
+        import keyring
+    except ImportError:
+        print("  keyring is not installed.  pip install keyring", file=sys.stderr)
+        return 1
+    from ..core.config import KEYRING_SERVICE
+
+    action = getattr(args, "action", "list") or "list"
+    if action in ("set", "rm") and not args.name:
+        print(f"  usage: jobscope secrets {action} <ENV_VAR_NAME>", file=sys.stderr)
+        return 2
+
+    if action == "set":
+        import getpass
+        val = getpass.getpass(f"  value for {args.name} (input hidden): ")
+        if not val:
+            print("  aborted (empty value)", file=sys.stderr)
+            return 1
+        keyring.set_password(KEYRING_SERVICE, args.name, val)
+        print(f"  stored {args.name} in the OS keychain")
+        return 0
+
+    if action == "rm":
+        try:
+            keyring.delete_password(KEYRING_SERVICE, args.name)
+            print(f"  removed {args.name} from the keychain")
+        except Exception:  # noqa: BLE001 - not present / backend quirk
+            print(f"  {args.name} was not in the keychain")
+        return 0
+
+    if action == "import-env":
+        moved = 0
+        for name in _secret_names(cfg):
+            val = os.environ.get(name)
+            if val:
+                keyring.set_password(KEYRING_SERVICE, name, val)
+                moved += 1
+                print(f"  imported {name} -> keychain")
+        print(f"  imported {moved} secret(s); you can now delete those lines from .env")
+        return 0
+
+    # list (status only -- never values)
+    print(f"  secrets [{KEYRING_SERVICE} keychain | environment]:")
+    for name in _secret_names(cfg):
+        try:
+            in_ring = keyring.get_password(KEYRING_SERVICE, name) is not None
+        except Exception:  # noqa: BLE001
+            in_ring = False
+        where = "keychain" if in_ring else ("env/.env" if os.environ.get(name) else "MISSING")
+        print(f"    {name:<28} {where}")
+    return 0
+
+
+def cmd_purge(args, cfg):
+    """Delete sensitive local data (stored email PII and/or tracked applications)."""
+    if not (args.mail or args.applications or args.older_than is not None):
+        print("  nothing selected. Use --mail, --applications, and/or --older-than N",
+              file=sys.stderr)
+        return 2
+    with _store(args, cfg) as store:
+        if args.mail or args.older_than is not None:
+            n = store.purge_mail_events(older_than_days=args.older_than)
+            scope = f"older than {args.older_than}d" if args.older_than is not None else "all"
+            print(f"  purged {n} stored email event(s) ({scope})")
+        if args.applications:
+            m = store.purge_applications()
+            print(f"  purged {m} tracked application(s)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="jobscope", description="Resume-driven job scout & application prep.")
     p.add_argument("--version", action="version", version=f"jobscope {__version__}")
@@ -239,6 +333,22 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--format", choices=["json", "csv"], default="json")
     sp.add_argument("--out", default=None)
     sp.set_defaults(func=cmd_export)
+
+    sp = sub.add_parser("purge", help="Delete stored email PII / applications from the local DB")
+    sp.add_argument("--mail", action="store_true",
+                    help="Delete stored email events (recruiter PII + body snippets)")
+    sp.add_argument("--applications", action="store_true",
+                    help="Delete tracked applications (empties the funnel)")
+    sp.add_argument("--older-than", type=int, default=None, metavar="DAYS",
+                    help="Only delete stored email events older than DAYS")
+    sp.set_defaults(func=cmd_purge)
+
+    sp = sub.add_parser("secrets", help="Store API keys / app passwords in the OS keychain (keyring)")
+    sp.add_argument("action", nargs="?", choices=["set", "list", "rm", "import-env"],
+                    default="list", help="set|list|rm|import-env (default: list)")
+    sp.add_argument("name", nargs="?", default=None,
+                    help="Env-var name (e.g. JOBSCOPE_GMAIL_APP_PW) for set/rm")
+    sp.set_defaults(func=cmd_secrets)
 
     sub.add_parser("selftest", help="Offline self-tests (no network)").set_defaults(func=cmd_selftest)
     return p

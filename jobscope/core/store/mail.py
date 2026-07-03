@@ -1,6 +1,7 @@
 """Inbound job-application email events (classified, idempotent)."""
 from __future__ import annotations
 
+import time
 from typing import Any, Optional
 
 from .base import now_iso
@@ -37,3 +38,17 @@ class MailMixin:
         else:
             rows = self.conn.execute("SELECT * FROM mail_events ORDER BY date, first_seen")
         return [dict(r) for r in rows]
+
+    def purge_mail_events(self, older_than_days: Optional[int] = None) -> int:
+        """Delete stored email events -- the recruiter PII and body snippets. With
+        ``older_than_days`` set, only events older than that cutoff are removed
+        (retention); otherwise all of them. Returns the number of rows deleted."""
+        if older_than_days is not None:
+            cutoff = time.strftime(
+                "%Y-%m-%d", time.gmtime(time.time() - older_than_days * 86400))
+            cur = self.conn.execute(
+                "DELETE FROM mail_events WHERE substr(date, 1, 10) < ?", (cutoff,))
+        else:
+            cur = self.conn.execute("DELETE FROM mail_events")
+        self.conn.commit()
+        return cur.rowcount
