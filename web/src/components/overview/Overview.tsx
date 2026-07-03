@@ -17,7 +17,7 @@ function Card({ title, subtitle, children }: { title: string; subtitle?: string;
   )
 }
 
-export function Overview({ rows, stats }: { rows: JobRow[]; stats: OverviewStats }) {
+export function Overview({ rows, stats, onOpen }: { rows: JobRow[]; stats: OverviewStats; onOpen: (id: string) => void }) {
   const { segs, total } = tierSegments(rows)
   const companies = topCompanies(rows, 8)
   const gaps = (stats.gaps ?? []).map(([label, value]) => ({ label, value }))
@@ -62,7 +62,7 @@ export function Overview({ rows, stats }: { rows: JobRow[]; stats: OverviewStats
       </div>
 
       <Card title="Top matches" subtitle="click a role to open">
-        <TopMatches rows={matches} />
+        <TopMatches rows={matches} onOpen={onOpen} />
       </Card>
     </div>
   )

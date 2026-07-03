@@ -4,9 +4,8 @@ import { TIER_COLOR } from '@/lib/schema'
 
 type Key = 'score' | 'title' | 'company' | 'tier'
 
-/** Sortable, sticky-header table of the top matches. (Rows open Apply for now;
- *  Phase 5 swaps this for the detail drawer via ?job=.) */
-export function TopMatches({ rows }: { rows: JobRow[] }) {
+/** Sortable, sticky-header table of the top matches; rows open the detail drawer. */
+export function TopMatches({ rows, onOpen }: { rows: JobRow[]; onOpen: (id: string) => void }) {
   const [key, setKey] = useState<Key>('score')
   const [dir, setDir] = useState<'asc' | 'desc'>('desc')
 
@@ -50,15 +49,15 @@ export function TopMatches({ rows }: { rows: JobRow[] }) {
         </thead>
         <tbody>
           {sorted.map((r) => (
-            <tr key={r.id} className="border-b border-border/60 transition hover:bg-card-h">
+            <tr
+              key={r.id}
+              onClick={() => onOpen(r.id)}
+              className="cursor-pointer border-b border-border/60 transition hover:bg-card-h"
+            >
               <td className="px-3 py-2 font-semibold tnum" style={{ color: TIER_COLOR[r.tier] }}>
                 {Math.round(r.score)}
               </td>
-              <td className="px-3 py-2">
-                <a href={r.url} target="_blank" rel="noreferrer" className="transition hover:text-accent">
-                  {r.title}
-                </a>
-              </td>
+              <td className="px-3 py-2 text-fg">{r.title}</td>
               <td className="truncate px-3 py-2 text-dim">{r.company}</td>
               <td className="px-3 py-2">
                 <span style={{ color: TIER_COLOR[r.tier] }}>{r.tier}</span>

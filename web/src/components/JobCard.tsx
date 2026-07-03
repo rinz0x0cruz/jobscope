@@ -13,7 +13,7 @@ function Pill({ children }: { children: ReactNode }) {
   )
 }
 
-export function JobCard({ row }: { row: JobRow }) {
+export function JobCard({ row, onOpen }: { row: JobRow; onOpen: (id: string) => void }) {
   const reduce = useReducedMotion()
   const tierColor = TIER_COLOR[row.tier]
   const comp = compLabel(row)
@@ -26,7 +26,17 @@ export function JobCard({ row }: { row: JobRow }) {
     <motion.article
       whileHover={reduce ? undefined : { y: -2 }}
       transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-      className="rounded-[14px] border border-border bg-card p-4 transition-colors hover:border-border-h hover:bg-card-h"
+      onClick={() => onOpen(row.id)}
+      onKeyDown={(ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault()
+          onOpen(row.id)
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${row.title} at ${row.company}`}
+      className="cursor-pointer rounded-[14px] border border-border bg-card p-4 outline-none transition-colors hover:border-border-h hover:bg-card-h focus-visible:border-accent"
     >
       <div className="flex items-start gap-3">
         <div className="flex w-11 shrink-0 flex-col items-center pt-0.5">
@@ -81,6 +91,7 @@ export function JobCard({ row }: { row: JobRow }) {
           href={row.url}
           target="_blank"
           rel="noreferrer"
+          onClick={(ev) => ev.stopPropagation()}
           className="inline-flex shrink-0 items-center gap-1 self-center rounded-[10px] border border-border bg-bg2 px-3 py-1.5 text-[13px] font-medium text-fg transition hover:border-accent hover:text-accent"
         >
           Apply <ExternalLink size={13} />

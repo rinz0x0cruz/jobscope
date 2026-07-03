@@ -63,3 +63,19 @@ html.light {
 @utility tnum {
   font-variant-numeric: tabular-nums;
 }
+
+/* Detail drawer (Radix Dialog) — CSS keyframes so open/close animate reliably
+   everywhere (Radix waits for these before unmounting on close). */
+@keyframes jsOverlayIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes jsOverlayOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes jsDrawerIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes jsDrawerOut { from { transform: translateX(0); } to { transform: translateX(100%); } }
+
+.js-overlay[data-state="open"] { animation: jsOverlayIn 0.2s ease-out; }
+.js-overlay[data-state="closed"] { animation: jsOverlayOut 0.18s ease-in forwards; }
+.js-drawer[data-state="open"] { animation: jsDrawerIn 0.26s cubic-bezier(0.32, 0.72, 0, 1); }
+.js-drawer[data-state="closed"] { animation: jsDrawerOut 0.2s ease-in forwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .js-overlay[data-state], .js-drawer[data-state] { animation-duration: 0.01ms; }
+}

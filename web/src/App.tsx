@@ -23,6 +23,8 @@ import { ActiveChips } from '@/components/filters/ActiveChips'
 import { SearchPalette } from '@/components/filters/SearchPalette'
 import { JobList } from '@/components/JobList'
 import { Overview } from '@/components/overview/Overview'
+import { JobDrawer } from '@/components/JobDrawer'
+import { Toaster } from 'sonner'
 
 export default function App() {
   const rows = dashboard.rows
@@ -62,6 +64,9 @@ export default function App() {
   )
   const chips = useMemo(() => activeChips(state), [state])
   const nActive = countActive(state)
+  const openJob = useMemo(() => rows.find((r) => r.id === state.job) ?? null, [rows, state.job])
+  const openDrawer = (id: string) => set({ job: id })
+  const closeDrawer = () => set({ job: undefined })
 
   const toggleFacet = (key: FacetKey, value: string) =>
     set({ [key]: toggleValue(state[key], value) } as Partial<typeof state>)
@@ -90,7 +95,7 @@ export default function App() {
         <Kpis rows={rows} />
         <Tabs value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
         {state.tab === 'overview' ? (
-          <Overview rows={rows} stats={dashboard.overview} />
+          <Overview rows={rows} stats={dashboard.overview} onOpen={openDrawer} />
         ) : (
           <>
             <FacetBar
@@ -105,11 +110,22 @@ export default function App() {
               onClear={clearAll}
             />
             <ActiveChips chips={chips} onRemove={removeChip} />
-            <JobList items={items} collapsed={collapsed} onToggleCollapse={toggleCollapse} />
+            <JobList items={items} collapsed={collapsed} onToggleCollapse={toggleCollapse} onOpen={openDrawer} />
           </>
         )}
       </main>
       <SearchPalette rows={rows} />
+      <JobDrawer job={openJob} allRows={rows} onOpen={openDrawer} onClose={closeDrawer} />
+      <Toaster
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            background: 'var(--card)',
+            color: 'var(--fg)',
+            border: '1px solid var(--border)',
+          },
+        }}
+      />
     </div>
   )
 }

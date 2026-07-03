@@ -10,6 +10,10 @@ export interface StockSummary {
   change_pct?: number
   market_cap?: string
   public?: boolean
+  currency?: string
+  week52_low?: number
+  week52_high?: number
+  week52_pos_pct?: number
 }
 
 export interface CompSummary {

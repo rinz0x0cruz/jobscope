@@ -207,7 +207,9 @@ def _enrich_summary(enr: dict) -> dict[str, Any]:
     stock = enr.get("stock") or {}
     if stock:
         out["stock"] = {k: stock.get(k) for k in ("ticker", "price", "change_pct",
-                                                  "market_cap", "public") if k in stock}
+                                                  "market_cap", "public", "currency",
+                                                  "week52_low", "week52_high", "week52_pos_pct")
+                        if k in stock}
     comp = enr.get("comp") or {}
     if comp:
         out["comp"] = comp

@@ -11,10 +11,12 @@ export function JobList({
   items,
   collapsed,
   onToggleCollapse,
+  onOpen,
 }: {
   items: DisplayItem[]
   collapsed: ReadonlySet<string>
   onToggleCollapse: (company: string) => void
+  onOpen: (id: string) => void
 }) {
   const parentRef = useRef<HTMLDivElement>(null)
 
@@ -73,7 +75,7 @@ export function JobList({
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.18 }}
                 >
-                  <JobCard row={item.row} />
+                  <JobCard row={item.row} onOpen={onOpen} />
                 </motion.div>
               )}
             </div>
