@@ -90,7 +90,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # package installed (github.com/rinz0x0cruz/quorum).
     "quorum": {
         "enabled": False,      # true + ai.enabled + key -> deliberate instead of single-shot
-        "strategy": "refine",  # refine | debate | council | moa | ensemble
+        "strategy": "refine",  # default: refine | debate | council | moa | ensemble
+        # Per-task overrides (only used when quorum.enabled). Empty -> use `strategy`.
+        "strategy_generative": "council",  # summary / cover letter / "why here" (higher quality)
+        "strategy_classify": "ensemble",   # seniority / email labels (self-consistency vote)
     },
     "email": {
         "enabled": False,

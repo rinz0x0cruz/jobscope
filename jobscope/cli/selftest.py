@@ -51,6 +51,10 @@ def run() -> int:
          abs(sum(DEFAULT_CONFIG["match"]["weights"].values()) - 1.0) < 1e-9)
     cfg = load_config(None)
     c.ok("load_config returns defaults", cfg["ai"]["provider"] == "groq")
+    from ..core import ai as _ai
+    c.ok("quorum strategy_generative default", _ai.strategy_for(cfg, "generative") == "council")
+    c.ok("quorum strategy_classify default", _ai.strategy_for(cfg, "classify") == "ensemble")
+    c.ok("quorum strategy_for empty -> None", _ai.strategy_for({"quorum": {}}, "generative") is None)
 
     # --- store ------------------------------------------------------------
     from ..core.model import Application, Resume

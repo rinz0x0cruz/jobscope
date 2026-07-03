@@ -244,7 +244,8 @@ def _ai_refine(cfg: dict, store, subject: str, snippet: str) -> Optional[str]:
     system = ("You label job-application emails. Reply with exactly one word from: "
               f"{allowed}. No punctuation.")
     user = f"Subject: {subject}\n\n{snippet[:1200]}"
-    out = ai.chat(cfg, store, system, user, cache=True)
+    out = ai.chat(cfg, store, system, user, cache=True,
+                  strategy=ai.strategy_for(cfg, "classify"))
     if not out:
         return None
     word = out.strip().split()[0].lower().strip(".,!") if out.strip() else ""
