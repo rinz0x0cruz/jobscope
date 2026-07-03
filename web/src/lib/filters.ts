@@ -9,7 +9,7 @@ export function isClosed(r: JobRow): boolean {
 export function tabPool(rows: JobRow[], tab: TabValue, hideClosed: boolean): JobRow[] {
   return rows.filter((r) => {
     if (hideClosed && isClosed(r)) return false
-    if (tab !== 'all' && r.tier !== tab) return false
+    if (tab !== 'all' && tab !== 'overview' && r.tier !== tab) return false
     return true
   })
 }

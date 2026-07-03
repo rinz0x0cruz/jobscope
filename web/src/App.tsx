@@ -22,6 +22,7 @@ import { FacetBar } from '@/components/filters/FacetBar'
 import { ActiveChips } from '@/components/filters/ActiveChips'
 import { SearchPalette } from '@/components/filters/SearchPalette'
 import { JobList } from '@/components/JobList'
+import { Overview } from '@/components/overview/Overview'
 
 export default function App() {
   const rows = dashboard.rows
@@ -30,7 +31,7 @@ export default function App() {
 
   const tabCounts = useMemo(() => {
     const base = tabPool(rows, 'all', state.hideClosed)
-    const c: Record<TabValue, number> = { all: base.length, Strong: 0, Good: 0, Stretch: 0, Skip: 0 }
+    const c: Record<TabValue, number> = { overview: base.length, all: base.length, Strong: 0, Good: 0, Stretch: 0, Skip: 0 }
     for (const r of base) c[r.tier] += 1
     return c
   }, [rows, state.hideClosed])
@@ -88,19 +89,25 @@ export default function App() {
       <main className="mx-auto flex max-w-5xl flex-col gap-4 px-6 py-6">
         <Kpis rows={rows} />
         <Tabs value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
-        <FacetBar
-          options={options}
-          selected={selected}
-          onToggle={toggleFacet}
-          group={state.group}
-          onGroup={(v) => set({ group: v })}
-          hideClosed={state.hideClosed}
-          onHideClosed={(v) => set({ hideClosed: v })}
-          activeCount={nActive}
-          onClear={clearAll}
-        />
-        <ActiveChips chips={chips} onRemove={removeChip} />
-        <JobList items={items} collapsed={collapsed} onToggleCollapse={toggleCollapse} />
+        {state.tab === 'overview' ? (
+          <Overview rows={rows} stats={dashboard.overview} />
+        ) : (
+          <>
+            <FacetBar
+              options={options}
+              selected={selected}
+              onToggle={toggleFacet}
+              group={state.group}
+              onGroup={(v) => set({ group: v })}
+              hideClosed={state.hideClosed}
+              onHideClosed={(v) => set({ hideClosed: v })}
+              activeCount={nActive}
+              onClear={clearAll}
+            />
+            <ActiveChips chips={chips} onRemove={removeChip} />
+            <JobList items={items} collapsed={collapsed} onToggleCollapse={toggleCollapse} />
+          </>
+        )}
       </main>
       <SearchPalette rows={rows} />
     </div>

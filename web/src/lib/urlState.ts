@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { JobRow } from './schema'
 
-export const TAB_VALUES = ['all', 'Strong', 'Good', 'Stretch', 'Skip'] as const
+export const TAB_VALUES = ['overview', 'all', 'Strong', 'Good', 'Stretch', 'Skip'] as const
 export type TabValue = (typeof TAB_VALUES)[number]
 
 // All view state lives in the URL (hash) search params -> shareable, back/forward,

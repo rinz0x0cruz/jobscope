@@ -3,6 +3,7 @@ import type { TabValue } from '@/lib/urlState'
 import { TAB_VALUES } from '@/lib/urlState'
 
 const LABELS: Record<TabValue, string> = {
+  overview: 'Overview',
   all: 'All',
   Strong: 'Strong',
   Good: 'Good',
@@ -42,7 +43,7 @@ export function Tabs({
             )}
             <span className="relative z-10">
               {LABELS[t]}
-              <span className="ml-1.5 text-mute tnum">{counts[t]}</span>
+              {t !== 'overview' && <span className="ml-1.5 text-mute tnum">{counts[t]}</span>}
             </span>
           </button>
         )
