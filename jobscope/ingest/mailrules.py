@@ -66,99 +66,103 @@ JOB_DOMAINS: dict[str, str] = {
     "otta.com": "otta",
 }
 
-# --- Signal keyword rules (checked in precedence order) ---------------------
-# Rejections and offers are checked first because those emails routinely contain
-# words like "interview" or "position" that would otherwise mis-fire a weaker
-# rule. Each entry is (signal, [compiled patterns]).
-_RULES: list[tuple[str, list[str]]] = [
+# --- Weighted signal keywords -----------------------------------------------
+# Each signal accumulates a weighted score from the phrases it matches (see
+# score_signals + classify_scored). Weights encode how strongly a phrase implies
+# the signal: 3 = decisive, 2 = moderate, 1 = weak / boilerplate-prone (e.g.
+# "next steps" and "invite you to a conversation" also appear in confirmations).
+# A phrase found in the SUBJECT counts double one found only in the body.
+_WEIGHTED_RULES: list[tuple[str, list[tuple[str, int]]]] = [
     ("rejection", [
-        r"unfortunately",
-        r"we regret",
-        r"regret to inform",
-        r"not (?:be )?(?:moving|proceeding|going) forward",
-        r"won'?t be (?:moving|proceeding) forward",
-        r"will not be (?:moving|proceeding|progressing)",
-        r"decided (?:to (?:move|proceed) (?:forward|ahead) )?with other candidates",
-        r"move forward with other",
-        r"pursue other candidates",
-        r"other candidates whose",
-        r"no longer (?:being )?(?:under )?consider",
-        r"not (?:been )?(?:selected|shortlisted|successful)",
-        r"not (?:to )?(?:be )?(?:selected|progress)",
-        r"position has been filled",
-        r"role has been filled",
-        r"filled the (?:position|role|vacancy)",
-        r"after (?:careful|much) (?:consideration|thought)",
-        r"not (?:a|the right) (?:match|fit) (?:at this time|for this)",
-        r"decided not to (?:move|proceed|continue)",
-        r"wish you (?:the best|success|luck)",
+        (r"unfortunately", 2),
+        (r"we regret|regret to inform", 3),
+        (r"not (?:be )?(?:moving|proceeding|going) forward", 3),
+        (r"won'?t be (?:moving|proceeding) forward", 3),
+        (r"will not be (?:moving|proceeding|progressing)", 3),
+        (r"decided (?:to (?:move|proceed) (?:forward|ahead) )?with other candidates", 3),
+        (r"move forward with other|pursue other candidates|other (?:candidates whose|applicants)", 3),
+        (r"no longer (?:being )?(?:under )?consider", 3),
+        (r"not (?:been )?(?:selected|shortlisted|successful)", 3),
+        (r"not (?:to )?(?:be )?(?:selected|progress)", 2),
+        (r"(?:position|role) has been filled|filled the (?:position|role|vacancy)", 3),
+        (r"after (?:careful|much) (?:consideration|thought)", 2),
+        (r"not (?:a|the right) (?:match|fit) (?:at this time|for this)", 3),
+        (r"decided not to (?:move|proceed|continue)", 3),
+        (r"wish you (?:the best|success|luck|well)|future (?:endeavou?rs|opportunities)", 2),
+        (r"too many (?:qualified )?(?:candidates|applicants)|more closely (?:aligned|matched)", 2),
     ]),
     ("offer", [
-        r"pleased to (?:offer|extend)",
-        r"(?:excited|thrilled|happy|delighted) to (?:offer|extend)",
-        r"offer of employment",
-        r"(?:job|employment|formal|written|verbal) offer",
-        r"offer letter",
-        r"extend(?:ing)? (?:you )?an offer",
-        r"we would like to offer you",
-        r"congratulations[!,. ].{0,60}offer",
+        (r"pleased to (?:offer|extend)", 3),
+        (r"(?:excited|thrilled|happy|delighted) to (?:offer|extend)", 3),
+        (r"offer of employment", 3),
+        (r"(?:job|employment|formal|written|verbal) offer", 3),
+        (r"offer letter", 3),
+        (r"extend(?:ing)? (?:you )?an offer", 3),
+        (r"we would like to offer you", 3),
+        (r"congratulations[!,. ].{0,60}offer", 3),
+        (r"welcome (?:aboard|to the team)", 2),
     ]),
     ("assessment", [
-        r"\bassessment\b",
-        r"coding (?:challenge|test|exercise|assessment)",
-        r"take[- ]home (?:assignment|challenge|test|exercise)",
-        r"online (?:assessment|test|coding)",
-        r"technical (?:screen(?:ing)?|challenge|exercise|assessment)",
-        r"\bOA\b",
-        r"hackerrank|codility|codesignal|hackerearth|karat|coderpad|codingame",
-        r"skills? (?:test|assessment)",
-        r"complete (?:the|a|your) (?:assessment|challenge|test)",
+        (r"\bassessment\b", 3),
+        (r"coding (?:challenge|test|exercise|assessment)", 3),
+        (r"take[- ]home (?:assignment|challenge|test|exercise)", 3),
+        (r"online (?:assessment|test|coding)", 3),
+        (r"technical (?:screen(?:ing)?|challenge|exercise|assessment)", 2),
+        (r"\bOA\b", 2),
+        (r"hackerrank|codility|codesignal|hackerearth|karat|coderpad|codingame", 3),
+        (r"skills? (?:test|assessment)", 2),
+        (r"complete (?:the|a|your) (?:assessment|challenge|test)", 3),
     ]),
     ("interview", [
-        r"\binterview\b",
-        r"schedule (?:a |an |your )?(?:call|time|chat|conversation|meeting|screen)",
-        r"(?:phone|video|recruiter|hiring manager|initial) screen",
-        r"(?:your|share your|let us know your) availability",
-        r"next steps?.{0,40}(?:schedul|interview|call|conversation|availab|meet|chat)",
-        r"like to (?:speak|chat|meet|connect|talk|discuss)",
-        r"set up (?:a |some )?(?:call|time|chat|meeting)",
-        r"book (?:a )?time",
-        r"calendly\.com|savvycal|cal\.com",
-        r"invit(?:e|ing) you (?:to|for) (?:an? )?(?:interview|call|conversation|chat|screen(?:ing)?|meeting)",
-        r"move(?:d)? (?:you )?(?:to|forward to|on to) the (?:next|interview)",
+        (r"\binterview\b", 3),
+        (r"schedule (?:a |an |your )?(?:call|time|chat|conversation|meeting|screen)", 3),
+        (r"(?:phone|video|recruiter|hiring manager|initial) screen", 3),
+        (r"(?:your|share your|let us know your) availability", 2),
+        (r"next steps?.{0,40}(?:schedul|interview|call|conversation|availab|meet|chat)", 1),
+        (r"like to (?:speak|chat|meet|connect|talk|discuss)", 2),
+        (r"set up (?:a |some )?(?:call|time|chat|meeting)", 2),
+        (r"book (?:a )?time", 2),
+        (r"calendly\.com|savvycal|cal\.com", 3),
+        (r"invit(?:e|ing) you (?:to|for) (?:an? )?(?:interview|call|conversation|chat|screen(?:ing)?|meeting)", 2),
+        (r"move(?:d)? (?:you )?(?:to|forward to|on to) the (?:next|interview)", 2),
+        (r"\b(?:on\s+)?(?:mon|tues|wednes|thurs|fri)day\b.{0,30}\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", 2),
+        (r"\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", 1),
     ]),
     ("confirmation", [
-        r"thank(?:s| you) for (?:applying|your application|your interest)",
-        r"application (?:has been |was |is )?(?:received|submitted|complete)",
-        r"(?:we|we've|we have) received your application",
-        r"successfully (?:applied|submitted)",
-        r"your application (?:to|for|has been received)",
-        r"we appreciate your interest",
-        r"application (?:confirmation|received)",
-        r"has been received and",
-        r"we('| ha)?ve got your application",
+        (r"thank(?:s| you) for (?:applying|your application|your interest)", 2),
+        (r"application (?:has been |was |is )?(?:received|submitted|complete)", 2),
+        (r"(?:we|we've|we have) received your application", 2),
+        (r"successfully (?:applied|submitted)", 2),
+        (r"your application (?:to|for|has been received)", 2),
+        (r"we appreciate your interest", 1),
+        (r"application (?:confirmation|received)", 2),
+        (r"has been received and", 1),
+        (r"we('| ha)?ve got your application", 2),
     ]),
     ("recruiter", [
-        r"came across your (?:profile|resume|r\u00e9sum\u00e9|background|linkedin)",
-        r"your (?:profile|background|experience) (?:stood out|caught|is a)",
-        r"reaching out (?:because|regarding|about|to)",
-        r"i'?m (?:a |an )?(?:recruiter|talent|technical sourcer|sourcer)",
-        r"(?:exciting|great|new) (?:role|opportunity|opening)",
-        r"opportunity (?:at|with|for)",
-        r"(?:sourced|found) your (?:profile|resume)",
-        r"would you be (?:open|interested)",
+        (r"came across your (?:profile|resume|r\u00e9sum\u00e9|background|linkedin)", 2),
+        (r"your (?:profile|background|experience) (?:stood out|caught|is a)", 2),
+        (r"reaching out (?:because|regarding|about|to)", 1),
+        (r"i'?m (?:a |an )?(?:recruiter|talent|technical sourcer|sourcer)", 2),
+        (r"(?:exciting|great|new) (?:role|opportunity|opening)", 1),
+        (r"opportunity (?:at|with|for)", 1),
+        (r"(?:sourced|found) your (?:profile|resume)", 2),
+        (r"would you be (?:open|interested)", 1),
     ]),
 ]
 
-_COMPILED: list[tuple[str, list[re.Pattern[str]]]] = [
-    (sig, [re.compile(p, re.I) for p in pats]) for sig, pats in _RULES
+_WEIGHTED_COMPILED: list[tuple[str, list[tuple[re.Pattern[str], int]]]] = [
+    (sig, [(re.compile(p, re.I), w) for p, w in pats]) for sig, pats in _WEIGHTED_RULES
 ]
-_PATTERNS: dict[str, list[re.Pattern[str]]] = dict(_COMPILED)
 
-
-def _matches(signal: str, text: str) -> bool:
-    """True if any compiled pattern for ``signal`` matches ``text``."""
-    return any(p.search(text) for p in _PATTERNS.get(signal, []))
+# Scoring knobs for the weighted classifier (see score_signals/classify_scored).
+_PRECEDENCE = ["rejection", "offer", "assessment", "interview", "confirmation", "recruiter"]
+_SUBJECT_MULT = 2       # a keyword in the subject counts double a body keyword
+_BODY_MULT = 1
+_DECISIVE = 3           # a terminal rejection/offer score at/above this wins outright
+_SUBJECT_CONFIRM = 4    # a confirmation keyword in the subject (2 x _SUBJECT_MULT)
+_SCORE_FLOOR = 2        # minimum score to count as a real verdict (else "other")
+_TIE_MARGIN = 2         # top must beat the runner-up by this margin to be confident
 
 
 # Signals that on their own mark an email as job-related even from an unknown
@@ -261,27 +265,62 @@ def company_from_domain(from_domain: str) -> str:
     return _title(name)
 
 
-def classify_signal(from_addr: str, subject: str, body: str) -> str:
-    """Classify an email into one of model.SIGNALS using ordered keyword rules.
+def score_signals(subject: str, body: str) -> dict[str, int]:
+    """Weighted keyword score per signal. A keyword found in the SUBJECT counts
+    double one found only in the body (the subject is the stronger cue)."""
+    subject = subject or ""
+    body = body or ""
+    scores = {sig: 0 for sig in _PRECEDENCE}
+    for sig, pats in _WEIGHTED_COMPILED:
+        total = 0
+        for pat, weight in pats:
+            if pat.search(subject):
+                total += weight * _SUBJECT_MULT
+            elif body and pat.search(body):
+                total += weight * _BODY_MULT
+        scores[sig] = total
+    return scores
 
-    Precedence: rejection/offer are decisive from anywhere (their phrasing is
-    rarely boilerplate and they often quote earlier "interview"/"application"
-    words). A clear confirmation *subject* then beats interview/recruiter body
-    boilerplate -- ATS "application received" mail pads the body with "next
-    steps" text. Otherwise the ordered rules run over the full subject+body.
+
+def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool, list[str]]:
+    """Deterministic weighted-keyword classification with an ambiguity flag.
+
+    Returns ``(signal, scores, ambiguous, tied)``. ``ambiguous`` is True only when
+    two or more signals score within ``_TIE_MARGIN`` of the top (all above the
+    floor) -- the caller may then defer to the optional quorum layer. The verdict
+    is otherwise fully deterministic:
+
+    * a decisive terminal signal (rejection/offer) wins from anywhere;
+    * else a clear application-received SUBJECT is a confirmation even when the
+      body is padded with interview/recruiter boilerplate ("next steps", "invite
+      you to a conversation") -- ATS confirmations routinely carry that text;
+    * else the highest weighted score wins, exact ties broken by _PRECEDENCE.
     """
     subject = subject or ""
-    text = f"{subject}\n{body or ''}"
-    for signal in ("rejection", "offer"):
-        if _matches(signal, text):
-            return signal
-    if _matches("confirmation", subject) and not (
-            _matches("interview", subject) or _matches("assessment", subject)):
-        return "confirmation"
-    for signal in ("assessment", "interview", "confirmation", "recruiter"):
-        if _matches(signal, text):
-            return signal
-    return "other"
+    body = body or ""
+    scores = score_signals(subject, body)
+    # 1. Terminal signals are decisive from anywhere (rarely boilerplate).
+    for sig in ("rejection", "offer"):
+        if scores[sig] >= _DECISIVE:
+            return sig, scores, False, [sig]
+    # 2. Subject authority: an application-received SUBJECT is a confirmation.
+    subj = score_signals(subject, "")
+    if subj["confirmation"] >= _SUBJECT_CONFIRM and not subj["interview"] and not subj["assessment"]:
+        return "confirmation", scores, False, ["confirmation"]
+    # 3. Highest weighted score wins; >=2 within the margin is an ambiguous tie.
+    ranked = sorted(scores.items(), key=lambda kv: (-kv[1], _PRECEDENCE.index(kv[0])))
+    top, top_score = ranked[0]
+    if top_score < _SCORE_FLOOR:
+        return "other", scores, False, []
+    tied = [s for s, sc in ranked if sc >= _SCORE_FLOOR and (top_score - sc) < _TIE_MARGIN]
+    ambiguous = len(tied) >= 2
+    return top, scores, ambiguous, tied
+
+
+def classify_signal(from_addr: str, subject: str, body: str) -> str:
+    """Deterministic signal for an email -- the weighted-keyword verdict, ignoring
+    the ambiguity flag. ``from_addr`` is accepted for call-site compatibility."""
+    return classify_scored(subject, body)[0]
 
 
 def is_job_related(from_domain: str, signal: str) -> bool:

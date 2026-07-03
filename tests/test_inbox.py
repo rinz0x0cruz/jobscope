@@ -113,6 +113,42 @@ def test_classify_other():
     assert mailrules.classify_signal("news@example.com", "Weekly newsletter", "Deals!") == "other"
 
 
+# --- mailrules: weighted scoring + ambiguity gate ---------------------------
+def test_score_signals_weights_subject_double():
+    # A keyword in the subject counts double the same keyword in the body.
+    assert mailrules.score_signals("Interview invitation", "")["interview"] >= 6
+    assert mailrules.score_signals("", "we would like to schedule an interview")["interview"] >= 3
+
+
+def test_classify_scored_clear_winner_not_ambiguous():
+    top, _scores, ambiguous, _tied = mailrules.classify_scored(
+        "Thank you for applying to Acme", "We have received your application.")
+    assert top == "confirmation"
+    assert ambiguous is False
+
+
+def test_classify_scored_flags_tie_ambiguous():
+    # Balanced assessment + interview evidence, no clear lead -> ambiguous tie.
+    top, _scores, ambiguous, tied = mailrules.classify_scored(
+        "Next round", "Please complete the coding challenge, then we will set up a chat.")
+    assert ambiguous is True
+    assert set(tied) >= {"assessment", "interview"}
+
+
+def test_classify_scored_other_on_no_keywords():
+    top, _scores, ambiguous, _tied = mailrules.classify_scored("Weekly newsletter", "Deals inside!")
+    assert top == "other"
+    assert ambiguous is False
+
+
+def test_classify_scored_rejection_decisive_not_ambiguous():
+    # A strong rejection is decisive even when the subject echoes "your application".
+    top, _scores, ambiguous, _tied = mailrules.classify_scored(
+        "Your application to Acme", "Unfortunately we will not be moving forward at this time.")
+    assert top == "rejection"
+    assert ambiguous is False
+
+
 # --- mailrules: relevance gating --------------------------------------------
 def test_is_job_related_by_domain():
     assert mailrules.is_job_related("greenhouse.io", "other") is True

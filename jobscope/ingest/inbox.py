@@ -167,15 +167,16 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
         return None
 
     snippet = _fetch_snippet(M, uid)
-    sig = mailrules.classify_signal(from_addr, subject, snippet)
+    sig, _scores, ambiguous, tied = mailrules.classify_scored(subject, snippet)
     if not mailrules.is_job_related(from_domain, sig):
         return None
 
     company, role = mailrules.parse_company_role(from_name, from_domain, subject, snippet)
 
-    # Optional AI refinement for the residual "other" bucket (gated, None-safe).
-    if sig == "other":
-        sig = _ai_refine(cfg, store, subject, snippet) or "other"
+    # Deterministic weights decide the vast majority; only a genuine tie (>=2
+    # close verdicts) defers to the optional quorum layer (gated, None-safe).
+    if ambiguous:
+        sig = _quorum_pick(cfg, store, subject, snippet, tied) or sig
 
     job_id = _link_job(company, role, job_index)
     ev = MailEvent(
@@ -231,25 +232,28 @@ def _apply_to_application(store, ev: MailEvent) -> None:
     ))
 
 
-def _ai_refine(cfg: dict, store, subject: str, snippet: str) -> Optional[str]:
-    """Ask the optional AI layer to bucket an ambiguous email. Returns a valid
-    signal or None (when AI is disabled, unreachable, or unsure)."""
+def _quorum_pick(cfg: dict, store, subject: str, snippet: str,
+                 candidates: list[str]) -> Optional[str]:
+    """Break a keyword-scoring tie: ask the optional AI/quorum layer to choose
+    among the tied candidate labels. Returns a candidate or None (AI off/unsure).
+    Constrained to the tied labels so quorum only arbitrates, never invents."""
     try:
         from jobscope.core import ai
     except ImportError:
         return None
-    if not ai.available(cfg):
+    if not ai.available(cfg) or len(candidates) < 2:
         return None
-    allowed = "confirmation, recruiter, assessment, interview, offer, rejection, other"
-    system = ("You label job-application emails. Reply with exactly one word from: "
-              f"{allowed}. No punctuation.")
+    allowed = ", ".join(candidates)
+    system = ("You label job-application emails. The keyword classifier is torn "
+              f"between exactly these labels: {allowed}. Reply with one of them, "
+              "lowercase, no punctuation.")
     user = f"Subject: {subject}\n\n{snippet[:1200]}"
     out = ai.chat(cfg, store, system, user, cache=True,
                   strategy=ai.strategy_for(cfg, "classify"))
     if not out:
         return None
     word = out.strip().split()[0].lower().strip(".,!") if out.strip() else ""
-    return word if word in mailrules.SIGNALS else None
+    return word if word in candidates else None
 
 
 # --- IMAP fetch + MIME helpers ---------------------------------------------
