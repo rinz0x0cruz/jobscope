@@ -319,14 +319,11 @@ Fed by `track` + `inbox` — your application pipeline, not the job search.
   (default `data/public-dashboard.html`, gitignored). `render._redact_public` strips per-job `contacts`,
   `rationale`, and `resume_base`, plus the Overview `funnel` and `targets`; it keeps company, title, location,
   score, tier, salary, brief, enrichment, and links.
-- **Hosting:** the code repo is **private** (early history had a work-email author), and GitHub Free can't
-  serve Pages from a private repo, so the dashboard is published from a **separate public repo**
-  `rinz0x0cruz/jobscope-dashboard` (clean history) at <https://rinz0x0cruz.github.io/jobscope-dashboard/>.
+- **Hosting:** the code repo is **public**; its dashboard is served by GitHub Pages from a dedicated
+  **`gh-pages`** branch (kept separate from `main`) at <https://rinz0x0cruz.github.io/jobscope/>.
 - `scripts/publish.ps1` / `publish.sh` render the redacted copy and push it (as `index.html` + `.nojekyll`)
-  to that repo via a gitignored persistent clone (`.dashboard-repo/`), pinned to the `rinz0x0cruz` identity.
-  `scripts/register-publish-task.ps1` runs it as a daily Windows Scheduled Task.
-- **Gotcha:** the legacy Jekyll builder fails on the ~487 KB single-line dashboard even with `.nojekyll`, so
-  `jobscope-dashboard` uses **Actions-based Pages** (`.github/workflows/pages.yml`, `build_type=workflow`).
+  to the `gh-pages` branch via a gitignored persistent single-branch clone (`.dashboard-repo/`), pinned to
+  the `rinz0x0cruz` identity. `scripts/register-publish-task.ps1` runs it as a daily Windows Scheduled Task.
 - **Rules:** publishing originates locally (the SQLite DB is local/gitignored, so CI can't regenerate it);
   only ever publish the **redacted** copy — never `data/dashboard.html`.
 

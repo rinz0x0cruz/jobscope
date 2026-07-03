@@ -1,31 +1,31 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Render the redacted jobscope dashboard and publish it to the public
-    jobscope-dashboard repo so it is viewable from a phone via GitHub Pages.
+    Render the redacted jobscope dashboard and publish it to jobscope's own
+    gh-pages branch so it is viewable from a phone via GitHub Pages.
 
 .DESCRIPTION
     Runs `jobscope dashboard --public` to produce a redacted, self-contained HTML
-    (no referral contacts, application funnel, or search terms), then pushes it as
-    index.html to a separate PUBLIC repo (jobscope-dashboard) whose Pages site serves
-    it. The jobscope code repo can stay private; only the redacted snapshot is public,
-    in a repo with a clean history. Your database/packages never leave your machine.
+    (no referral contacts, application funnel, or search terms), then publishes it as
+    index.html to this repo's `gh-pages` branch, which GitHub Pages serves at
+    https://rinz0x0cruz.github.io/jobscope/. Only the redacted snapshot is published;
+    `main` is never touched and your database/config never leave your machine.
 
     Safe to run from a scheduled task. Commits use the local rinz0x0cruz identity.
 
 .PARAMETER Repo
-    HTTPS URL of the public dashboard repo to publish to.
+    HTTPS URL of the repo whose gh-pages branch hosts the dashboard.
 
 .PARAMETER Branch
-    Branch GitHub Pages serves from on that repo. Default "main".
+    Branch GitHub Pages serves from. Default "gh-pages".
 
 .EXAMPLE
     ./scripts/publish.ps1
 #>
 [CmdletBinding()]
 param(
-    [string]$Repo = "https://github.com/rinz0x0cruz/jobscope-dashboard.git",
-    [string]$Branch = "main",
+    [string]$Repo = "https://github.com/rinz0x0cruz/jobscope.git",
+    [string]$Branch = "gh-pages",
     [switch]$Force
 )
 
@@ -63,15 +63,16 @@ if (-not $Force) {
     if ($MarkerHost -and $MarkerHost -ne $env:COMPUTERNAME) { Write-Host "==> Marker names '$MarkerHost', not this machine '$env:COMPUTERNAME'. Skipping push. Pass -Force to override."; return }
 }
 
-# 2. Publish index.html to the separate public dashboard repo via a persistent
-#    (gitignored) clone. Only this machine pushes there, so a plain push is safe.
+# 2. Publish index.html to this repo's gh-pages branch via a persistent, single-branch
+#    (gitignored) clone. Only this machine pushes there, so a plain push is safe, and
+#    main is never touched.
 $DashDir = Join-Path $RepoRoot ".dashboard-repo"
 $Name  = "rinz0x0cruz"
 $Email = "rinz0x0cruz@users.noreply.github.com"
 
 if (-not (Test-Path (Join-Path $DashDir ".git"))) {
-    git clone --quiet $Repo $DashDir
-    if ($LASTEXITCODE -ne 0) { throw "clone of $Repo failed (is a credential cached?)" }
+    git clone --quiet --branch $Branch --single-branch $Repo $DashDir
+    if ($LASTEXITCODE -ne 0) { throw "clone of $Repo ($Branch) failed (is a credential cached?)" }
 }
 
 Copy-Item $PublicHtml (Join-Path $DashDir "index.html") -Force
@@ -79,9 +80,7 @@ New-Item -ItemType File -Path (Join-Path $DashDir ".nojekyll") -Force | Out-Null
 
 Push-Location $DashDir
 try {
-    # Ensure we're on $Branch (create it on the first publish to an empty repo).
-    git rev-parse --verify --quiet $Branch 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { git checkout -q $Branch } else { git checkout -q -B $Branch }
+    git checkout -q $Branch
 
     git add -A
     git diff --cached --quiet
@@ -91,9 +90,9 @@ try {
         $stamp = (Get-Date).ToUniversalTime().ToString("o")
         git -c user.name=$Name -c user.email=$Email commit -q -m "chore: publish dashboard $stamp"
         if ($LASTEXITCODE -ne 0) { throw "commit failed" }
-        git push -q -u origin $Branch
+        git push -q origin $Branch
         if ($LASTEXITCODE -ne 0) { throw "push failed (is a credential cached / remote reachable?)" }
-        Write-Host "==> Published to $Repo ($Branch)."
+        Write-Host "==> Published -> https://rinz0x0cruz.github.io/jobscope/"
     }
 }
 finally {

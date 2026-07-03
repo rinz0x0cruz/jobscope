@@ -185,16 +185,15 @@ python -m jobscope dashboard --public   # -> data/public-dashboard.html (no cont
 ```
 
 `scripts/publish.ps1` (Windows) / `scripts/publish.sh` (macOS/Linux) render that
-redacted copy and push it as `index.html` to a **separate public repo** whose Pages
-site serves it — so this repo can stay private. Your database never leaves your
+redacted copy and publish it as `index.html` to this repo's **`gh-pages` branch**,
+which GitHub Pages serves. `main` is never touched and your database never leaves your
 machine. One-time setup:
 
-1. Create the public dashboard repo (once): `gh repo create <user>/jobscope-dashboard --public`
-2. Run the publish script once by hand to push the first `index.html` and cache your
-   git credential.
-3. Enable Pages on that repo: **Settings → Pages → Deploy from a branch → `main` / root**.
-   The dashboard is then live at `https://<user>.github.io/jobscope-dashboard/`.
-4. Auto-refresh (Windows): `scripts/register-publish-task.ps1` registers a daily
+1. Run the publish script once by hand to push the first `index.html` to `gh-pages`
+   and cache your git credential.
+2. Enable Pages: **Settings → Pages → Deploy from a branch → `gh-pages` / root**.
+   The dashboard is then live at `https://<user>.github.io/jobscope/`.
+3. Auto-refresh (Windows): `scripts/register-publish-task.ps1` registers a daily
    Scheduled Task that re-renders and pushes while you're logged on.
 
 > GitHub Pages is **public**. Only the redacted copy is published, but treat the URL
