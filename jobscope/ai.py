@@ -25,15 +25,22 @@ def available(cfg: dict) -> bool:
 
 
 def chat(cfg: dict, store, system: str, user: str, *, cache: bool = True,
-         temperature: Optional[float] = None) -> Optional[str]:
-    """Return the assistant text, or None if AI is unavailable/failed."""
+         temperature: Optional[float] = None,
+         history: Optional[list] = None, context: Optional[list] = None) -> Optional[str]:
+    """Return the assistant text, or None if AI is unavailable/failed.
+
+    Optional ``history`` (prior {role, content} messages) and ``context``
+    (reference docs) are used only by the quorum backend; the single-model
+    fallback ignores them.
+    """
     if not available(cfg):
         return None
     # Optional multi-model deliberation backend (quorum). Falls through to the
     # single-model path below if quorum is absent, disabled, or returns nothing.
     try:
         from quorum.api import chat as _quorum_chat
-        out = _quorum_chat(cfg, store, system, user, temperature=temperature)
+        out = _quorum_chat(cfg, store, system, user, temperature=temperature,
+                           history=history, context=context)
         if out is not None:
             return out
     except ImportError:
