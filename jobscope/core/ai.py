@@ -24,14 +24,26 @@ def available(cfg: dict) -> bool:
     return bool(api_key(cfg))
 
 
+def strategy_for(cfg: dict, kind: str) -> Optional[str]:
+    """Resolve the per-task deliberation strategy for a class of AI calls.
+
+    Returns the configured ``quorum.strategy_<kind>`` (e.g. ``strategy_generative``
+    for summaries/cover letters, ``strategy_classify`` for label tasks), or ``None``
+    to let quorum use its default ``quorum.strategy``. Only affects the quorum
+    backend; the single-model fallback ignores it.
+    """
+    q = cfg.get("quorum", {}) or {}
+    return q.get(f"strategy_{kind}") or None
+
+
 def chat(cfg: dict, store, system: str, user: str, *, cache: bool = True,
-         temperature: Optional[float] = None,
+         temperature: Optional[float] = None, strategy: Optional[str] = None,
          history: Optional[list] = None, context: Optional[list] = None) -> Optional[str]:
     """Return the assistant text, or None if AI is unavailable/failed.
 
-    Optional ``history`` (prior {role, content} messages) and ``context``
-    (reference docs) are used only by the quorum backend; the single-model
-    fallback ignores them.
+    Optional ``strategy`` (a quorum strategy name like ``council``/``ensemble``),
+    ``history`` (prior {role, content} messages) and ``context`` (reference docs)
+    are used only by the quorum backend; the single-model fallback ignores them.
     """
     if not available(cfg):
         return None
@@ -39,8 +51,13 @@ def chat(cfg: dict, store, system: str, user: str, *, cache: bool = True,
     # single-model path below if quorum is absent, disabled, or returns nothing.
     try:
         from quorum.api import chat as _quorum_chat
-        out = _quorum_chat(cfg, store, system, user, temperature=temperature,
-                           history=history, context=context)
+        try:
+            out = _quorum_chat(cfg, store, system, user, temperature=temperature,
+                               strategy=strategy, history=history, context=context)
+        except TypeError:
+            # An older quorum without strategy= support: retry without it.
+            out = _quorum_chat(cfg, store, system, user, temperature=temperature,
+                               history=history, context=context)
         if out is not None:
             return out
     except ImportError:

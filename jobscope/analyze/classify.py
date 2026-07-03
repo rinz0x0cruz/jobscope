@@ -38,7 +38,8 @@ def classify_seniority(cfg: dict, store, job: Job) -> Optional[dict]:
     if not title and not desc:
         return None
     user = f"Title: {title}\n\nDescription:\n{desc or '(none)'}"
-    raw = ai.chat(cfg, store, _SYSTEM, user, temperature=0.0)
+    raw = ai.chat(cfg, store, _SYSTEM, user, temperature=0.0,
+                  strategy=ai.strategy_for(cfg, "classify"))
     if not raw:
         return None
     return _parse(raw)

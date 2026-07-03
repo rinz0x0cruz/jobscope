@@ -107,6 +107,9 @@ def _tailored_summary(cfg, store, resume: Resume, job, analysis: dict) -> str:
               f"Current summary: {resume.summary}\n\n"
               f"Target role: {job.title} at {job.company}.\n"
               f"Job description (excerpt): {job.description[:1500]}"),
+        strategy=ai.strategy_for(cfg, "generative"),
+        context=[{"title": f"{job.title} at {job.company} - full job description",
+                  "text": job.description or ""}],
     )
     return (out or deterministic).strip()
 
@@ -165,6 +168,10 @@ def _cover_letter(cfg, store, resume: Resume, job, analysis: dict, enr: dict) ->
               f"Role: {job.title} at {job.company}.\n"
               f"Company news hook (optional): {news[0]['title'] if news else 'none'}\n"
               f"JD excerpt: {job.description[:1500]}"),
+        strategy=ai.strategy_for(cfg, "generative"),
+        context=[{"title": f"{job.title} at {job.company} - full job description",
+                  "text": job.description or ""}]
+                + ([{"title": "Recent company news", "text": news[0]["title"]}] if news else []),
     )
     return (out or deterministic).strip() + "\n"
 

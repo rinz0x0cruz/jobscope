@@ -182,6 +182,7 @@ def _filled_answers(cfg: dict, store, resume, job) -> str:
         system=("Write 2-3 sentences answering 'Why do you want to work here?' Specific, "
                 "sincere, no clichés. Use only plausible facts."),
         user=f"Role: {job.title} at {job.company}. Candidate skills: {', '.join(resume.skills[:15])}.",
+        strategy=ai.strategy_for(cfg, "generative"),
     ) or (f"I'm drawn to {job.company}'s work and the {job.title} role fits my background in "
           f"{', '.join(resume.skills[:3])}. I'm excited to contribute and grow with the team.")
 

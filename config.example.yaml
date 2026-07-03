@@ -110,7 +110,11 @@ ai:
 # installed (pip install -e path\to\quorum). Set enabled: true to use it.
 quorum:
   enabled: false
-  strategy: refine                    # refine | debate | council | moa | ensemble
+  strategy: refine                    # default: refine | debate | council | moa | ensemble
+  # Per-task overrides (only used when enabled). Set to "" to inherit `strategy`,
+  # or e.g. "refine" to minimise cost on free-tier keys.
+  strategy_generative: council        # summary / cover letter / "why here"
+  strategy_classify: ensemble         # seniority + email labels (self-consistency)
   # members:                          # optional extra models; omit to self-refine ai.model
   #   - { name: a, provider: openrouter, model: google/gemma-4-31b-it:free }
 
