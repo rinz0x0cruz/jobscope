@@ -14,6 +14,9 @@ No authenticated-account automation; a human always reviews before submit.
 ```
 scan → store jobs → match (score + filters + resume routing) → enrich top N
      → tailor → prep package → (human review) → apply/deep-link → track → digest
+
+inbox (read-only Gmail IMAP) → classify emails → mail_events (timeline)
+     → advance the application funnel   ← automated inbound side of `track`
 ```
 
 `pipeline` runs `scan → match → enrich → prep top picks → digest` in one shot.
@@ -35,9 +38,10 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `tailor <job_id>` | Produces a non-destructive tailored resume + cover letter (deterministic ATS keyword pass; AI-upgraded if enabled). |
 | `prep <job_id>` | Builds a review-ready application package folder (tailored resume/cover PDF, filled-answers, index, contacts) and marks status `prepared`. |
 | `apply <job_id> [--assist]` | Opens the posting URL for you to submit. `--assist` = headed Playwright autofill of a **public** ATS form that **stops before submit**. |
-| `dashboard [--open] [--public]` | Renders the self-contained `data/dashboard.html`. `--public` also writes a **redacted** copy (per-job contacts/rationale/resume-base and the Overview funnel/targets stripped) to `output.public_dashboard_path` — safe to host publicly. |
+| `dashboard [--open] [--public]` | Renders the self-contained `data/dashboard.html` (job buckets **and** an **Applications** board: pipeline-flow Sankey + kanban columns + per-application email timelines). `--public` also writes a **redacted** copy (per-job contacts/rationale/resume-base, the Overview funnel/targets, **and all applications** stripped) to `output.public_dashboard_path` — safe to host publicly. |
 | `serve [--port 8799] [--open]` | Serves the dashboard over local HTTP. |
-| `track [--set job_id=status]` | Shows the application funnel + follow-up reminders; `--set` updates a status. |
+| `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
+| `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox. |
 | `new` | Lists new Strong/Good jobs since your last review, then advances the review marker. |
 | `gaps [--top 15]` | Skill-gap learning plan: skills that recur in your matched jobs but are on none of your resumes, ranked by jobs unlocked. |
 | `brief <job_id>` | Blunt, risk-forward company brief (facts + risks, no marketing fluff). |
@@ -210,9 +214,42 @@ Per company, best-effort and non-blocking (`enrich` toggles):
 
 ## Tracking
 
-- `track` shows the funnel (counts by status) and follow-up reminders (`apply.followup_days`).
+- `track` shows the funnel (counts by status), **response/interview/offer rates**, and follow-up
+  reminders (`apply.followup_days`).
 - `track --set job_id=status` updates a status.
+- `track --timeline <job_id>` prints one application's email history (each `mail_event` with date + signal).
 - `new` lists new Strong/Good jobs since the stored `last_review` marker, then advances it.
+
+## Inbox — Gmail application tracking
+
+The automated inbound side of `track`: `inbox` reads the Gmail inbox(es) you configure and turns
+application emails into funnel updates, so the pipeline reflects reality without manual `--set`.
+
+- **Access — read-only IMAP with an App Password.** stdlib `imaplib`/`email`; no Google Cloud project,
+  no OAuth, no browser. `SELECT` is `readonly=True` and every fetch uses `BODY.PEEK`, so mail is **never
+  marked read** and nothing is mutated. App passwords live in `.env` (`inbox.accounts[].password_env`),
+  never in config — consistent with the no-account-automation rule (reads only, never sends or acts).
+- **Deterministic classification (AI never required).** `mailrules.py` (pure functions) classifies each
+  email by **sender domain** (Greenhouse / Lever / Ashby / Workday / iCIMS / Workable / LinkedIn / Indeed …)
+  + ordered **keyword rules** into a signal: `confirmation / recruiter / assessment / interview / offer /
+  rejection / other`. Rejection/offer are matched first so a rejection that also says "interview" isn't
+  mis-read. An optional AI pass refines only the residual `other` bucket when `ai.enabled`.
+- **Precision.** ATS domains always count as job-related; job-board/unknown domains need a strong signal,
+  and board digests/alerts/community senders are dropped — so newsletters and social noise never reach the
+  funnel.
+- **Signal → status (monotonic).** confirmation/recruiter → `applied`, assessment/interview → `interview`,
+  offer → `offer`, rejection → `rejected`. Status only advances forward (a late "received" can't undo an
+  offer); `rejected` is terminal. Granular per-email signals are preserved in `mail_events` even though the
+  funnel uses the coarse statuses.
+- **Linking.** Each email links to a scraped job by fuzzy company match (stdlib `difflib`) when one exists,
+  otherwise to a stable email-only application (`mail:<hash>`), so applications you made outside jobscope
+  still track. Company/role are parsed from the subject/sender.
+- **Incremental & cheap.** A per-account UID watermark (in `meta`) means normal runs only look at new mail;
+  the first run (or `--backfill`) scans `inbox.lookback_days` back. `inbox.accounts[].lookback_days`
+  overrides the window per account. Re-runs are idempotent (dedup by `Message-ID`). Per-message try/except
+  keeps one bad email from sinking the run. Cron / Task-Scheduler friendly.
+- **Setup.** Enable 2-Step Verification, create an App Password (`myaccount.google.com/apppasswords`), put
+  it in `.env`, set `inbox.enabled: true`, and list your account(s). See README → *Inbox*.
 
 ## Skill gaps
 
@@ -227,8 +264,8 @@ Per company, best-effort and non-blocking (`enrich` toggles):
 Self-contained `data/dashboard.html` (inline CSS/JS, no deps, no network). Your data stays local.
 
 ### Tabs
-- **Overview** + one tab per score bucket: **Strong / Good / Stretch / Skip**, each with a live count.
-- A bucket tab shows only that tier's jobs; the Overview tab shows summary panels (no job list).
+- **Overview**, **Applications**, + one tab per score bucket: **Strong / Good / Stretch / Skip**, each with a live count.
+- A bucket tab shows only that tier's jobs; **Overview** and **Applications** show summary/pipeline panels (no job list).
 
 ### Overview tab
 - **KPI cards:** Total, Strong, Good, Avg score, Filtered.
@@ -238,6 +275,17 @@ Self-contained `data/dashboard.html` (inline CSS/JS, no deps, no network). Your 
 - **Top companies:** most frequent employers in view.
 - **Skill gaps:** top gap skills as bars (jobs unlocked).
 - **Top matches table:** highest-scoring jobs; click a row to open the detail drawer.
+
+### Applications tab
+Fed by `track` + `inbox` — your application pipeline, not the job search.
+- **KPI cards:** Applications, Submitted, Response %, Interview %, Offer %, Rejected.
+- **Pipeline flow:** an inline-SVG Sankey (no libraries) — the **Applied** flow *splits* into
+  **Interview / Rejected / No response**, and the Interview branch splits again into **Offer / Rejected /
+  In process**; band widths are proportional to counts, so you see how far each application got.
+- **Kanban board:** columns by status (Applied → Interview → Offer → Rejected, plus any New/Prepared/Skipped);
+  each card shows the company, role, applied date, and the application's **email timeline** (a colored signal
+  chip + subject + date per message).
+- Applications are **private** — stripped from the public dashboard.
 
 ### List (bucket tabs)
 - **Cards** (minimal): score + bar, title, company · location, matched-resume tag, `NEW` (<24h), intel dots
@@ -298,13 +346,18 @@ Copy from `config.example.yaml`; secrets go in `.env`. Key groups:
 - `enrich` — `compensation`, `stock`, `reddit`, `news`, `glassdoor`, `contacts`, `brief`, `news_feeds[]`, `top_n`.
 - `ai` — `enabled`, `provider`, `base_url`, `model`, `temperature`, `max_tokens`, `api_key_env`.
 - `email` — `enabled`, `smtp_host`, `smtp_port`, `from_addr`, `to_addr`, `password_env`.
+- `inbox` — `enabled`, `accounts[]` (`email`, `password_env`, optional per-account `lookback_days`),
+  `imap_host`, `imap_port`, `folder`, `lookback_days`.
 - `apply` — `assist`, `package_dir`, `auto_prep_top`, `followup_days`.
 - `output` — `db_path`, `dashboard_path`.
 
 ## Storage
 
-Local SQLite (`data/jobscope.db`): `jobs`, `enrichment`, `contacts`, `applications`, `resumes`, `meta`,
-`ai_cache`, `runs`. Everything stays on your machine; `config.yaml`, `.env`, and `data/` are gitignored.
+Local SQLite (`data/jobscope.db`): `jobs`, `enrichment`, `contacts`, `applications` (+ email-derived
+`company`/`title`/`source` fallbacks), `mail_events` (classified application emails — the funnel timeline),
+`resumes`, `meta` (markers incl. per-account inbox UID watermarks), `ai_cache`, `runs`. Schema evolves via
+additive `_ensure_columns` migrations. Everything stays on your machine; `config.yaml`, `.env`, and `data/`
+are gitignored.
 
 ## Responsible use
 
