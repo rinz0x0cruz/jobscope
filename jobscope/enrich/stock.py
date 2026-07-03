@@ -17,6 +17,31 @@ _NOISE = (" inc", " inc.", " llc", " ltd", " ltd.", " corp", " corp.", " corpora
           " company", " co", " co.", " plc", " group", " holdings", " technologies",
           " technology", " labs", " ai", " software", " systems", ",", ".")
 
+# Yahoo `exchange` codes for primary US listings; anything else (a foreign or
+# secondary listing) is rejected so a company name can't be matched to an unrelated
+# overseas ticker (e.g. "wiz" -> a Korean "038620.KQ").
+_US_EXCHANGES = {"NMS", "NGM", "NCM", "NYQ", "ASE", "PCX", "BTS", "BATS", "NAS", "NYS", "NIM"}
+
+# Curated overrides for the employers jobscope tracks: a US ticker when public, or
+# None when known-private / pre-IPO (so we never guess a wrong listing). Looked up by
+# _norm(company), so both the ATS board name ("wiz") and scraped forms ("Wiz, Inc.")
+# resolve here. Anything not listed falls through to the (hardened) Yahoo search.
+KNOWN_TICKERS: dict[str, Optional[str]] = {
+    "datadog": "DDOG", "snowflake": "SNOW", "okta": "OKTA", "zscaler": "ZS",
+    "cloudflare": "NET", "mongodb": "MDB", "gitlab": "GTLB", "confluent": "CFLT",
+    "coinbase": "COIN", "dropbox": "DBX", "elastic": "ESTC", "rubrik": "RBRK",
+    "samsara": "IOT", "robinhood": "HOOD", "crowdstrike": "CRWD",
+    "palo alto networks": "PANW", "sentinelone": "S", "inseego": "INSG",
+    "wiz": None, "anduril": None, "ramp": None, "notion": None, "openai": None,
+    "chainguard": None, "vanta": None, "abnormal": None, "abnormal security": None,
+    "huntress": None, "semgrep": None, "tines": None, "material": None,
+    "material security": None, "orca": None, "orca security": None, "drata": None,
+    "temporal": None, "render": None, "databricks": None, "stripe": None,
+    "discord": None, "brex": None, "gusto": None, "postman": None, "sysdig": None,
+    "cockroachlabs": None, "cockroach": None, "mistral": None, "clickhouse": None,
+    "fivetran": None, "grafanalabs": None, "grafana": None, "vercel": None,
+}
+
 
 def enrich(company: str) -> Optional[dict[str, Any]]:
     ticker, longname = _resolve_ticker(company)
@@ -59,6 +84,10 @@ def _resolve_ticker(company: str) -> tuple[Optional[str], Optional[str]]:
     q = (company or "").strip()
     if not q:
         return None, None
+    key = _norm(company)
+    if key in KNOWN_TICKERS:                       # curated override wins (deterministic)
+        ticker = KNOWN_TICKERS[key]
+        return (ticker, None) if ticker else (None, None)   # None => known private
     payload = httpx.get_json(SEARCH_URL, params={"q": q, "quotesCount": 6, "newsCount": 0})
     if not payload:
         return None, None
@@ -68,11 +97,17 @@ def _resolve_ticker(company: str) -> tuple[Optional[str], Optional[str]]:
     for quote in quotes:
         if quote.get("quoteType") != "EQUITY" or not quote.get("symbol"):
             continue
+        # Only trust a *primary US* listing; a foreign/secondary hit (e.g. a Korean
+        # ".KQ" whose short name also reduces to the query) is almost always wrong.
+        if quote.get("exchange") not in _US_EXCHANGES:
+            continue
         name = quote.get("shortname") or quote.get("longname") or ""
         score = _match_score(target, _norm(name), quote)
         if score > best_score:
             best_score, best_symbol, best_name = score, quote.get("symbol"), name
-    if best_symbol:
+    # Require real confidence: an exact or containment name match (>=60), not a mere
+    # shared first word. Otherwise treat the company as private/unknown (fail safe).
+    if best_symbol and best_score >= 60:
         return best_symbol, best_name
     return None, None
 

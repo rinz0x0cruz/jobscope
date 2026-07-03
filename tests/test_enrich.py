@@ -54,6 +54,38 @@ def test_stock_helpers():
     assert stock._match_score("acme", "acme", {"exchange": "NMS"}) >= 100
 
 
+def test_stock_known_private_override(monkeypatch):
+    # a curated-private company never shows a public listing, even if Yahoo returns one
+    monkeypatch.setattr(stock.httpx, "get_json", lambda *a, **k: {
+        "quotes": [{"quoteType": "EQUITY", "symbol": "038620.KQ",
+                    "shortname": "WIZ Corp", "exchange": "KSC"}]})
+    assert stock._resolve_ticker("wiz") == (None, None)
+    assert stock.enrich("wiz")["public"] is False
+
+
+def test_stock_rejects_foreign_listing(monkeypatch):
+    # an unmapped company must not be matched to an overseas ".KQ" listing
+    monkeypatch.setattr(stock.httpx, "get_json", lambda *a, **k: {
+        "quotes": [{"quoteType": "EQUITY", "symbol": "1234.KQ",
+                    "shortname": "Acme", "exchange": "KSC"}]})
+    assert stock._resolve_ticker("Acme Unlisted Co") == (None, None)
+
+
+def test_stock_accepts_us_primary_listing(monkeypatch):
+    monkeypatch.setattr(stock.httpx, "get_json", lambda *a, **k: {
+        "quotes": [{"quoteType": "EQUITY", "symbol": "ACME",
+                    "shortname": "Acme, Inc.", "exchange": "NMS"}]})
+    assert stock._resolve_ticker("Acme") == ("ACME", "Acme, Inc.")
+
+
+def test_stock_known_public_override(monkeypatch):
+    # curated public map resolves deterministically without any network call
+    def _boom(*a, **k):
+        raise AssertionError("Yahoo search should not be called for a mapped company")
+    monkeypatch.setattr(stock.httpx, "get_json", _boom)
+    assert stock._resolve_ticker("Datadog") == ("DDOG", None)
+
+
 # ---- contacts (legit-only) ---------------------------------------------
 def test_contacts_returns_search_leads_without_github(monkeypatch):
     monkeypatch.setattr(contacts.httpx, "get_json", lambda *a, **k: None)
