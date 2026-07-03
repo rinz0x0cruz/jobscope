@@ -296,6 +296,8 @@ def _render(rows: list[dict], overview: dict | None = None, apps: list | None = 
 _TEMPLATE = r"""<!doctype html>
 <html lang="en" class="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+<meta name="referrer" content="no-referrer">
 <title>jobscope</title>
 <style>
 :root{
