@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Moon, Search, Sun } from 'lucide-react'
+import { Lock, Moon, Search, Sun } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
 
 interface Props {
@@ -39,6 +39,15 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
           /
         </kbd>
       </label>
+
+      <a
+        href="applications.html"
+        title="Your applications — passphrase-protected"
+        className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-border bg-card px-3 text-[13px] text-dim transition hover:border-border-h hover:text-fg"
+      >
+        <Lock size={14} />
+        Applications
+      </a>
 
       <button
         type="button"
