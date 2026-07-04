@@ -116,9 +116,15 @@ if ($Encrypted) {
     $FullJson = Join-Path $RepoRoot "data\dashboard.json"
     if (-not (Test-Path $FullJson)) { throw "expected payload not found: $FullJson" }
 
-    # Passphrase via env var (scheduled runs) or a hidden prompt. Never echoed, logged, or committed.
+    # Passphrase resolution: env var (unattended) -> OS keychain (jobscope secrets
+    # set JOBSCOPE_APPS_PASSPHRASE) -> hidden interactive prompt. Never echoed,
+    # logged, or committed. The keychain path lets a scheduled task publish the
+    # encrypted page with no prompt (see scripts/register-publish-secure-task.ps1).
     $plain = $env:JOBSCOPE_APPS_PASSPHRASE
     $bstr = [IntPtr]::Zero
+    if ([string]::IsNullOrEmpty($plain)) {
+        $plain = (& $Py -c "import keyring,sys;from jobscope.core.config import KEYRING_SERVICE as s;v=keyring.get_password(s,'JOBSCOPE_APPS_PASSPHRASE');sys.stdout.write(v or '')" 2>$null)
+    }
     if ([string]::IsNullOrEmpty($plain)) {
         $sec = Read-Host "Passphrase to encrypt applications.html (8+ chars)" -AsSecureString
         $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
