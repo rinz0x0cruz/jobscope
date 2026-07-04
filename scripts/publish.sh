@@ -6,9 +6,10 @@
 # database/config never leave your machine. Requires Node.js/npm. Commits use the
 # rinz0x0cruz identity.
 #
-# Usage: scripts/publish.sh [--refresh] [--no-scan] [--force] [repo-url] [branch]
-#   --refresh  rerun scan -> match -> inbox first (fresh data on the published site)
-#   --no-scan  with --refresh, skip the slow job scan (rescore + inbox only)
+# Usage: scripts/publish.sh [--refresh] [--no-scan] [--encrypted] [--force] [repo-url] [branch]
+#   --refresh    rerun scan -> match -> inbox first (fresh data on the published site)
+#   --no-scan    with --refresh, skip the slow job scan (rescore + inbox only)
+#   --encrypted  also publish an AES-256-GCM encrypted applications.html (passphrase in browser)
 #   defaults: https://github.com/rinz0x0cruz/jobscope.git  gh-pages
 set -euo pipefail
 
@@ -17,12 +18,14 @@ set -euo pipefail
 FORCE="${JOBSCOPE_PUBLISH_FORCE:-}"
 REFRESH=""
 NOSCAN=""
+ENCRYPTED=""
 POSITIONAL=()
 for arg in "$@"; do
     case "$arg" in
         --force) FORCE=1 ;;
         --refresh) REFRESH=1 ;;
         --no-scan) NOSCAN=1 ;;
+        --encrypted) ENCRYPTED=1 ;;
         *) POSITIONAL+=("$arg") ;;
     esac
 done
@@ -66,6 +69,22 @@ echo "==> Building web dashboard (npm run build)"
 
 DIST="$REPO_ROOT/web/dist"
 [ -f "$DIST/index.html" ] || { echo "expected build output not found: $DIST/index.html" >&2; exit 1; }
+
+# 2b. Optional: an end-to-end encrypted applications page (AES-256-GCM). The un-redacted
+#     data never leaves the machine in the clear -- only the encrypted blob is published.
+if [ -n "${ENCRYPTED:-}" ]; then
+    echo "==> Emitting un-redacted data + encrypting applications.html"
+    "$PY" -m jobscope dashboard --emit-json   # -> data/dashboard.json (has applications; gitignored)
+    FULL_JSON="$REPO_ROOT/data/dashboard.json"
+    [ -f "$FULL_JSON" ] || { echo "expected payload not found: $FULL_JSON" >&2; exit 1; }
+    PASS="${JOBSCOPE_APPS_PASSPHRASE:-}"
+    if [ -z "$PASS" ]; then
+        read -r -s -p "Passphrase to encrypt applications.html (8+ chars): " PASS; echo
+    fi
+    printf '%s' "$PASS" | node "$REPO_ROOT/scripts/build-secure-apps.mjs" "$FULL_JSON" "$REPO_ROOT/scripts/apps-template.html" "$DIST/applications.html"
+    unset PASS
+    echo "==> applications.html built -> unlock at https://rinz0x0cruz.github.io/jobscope/applications.html"
+fi
 
 # Publish gate: only the designated publisher (the machine that ran
 # register-publish-task.ps1, which wrote .publish-primary) pushes, to avoid double
