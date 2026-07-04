@@ -107,3 +107,12 @@ class JobsMixin:
         if limit:
             sql += f" LIMIT {int(limit)}"
         return [_row_to_job(r) for r in self.conn.execute(sql)]
+
+    def delete_jobs(self, ids) -> int:
+        """Hard-delete jobs by id. Returns the number of ids deleted."""
+        ids = [i for i in ids if i]
+        if not ids:
+            return 0
+        self.conn.executemany("DELETE FROM jobs WHERE id = ?", [(i,) for i in ids])
+        self.conn.commit()
+        return len(ids)

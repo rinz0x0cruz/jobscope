@@ -16,7 +16,7 @@ import html as _html
 import re
 from typing import Any
 
-from jobscope.core import httpx
+from jobscope.core import geo, httpx
 from jobscope.core.model import Job, derive_remote_scope
 from jobscope.core.store import now_iso
 
@@ -194,9 +194,13 @@ def _target_locations(search: dict) -> set[str]:
     return locs
 
 
-def _matches(job: Job, locs: set[str], roles: set[str], want_remote: bool) -> bool:
-    loc = (job.location or "").lower()
-    loc_ok = (want_remote and job.is_remote) or (not locs) or any(s in loc for s in locs)
+def _matches(job: Job, locs: set[str], roles: set[str], want_remote: bool,
+             home: str = "India", geo_on: bool = True) -> bool:
+    if geo_on:
+        loc_ok = geo.in_scope(job, home)
+    else:
+        loc = (job.location or "").lower()
+        loc_ok = (want_remote and job.is_remote) or (not locs) or any(s in loc for s in locs)
     title = (job.title or "").lower()
     role_ok = (not roles) or any(k in title for k in roles)
     return loc_ok and role_ok
@@ -212,6 +216,8 @@ def run(cfg: dict, store) -> int:
     roles = _role_keywords(s)
     want_remote = bool(s.get("is_remote", True)) or any(
         p.get("is_remote") for p in (s.get("profiles") or []))
+    home = s.get("home_country", "India")
+    geo_on = bool(s.get("scope_to_home", True))
     print("\n  == ATS boards (direct company fetch) ==")
     new_total = 0
     closed_total = 0
@@ -225,7 +231,7 @@ def run(cfg: dict, store) -> int:
             board = fetch_company(name, provider, slug)
         except Exception:  # noqa: BLE001 - best-effort, never break the scan
             board = []
-        kept = [j for j in board if _matches(j, locs, roles, want_remote)]
+        kept = [j for j in board if _matches(j, locs, roles, want_remote, home, geo_on)]
         new_here = 0
         for job in kept:
             if job.title and job.company and store.upsert_job(job):

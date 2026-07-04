@@ -8,14 +8,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from jobscope.core import geo
 from jobscope.core.model import Job, derive_remote_scope
 from jobscope.core.store import now_iso
 
 
 def run(cfg: dict, store) -> int:
     base = cfg["search"]
+    home = base.get("home_country", "India")
+    geo_on = bool(base.get("scope_to_home", True))
     total_new = 0
     total_seen = 0
+    total_dropped = 0
 
     try:
         from jobspy import scrape_jobs
@@ -38,24 +42,28 @@ def run(cfg: dict, store) -> int:
             if len(profiles) > 1:
                 print(f"\n  == profile: {label} "
                       f"(location={s.get('location')!r}, hours_old={s.get('hours_old')}) ==")
-            new, seen = _scan_profile(scrape_jobs, s, store, label)
+            new, seen, dropped = _scan_profile(scrape_jobs, s, store, label, home, geo_on)
             total_new += new
             total_seen += seen
+            total_dropped += dropped
 
     # ATS boards: pull configured companies' public job boards directly. Needs
     # only `requests`, so it runs even when JobSpy is unavailable.
     from . import ats
     total_new += ats.run(cfg, store)
 
-    print(f"\n  scan complete: {total_new} new / {total_seen} seen. "
+    drop_note = f" ({total_dropped} out-of-scope dropped)" if total_dropped else ""
+    print(f"\n  scan complete: {total_new} new / {total_seen} seen{drop_note}. "
           f"Next: python -m jobscope match")
     return 0
 
 
-def _scan_profile(scrape_jobs, s: dict, store, label: str) -> tuple[int, int]:
-    """Run every search term for one profile; returns (new, seen) counts."""
+def _scan_profile(scrape_jobs, s: dict, store, label: str,
+                  home: str = "India", geo_on: bool = True) -> tuple[int, int, int]:
+    """Run every search term for one profile; returns (new, seen, dropped) counts."""
     new_total = 0
     seen_total = 0
+    dropped_total = 0
     for term in s["terms"]:
         try:
             kwargs: dict[str, Any] = dict(
@@ -89,6 +97,9 @@ def _scan_profile(scrape_jobs, s: dict, store, label: str) -> tuple[int, int]:
                 job = _row_to_job(row)
                 if not (job.title and job.company):
                     continue
+                if geo_on and not geo.in_scope(job, home):
+                    dropped_total += 1
+                    continue
                 seen_total += 1
                 if store.upsert_job(job):
                     new_here += 1
@@ -98,7 +109,7 @@ def _scan_profile(scrape_jobs, s: dict, store, label: str) -> tuple[int, int]:
         except Exception as e:  # noqa: BLE001 - keep scanning other terms
             print(f"  [{term}] error: {e}")
             store.log_run(f"scan:{label}:{term}", 0, "error")
-    return new_total, seen_total
+    return new_total, seen_total, dropped_total
 
 
 def _val(row, *names, default=None):

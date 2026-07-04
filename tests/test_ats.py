@@ -133,17 +133,30 @@ def test_no_companies_is_noop(monkeypatch):
 
 
 def test_matches_unit():
-    from jobscope.core.model import Job
+    from jobscope.core.model import Job, derive_remote_scope
+
+    def mk(title, loc, is_remote=False):
+        j = Job(title=title, location=loc, is_remote=is_remote)
+        j.remote_scope = derive_remote_scope(loc, title, is_remote)
+        return j
+
     locs, roles = {"india"}, {"security engineer"}
-    india = Job(title="Security Engineer", location="Bengaluru, India")
-    remote = Job(title="Security Engineer", location="Remote - US", is_remote=True)
-    uk = Job(title="Security Engineer", location="London, UK")
-    sales = Job(title="Account Executive", location="Bengaluru, India")
+    india = mk("Security Engineer", "Bengaluru, India")
+    remote_us = mk("Security Engineer", "Remote - US", is_remote=True)
+    remote_global = mk("Security Engineer", "Remote", is_remote=True)
+    remote_india = mk("Security Engineer", "Remote - India", is_remote=True)
+    uk = mk("Security Engineer", "London, UK")
+    sales = mk("Account Executive", "Bengaluru, India")
+    # in scope: India onsite, global remote, India remote
     assert ats._matches(india, locs, roles, want_remote=True) is True
-    assert ats._matches(remote, locs, roles, want_remote=True) is True
-    assert ats._matches(remote, locs, roles, want_remote=False) is False
+    assert ats._matches(remote_global, locs, roles, want_remote=True) is True
+    assert ats._matches(remote_india, locs, roles, want_remote=True) is True
+    # out of scope: remote locked to another country, foreign onsite, wrong role
+    assert ats._matches(remote_us, locs, roles, want_remote=True) is False
     assert ats._matches(uk, locs, roles, want_remote=True) is False
     assert ats._matches(sales, locs, roles, want_remote=True) is False
+    # geo_on=False falls back to the legacy location match (want_remote honored)
+    assert ats._matches(remote_us, locs, roles, want_remote=True, geo_on=False) is True
 
 
 _BOARD2 = {"jobs": [

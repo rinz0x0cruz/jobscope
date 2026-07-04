@@ -18,6 +18,7 @@ Usage:
     python -m jobscope inbox [--dry-run]           Sync Gmail (IMAP) -> application funnel
     python -m jobscope export [--format json|csv]  Export ranked jobs
     python -m jobscope purge [--mail --applications --older-than N]  Wipe stored email PII / apps
+    python -m jobscope prune [--yes]               Drop stored jobs outside your India/remote scope
     python -m jobscope secrets [set|list|rm|import-env]  Store secrets in the OS keychain
     python -m jobscope selftest                     Offline self-tests (no network)
 """
@@ -248,6 +249,29 @@ def cmd_purge(args, cfg):
     return 0
 
 
+def cmd_prune(args, cfg):
+    """Delete stored jobs outside your geographic scope (home country + eligible remote)."""
+    from ..core import geo
+    home = cfg["search"].get("home_country", "India")
+    with _store(args, cfg) as store:
+        jobs = store.jobs(order_by_score=False)
+        out = [j for j in jobs if not geo.in_scope(j, home)]
+        if not out:
+            print(f"  no out-of-scope jobs (home={home}); nothing to prune.")
+            return 0
+        print(f"  {len(out)} of {len(jobs)} stored jobs are outside scope (home={home}):")
+        for j in out[:20]:
+            print(f"    - {j.title} @ {j.company or '?'} [{j.location or '?'}]")
+        if len(out) > 20:
+            print(f"    ... and {len(out) - 20} more")
+        if args.dry_run or not args.yes:
+            print("  (dry run) re-run with --yes to delete them.")
+            return 0
+        n = store.delete_jobs([j.id for j in out])
+        print(f"  pruned {n} out-of-scope job(s); {len(jobs) - n} remain.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="jobscope", description="Resume-driven job scout & application prep.")
     p.add_argument("--version", action="version", version=f"jobscope {__version__}")
@@ -342,6 +366,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--older-than", type=int, default=None, metavar="DAYS",
                     help="Only delete stored email events older than DAYS")
     sp.set_defaults(func=cmd_purge)
+
+    sp = sub.add_parser("prune", help="Delete stored jobs outside your India/remote scope")
+    sp.add_argument("--yes", action="store_true", help="Actually delete (default: preview only)")
+    sp.add_argument("--dry-run", action="store_true", help="Preview only; never delete")
+    sp.set_defaults(func=cmd_prune)
 
     sp = sub.add_parser("secrets", help="Store API keys / app passwords in the OS keychain (keyring)")
     sp.add_argument("action", nargs="?", choices=["set", "list", "rm", "import-env"],

@@ -43,6 +43,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox. |
 | `new` | Lists new Strong/Good jobs since your last review, then advances the review marker. |
+| `prune [--yes] [--dry-run]` | Deletes stored jobs outside your geographic scope (`search.home_country` + eligible remote). Previews by default; `--yes` deletes. |
 | `gaps [--top 15]` | Skill-gap learning plan: skills that recur in your matched jobs but are on none of your resumes, ranked by jobs unlocked. |
 | `brief <job_id>` | Blunt, risk-forward company brief (facts + risks, no marketing fluff). |
 | `export [--format json\|csv] [--out <path>]` | Exports ranked jobs. |
@@ -89,6 +90,12 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Remote is corroborated:** JobSpy's `is_remote` flag over-reports (it can mark an on-site role remote off a
   stray description mention), so a row counts as remote only when the location/title says so
   (`remote`/`anywhere`/`wfh`/…) or the flag is set with no concrete location. ATS rows use the same keyword rule.
+- **Geographic scope (India + remote):** ingestion is scoped to roles you can actually take from
+  `search.home_country` (default `India`) — onsite/hybrid in the home country, or remote that is global /
+  home-eligible (incl. APAC / Asia for India). Region-locked remote (`Remote - US`, `Remote (EMEA)`) and
+  foreign on-site are dropped at `scan` and by the ATS filter. Unknown/ambiguous locations are kept, never
+  dropped on a guess. Toggle with `search.scope_to_home: false`; the predicate lives in `core/geo.py`
+  (`in_scope`). Run `jobscope prune` to purge already-stored out-of-scope jobs.
 
 ## Company-direct ATS boards
 

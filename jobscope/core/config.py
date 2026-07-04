@@ -25,7 +25,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "terms": ["software engineer"],
         "google_term": "",
         "location": "Remote",
-        "country_indeed": "USA",
+        "country_indeed": "India",
         "results_wanted": 25,
         "hours_old": 168,
         "is_remote": True,
@@ -34,6 +34,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "proxies": [],
         "profiles": [],
         "companies": [],
+        "home_country": "India",   # geo scope: the country you can work onsite in (see core.geo)
+        "scope_to_home": True,     # drop roles outside {home onsite, global/home-eligible remote}
     },
     "match": {
         "weights": {

@@ -23,7 +23,9 @@ search:
     - "product security"
   google_term: ""                     # optional google-jobs specific phrasing
   location: "Remote"
-  country_indeed: "USA"
+  country_indeed: "India"
+  home_country: "India"               # geo scope target: the country you can work onsite in
+  scope_to_home: true                 # drop roles outside {home onsite, global/home-eligible remote}
   results_wanted: 25
   hours_old: 168                      # last 7 days
   is_remote: true
