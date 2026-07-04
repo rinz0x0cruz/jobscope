@@ -42,6 +42,19 @@ def run(cfg: dict, store) -> int:
     ai_calls = 0
     ai_used = 0
 
+    # Optional multi-model second opinion on jobs near a tier cut (off by default;
+    # needs quorum.enabled). CLI-only: never changes the persisted score/tier.
+    review_on = bool(match_cfg.get("ai_score_review", False)) and ai.available(cfg)
+    review_margin = float(match_cfg.get("ai_score_margin", 8) or 0)
+    review_cap = int(match_cfg.get("ai_score_max_calls", 12) or 0)
+    tiers = match_cfg.get("tiers", {"strong": 75, "good": 55, "stretch": 35})
+    resumes_by_name = dict(resumes)
+    ai_review = None
+    if review_on:
+        from jobscope.analyze.match import ai_review
+    divergences: list[str] = []
+    reviews_done = 0
+
     jobs = store.jobs(order_by_score=False)
     counts = {"Strong": 0, "Good": 0, "Stretch": 0, "Skip": 0}
     blocked = 0
@@ -66,6 +79,14 @@ def run(cfg: dict, store) -> int:
                     base = pick(resumes, key=lambda nr: _resume_lean(nr[1]))[0]
                     rationale = f"{rationale} · AI-route:{disc}"
                 ai_used += 1
+        if (review_on and not was_blocked
+                and (review_cap == 0 or reviews_done < review_cap)
+                and ai_review.near_boundary(score, tiers, review_margin)):
+            reviews_done += 1
+            resume_obj = resumes_by_name.get(base) or resumes[0][1]
+            note = ai_review.review_job(cfg, store, job, resume_obj, score, tier, tiers)
+            if note:
+                divergences.append(note)
         if was_blocked:
             blocked += 1
         store.update_score(job.id, score, tier, rationale, resume_base=base if multi else "")
@@ -77,4 +98,8 @@ def run(cfg: dict, store) -> int:
           f"Strong {counts['Strong']}, Good {counts['Good']}, "
           f"Stretch {counts['Stretch']}, Skip {counts['Skip']}"
           + (f" ({blocked} filtered)" if blocked else "") + ai_note)
+    if divergences:
+        print(f"  judge second-opinion diverged on {len(divergences)} boundary job(s):")
+        for d in divergences:
+            print(d)
     return 0

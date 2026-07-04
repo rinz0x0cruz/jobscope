@@ -85,6 +85,25 @@ def chat(cfg: dict, store, system: str, user: str, *, cache: bool = True,
     return text
 
 
+def score(cfg: dict, store, task: str, candidate: str, *, rubric=None) -> Optional[dict]:
+    """Optional multi-model second-opinion score (0-100) via quorum's judge.
+
+    Returns ``{score, sub_scores, rationale}``, or ``None`` when the quorum backend
+    is absent or disabled -- so a caller keeps its deterministic result untouched.
+    ``candidate`` is judged strictly as DATA (OWASP LLM01).
+    """
+    if not available(cfg):
+        return None
+    try:
+        from quorum.api import score as _quorum_score
+    except ImportError:
+        return None
+    try:
+        return _quorum_score(cfg, store, task, candidate, rubric=rubric)
+    except Exception:  # noqa: BLE001 - AI is always optional
+        return None
+
+
 def _post(cfg: dict, body: dict) -> Optional[str]:
     import requests
     ai = cfg["ai"]
