@@ -21,13 +21,26 @@
 .PARAMETER Branch
     Branch GitHub Pages serves from. Default "gh-pages".
 
+.PARAMETER Refresh
+    Rerun the local pipeline (scan -> match -> inbox) before building, so the published
+    site reflects the latest jobs and application emails.
+
+.PARAMETER NoScan
+    With -Refresh, skip the slow networked job scan; only rescore matches and sync the
+    inbox (a fast, applications-focused refresh).
+
 .EXAMPLE
     ./scripts/publish.ps1
+
+.EXAMPLE
+    ./scripts/publish.ps1 -Refresh -Force   # one-click: refresh data, then publish
 #>
 [CmdletBinding()]
 param(
     [string]$Repo = "https://github.com/rinz0x0cruz/jobscope.git",
     [string]$Branch = "gh-pages",
+    [switch]$Refresh,
+    [switch]$NoScan,
     [switch]$Force
 )
 
@@ -44,10 +57,27 @@ Set-Location $RepoRoot
 # Resolve the venv interpreter, falling back to PATH.
 $Py = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Py)) { $Py = "python" }
+$env:PYTHONPATH = "."
+
+# 0. Optional data refresh: rerun the pipeline so the published site reflects the latest
+#    jobs and application emails. -Refresh runs scan -> match -> inbox first; -NoScan
+#    skips the slow networked job scan and just rescores + syncs the inbox.
+if ($Refresh) {
+    if (-not $NoScan) {
+        Write-Host "==> Scanning job boards (jobscope scan)"
+        & $Py -m jobscope scan
+        if ($LASTEXITCODE -ne 0) { throw "jobscope scan failed (exit $LASTEXITCODE)" }
+    }
+    Write-Host "==> Rescoring matches (jobscope match)"
+    & $Py -m jobscope match
+    if ($LASTEXITCODE -ne 0) { throw "jobscope match failed (exit $LASTEXITCODE)" }
+    Write-Host "==> Syncing inbox (jobscope inbox)"
+    & $Py -m jobscope inbox
+    if ($LASTEXITCODE -ne 0) { throw "jobscope inbox failed (exit $LASTEXITCODE)" }
+}
 
 # 1. Emit the redacted dashboard payload and bake it into the web app.
 Write-Host "==> Emitting redacted dashboard JSON (jobscope dashboard --emit-json --public)"
-$env:PYTHONPATH = "."
 & $Py -m jobscope dashboard --emit-json --public
 if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json --public failed (exit $LASTEXITCODE)" }
 

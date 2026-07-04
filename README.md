@@ -204,6 +204,14 @@ your database never leaves your machine. Requires Node.js/npm. One-time setup:
 3. Auto-refresh (Windows): `scripts/register-publish-task.ps1` registers a daily
    Scheduled Task that re-builds and pushes while you're logged on.
 
+**One-click refresh.** Double-click `scripts/refresh-and-publish.cmd` (Windows) to rerun
+the tool and update the live site in one step — it refreshes your data
+(`scan → match → inbox`), rebuilds the redacted dashboard, and pushes it to `gh-pages`.
+Equivalent to `scripts/publish.ps1 -Refresh -Force` (or `scripts/publish.sh --refresh --force`);
+add `-NoScan` / `--no-scan` for a quick applications-only refresh that skips the job scan.
+Your applications stay **redacted** from the public site — they remain visible only in
+your local `dashboard` view.
+
 > GitHub Pages is **public**. Only the redacted copy is published, but treat the URL
 > as shareable — keep real data in the local (`dashboard`) view.
 

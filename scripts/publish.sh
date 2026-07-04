@@ -6,17 +6,23 @@
 # database/config never leave your machine. Requires Node.js/npm. Commits use the
 # rinz0x0cruz identity.
 #
-# Usage: scripts/publish.sh [repo-url] [branch]
+# Usage: scripts/publish.sh [--refresh] [--no-scan] [--force] [repo-url] [branch]
+#   --refresh  rerun scan -> match -> inbox first (fresh data on the published site)
+#   --no-scan  with --refresh, skip the slow job scan (rescore + inbox only)
 #   defaults: https://github.com/rinz0x0cruz/jobscope.git  gh-pages
 set -euo pipefail
 
 # Force support: a --force flag (stripped here before positional parsing) or
 # JOBSCOPE_PUBLISH_FORCE=1 bypasses the publish gate below.
 FORCE="${JOBSCOPE_PUBLISH_FORCE:-}"
+REFRESH=""
+NOSCAN=""
 POSITIONAL=()
 for arg in "$@"; do
     case "$arg" in
         --force) FORCE=1 ;;
+        --refresh) REFRESH=1 ;;
+        --no-scan) NOSCAN=1 ;;
         *) POSITIONAL+=("$arg") ;;
     esac
 done
@@ -30,10 +36,25 @@ cd "$REPO_ROOT"
 
 PY="$REPO_ROOT/.venv/bin/python"
 [ -x "$PY" ] || PY="python3"
+export PYTHONPATH=.
+
+# 0. Optional data refresh: rerun the pipeline so the published site reflects the latest
+#    jobs and application emails. --refresh runs scan -> match -> inbox first; --no-scan
+#    skips the slow networked job scan and just rescores + syncs the inbox.
+if [ -n "${REFRESH:-}" ]; then
+    if [ -z "${NOSCAN:-}" ]; then
+        echo "==> Scanning job boards (jobscope scan)"
+        "$PY" -m jobscope scan
+    fi
+    echo "==> Rescoring matches (jobscope match)"
+    "$PY" -m jobscope match
+    echo "==> Syncing inbox (jobscope inbox)"
+    "$PY" -m jobscope inbox
+fi
 
 # 1. Emit the redacted dashboard payload and bake it into the web app.
 echo "==> Emitting redacted dashboard JSON (jobscope dashboard --emit-json --public)"
-PYTHONPATH=. "$PY" -m jobscope dashboard --emit-json --public
+"$PY" -m jobscope dashboard --emit-json --public
 
 PUBLIC_JSON="$REPO_ROOT/data/dashboard.public.json"
 [ -f "$PUBLIC_JSON" ] || { echo "expected payload not found: $PUBLIC_JSON" >&2; exit 1; }
