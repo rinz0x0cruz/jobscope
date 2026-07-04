@@ -76,7 +76,13 @@ COMPANY_BOARDS: dict[str, tuple[str, str]] = {
 
 
 def _strip_html(s: str) -> str:
-    return re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", s or ""))).strip()
+    s = s or ""
+    # Drop the CONTENTS of <style>/<script> blocks and HTML comments before
+    # removing tags -- their inner CSS/JS is not readable text and would
+    # otherwise leak into snippets/summaries for HTML emails.
+    s = re.sub(r"(?is)<(style|script)\b[^>]*>.*?</\1>", " ", s)
+    s = re.sub(r"(?s)<!--.*?-->", " ", s)
+    return re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", s))).strip()
 
 
 def _ms_to_date(ms: Any) -> str:

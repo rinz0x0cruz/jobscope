@@ -66,6 +66,28 @@ JOB_DOMAINS: dict[str, str] = {
     "otta.com": "otta",
 }
 
+# --- Newsletter / content-publishing platforms ------------------------------
+# These blast blog posts, digests, and course/challenge announcements -- never
+# real application status -- yet their subjects routinely collide with lifecycle
+# keywords (a "Coding Challenge" newsletter reads as an "assessment", a "Your
+# weekly interview prep" digest as an "interview"). Mail from these domains is
+# dropped up front, even when it scores an otherwise-strong signal, so it never
+# reaches the funnel. Distinct from _RELAY_DOMAINS (ESPs that relay *employer*
+# mail): here the domain itself is the publisher, so it is never job-related.
+NEWSLETTER_DOMAINS: frozenset[str] = frozenset({
+    "substack.com",
+    "medium.com",
+    "beehiiv.com",
+    "buttondown.email",
+    "buttondown.com",
+    "ghost.io",
+    "tinyletter.com",
+    "getrevue.co",
+    "mailerlite.com",
+    "convertkit-mail.com",
+    "convertkit-mail2.com",
+})
+
 # --- Weighted signal keywords -----------------------------------------------
 # Each signal accumulates a weighted score from the phrases it matches (see
 # score_signals + classify_scored). Weights encode how strongly a phrase implies
@@ -163,6 +185,21 @@ _DECISIVE = 3           # a terminal rejection/offer score at/above this wins ou
 _SUBJECT_CONFIRM = 4    # a confirmation keyword in the subject (2 x _SUBJECT_MULT)
 _SCORE_FLOOR = 2        # minimum score to count as a real verdict (else "other")
 _TIE_MARGIN = 2         # top must beat the runner-up by this margin to be confident
+
+# Conditional clauses ("if you are not selected...", "if you don't hear from us...",
+# "should you not be selected...") describe a HYPOTHETICAL future, not a decision.
+# Application-received acknowledgments routinely carry them ("if you are not
+# selected, keep an eye on our jobs page"; "if you don't hear from us in four
+# weeks, you were likely not a fit"), so the rejection signal is re-scored with
+# these clauses removed -- a real rejection states its decision unconditionally.
+_CONDITIONAL_CLAUSE = re.compile(
+    r"(?is)\b(?:if|should you|unless|in the event|in case|whether or not)\b[^.!?\n]*")
+
+
+def _strip_conditional(text: str) -> str:
+    """Drop conditional clauses so a *hypothetical* rejection in an acknowledgment
+    ("if you are not selected...") isn't scored as a real rejection."""
+    return _CONDITIONAL_CLAUSE.sub(" ", text or "")
 
 
 # Signals that on their own mark an email as job-related even from an unknown
@@ -290,7 +327,9 @@ def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool,
     floor) -- the caller may then defer to the optional quorum layer. The verdict
     is otherwise fully deterministic:
 
-    * a decisive terminal signal (rejection/offer) wins from anywhere;
+    * a decisive terminal signal (rejection/offer) wins from anywhere -- a
+      rejection counts only if it survives de-conditionalization, so an
+      acknowledgment's "if you are not selected..." boilerplate is not a rejection;
     * else a clear application-received SUBJECT is a confirmation even when the
       body is padded with interview/recruiter boilerplate ("next steps", "invite
       you to a conversation") -- ATS confirmations routinely carry that text;
@@ -299,12 +338,20 @@ def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool,
     subject = subject or ""
     body = body or ""
     scores = score_signals(subject, body)
-    # 1. Terminal signals are decisive from anywhere (rarely boilerplate).
+    subj = score_signals(subject, "")
+    # Discount CONDITIONAL rejections: re-score the rejection signal with
+    # hypothetical clauses removed, so an acknowledgment's "if you are not
+    # selected, keep an eye on our page" / "if you don't hear from us ... not a
+    # fit" boilerplate never reads as a real (unconditional) rejection.
+    scores["rejection"] = score_signals(subject, _strip_conditional(body))["rejection"]
+    # 1. Terminal signals are decisive from anywhere (rarely boilerplate); the
+    #    rejection must survive de-conditionalization to count here.
     for sig in ("rejection", "offer"):
         if scores[sig] >= _DECISIVE:
             return sig, scores, False, [sig]
-    # 2. Subject authority: an application-received SUBJECT is a confirmation.
-    subj = score_signals(subject, "")
+    # 2. Subject authority: an application-received SUBJECT is a confirmation even
+    #    when the body is padded with interview/recruiter boilerplate ("next
+    #    steps", "invite you to a conversation") -- ATS confirmations carry that.
     if subj["confirmation"] >= _SUBJECT_CONFIRM and not subj["interview"] and not subj["assessment"]:
         return "confirmation", scores, False, ["confirmation"]
     # 3. Highest weighted score wins; >=2 within the margin is an ambiguous tie.
@@ -343,6 +390,17 @@ _NOISE_SENDER = re.compile(
 
 def is_noise_sender(from_name: str, from_addr: str) -> bool:
     return bool(_NOISE_SENDER.search(f"{from_name or ''} {from_addr or ''}"))
+
+
+def is_newsletter_domain(from_domain: str) -> bool:
+    """True for content/newsletter platforms (Substack, Medium, Beehiiv, ...),
+    whose blog/digest/challenge blasts are never application status but whose
+    subjects often collide with lifecycle keywords. Such mail is dropped before
+    it can reach the funnel, even when it scores a strong signal."""
+    d = (from_domain or "").lower().strip().strip(".")
+    if not d:
+        return False
+    return any(d == k or d.endswith("." + k) for k in NEWSLETTER_DOMAINS)
 
 
 def signal_to_status(signal: str) -> str:

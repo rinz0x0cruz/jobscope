@@ -157,8 +157,11 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
     from_name, from_addr = _eu.parseaddr(from_raw)
     from_domain = from_addr.split("@")[-1].lower() if "@" in from_addr else ""
 
-    # Skip job-board digests / alerts / community mail (not application status).
-    if mailrules.is_noise_sender(from_name, from_addr):
+    # Skip job-board digests / alerts / community mail (not application status),
+    # and newsletter/content platforms (Substack/Medium/...) whose subjects
+    # collide with lifecycle keywords (a "Coding Challenge" digest reads as an
+    # assessment) -- dropped by domain even when they score a strong signal.
+    if mailrules.is_noise_sender(from_name, from_addr) or mailrules.is_newsletter_domain(from_domain):
         return None
 
     # Cheap first pass on headers only; skip clearly-irrelevant mail from
