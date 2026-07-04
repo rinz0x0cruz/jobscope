@@ -1,15 +1,27 @@
+import copy
 import os
 import tempfile
 
 import pytest
 
 from jobscope.core import ai
-from jobscope.core.config import load_config
+from jobscope.core import config as _config
+from jobscope.core.config import DEFAULT_CONFIG
 from jobscope.core.store import Store
 
 
+@pytest.fixture(autouse=True)
+def _env_only_secrets(monkeypatch):
+    # Keep these tests hermetic: resolve secrets from the environment only, never
+    # the developer's OS keychain, so a locally configured key can't flip
+    # availability and make the assertions env-dependent.
+    monkeypatch.setattr(_config, "_secret", lambda name, default="": os.environ.get(name, default))
+
+
 def _cfg(**ai_over):
-    cfg = load_config(None)
+    # Build from DEFAULT_CONFIG (not the on-disk config.yaml) so the tests don't
+    # depend on the developer's provider / key / enabled settings.
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
     cfg["ai"].update(ai_over)
     return cfg
 
@@ -48,7 +60,7 @@ def test_chat_caches(monkeypatch):
 
 
 def test_strategy_for_resolves_config():
-    cfg = load_config(None)
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
     assert ai.strategy_for(cfg, "generative") == "council"
     assert ai.strategy_for(cfg, "classify") == "ensemble"
     assert ai.strategy_for({"quorum": {}}, "generative") is None

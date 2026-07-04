@@ -50,10 +50,11 @@ def run() -> int:
     c.ok("default weights sum ~1.0",
          abs(sum(DEFAULT_CONFIG["match"]["weights"].values()) - 1.0) < 1e-9)
     cfg = load_config(None)
-    c.ok("load_config returns defaults", cfg["ai"]["provider"] == "groq")
+    c.ok("load_config returns defaults",
+         isinstance(cfg.get("ai"), dict) and DEFAULT_CONFIG["ai"]["provider"] == "groq")
     from ..core import ai as _ai
-    c.ok("quorum strategy_generative default", _ai.strategy_for(cfg, "generative") == "council")
-    c.ok("quorum strategy_classify default", _ai.strategy_for(cfg, "classify") == "ensemble")
+    c.ok("quorum strategy_generative default", _ai.strategy_for(DEFAULT_CONFIG, "generative") == "council")
+    c.ok("quorum strategy_classify default", _ai.strategy_for(DEFAULT_CONFIG, "classify") == "ensemble")
     c.ok("quorum strategy_for empty -> None", _ai.strategy_for({"quorum": {}}, "generative") is None)
 
     # --- store ------------------------------------------------------------

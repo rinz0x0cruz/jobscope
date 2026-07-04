@@ -3,7 +3,7 @@ import os
 import tempfile
 
 from jobscope.analyze import insights
-from jobscope.core.config import load_config
+from jobscope.core.config import DEFAULT_CONFIG
 from jobscope.enrich import brief
 from jobscope.core.model import Job, Resume
 from jobscope.core.store import Store
@@ -48,7 +48,10 @@ def test_skill_gap_ignores_skip_tier():
 
 
 def _cfg():
-    return load_config(None)
+    # Hermetic: the on-disk config.yaml (AI enabled, a real provider/key) must not
+    # make the brief call a live model. DEFAULT_CONFIG has ai.enabled=False.
+    import copy
+    return copy.deepcopy(DEFAULT_CONFIG)
 
 
 def test_brief_is_risk_forward_and_deterministic(monkeypatch):
