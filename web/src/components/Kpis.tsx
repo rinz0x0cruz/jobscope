@@ -1,5 +1,6 @@
 import type { JobRow, Tier } from '@/lib/schema'
 import { TIERS, TIER_COLOR } from '@/lib/schema'
+import { trackSpotlight } from '@/lib/spotlight'
 import { CountUp } from './overview/CountUp'
 import type { CSSProperties } from 'react'
 
@@ -19,8 +20,9 @@ export function Kpis({ rows }: { rows: JobRow[] }) {
       {items.map((it) => (
         <div
           key={it.label}
-          className="js-gradient-card js-kpi-card rounded-[16px] border border-border bg-card px-4 py-4"
-          style={{ '--kpi-color': it.color ?? 'var(--accent)' } as CSSProperties}
+          className="js-gradient-card js-kpi-card js-spotlight-card rounded-[16px] border border-border bg-card px-4 py-4"
+          onPointerMove={trackSpotlight}
+          style={{ '--kpi-color': it.color ?? 'var(--accent)', '--spot-color': it.color ?? 'var(--accent)' } as CSSProperties}
         >
           <div className="text-3xl font-black leading-none tnum" style={it.color ? { color: it.color } : undefined}>
             <CountUp value={it.value} />

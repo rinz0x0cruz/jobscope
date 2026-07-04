@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { ChevronDown, Mail } from 'lucide-react'
 import type { Application, ApplicationEvent } from '@/lib/schema'
-import { signalColor } from './constants'
+import { trackSpotlight } from '@/lib/spotlight'
+import type { CSSProperties } from 'react'
+import { signalColor, statusColor } from './constants'
 
 function TimelineRow({ e }: { e: ApplicationEvent }) {
   return (
@@ -37,9 +39,17 @@ export function AppCard({ app }: { app: Application }) {
   const [open, setOpen] = useState(false)
   const events = app.timeline ?? []
   const date = (app.applied_at || app.updated || '').slice(0, 10)
+  const status = app.status || 'new'
+  const accent = statusColor(status)
 
   return (
-    <article className="js-gradient-card rounded-[10px] border border-border bg-card p-3 transition-colors hover:border-border-h hover:bg-card-h">
+    <article
+      data-status={status}
+      className="js-gradient-card js-spotlight-card js-status-card rounded-[10px] border border-border bg-card p-3 transition-colors hover:border-border-h hover:bg-card-h"
+      onPointerMove={trackSpotlight}
+      style={{ '--status-color': accent, '--spot-color': accent } as CSSProperties}
+    >
+      <span className="js-status-rail" aria-hidden="true" />
       <div className="flex items-baseline gap-2">
         <span className="min-w-0 flex-1 truncate text-sm font-semibold">{app.company || '—'}</span>
         {date && <time className="shrink-0 text-[11px] text-mute tnum">{date}</time>}

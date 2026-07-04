@@ -295,6 +295,43 @@ html.light {
 }
 .js-gradient-card > * { position: relative; z-index: 1; }
 
+.js-spotlight-card {
+  --spot-x: 50%;
+  --spot-y: 50%;
+  --spot-color: var(--accent);
+  position: relative;
+  isolation: isolate;
+}
+.js-spotlight-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(180px circle at var(--spot-x) var(--spot-y), color-mix(in srgb, var(--spot-color) 20%, transparent), transparent 58%);
+  opacity: 0;
+  transition: opacity .22s ease-out;
+}
+.js-spotlight-card:hover::after { opacity: 1; }
+.js-spotlight-card > * { position: relative; z-index: 1; }
+
+.js-status-card {
+  box-shadow: 0 0 38px -30px var(--status-color), inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+}
+.js-status-rail {
+  position: absolute;
+  inset: 10px auto 10px 0;
+  z-index: 2;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--status-color);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--status-color) 60%, transparent);
+}
+.js-status-card[data-status="offer"] .js-status-rail,
+.js-status-card[data-status="interview"] .js-status-rail {
+  animation: jsStrongPulse 2.2s ease-in-out infinite;
+}
+
 .js-kpi-card {
   box-shadow: 0 0 48px -30px var(--kpi-color), inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
 }

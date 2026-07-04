@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { ExternalLink } from 'lucide-react'
 import type { JobRow } from '@/lib/schema'
 import { TIER_COLOR } from '@/lib/schema'
 import { compLabel, daysAgo, stockChange, stockLabel } from '@/lib/format'
+import { trackSpotlight } from '@/lib/spotlight'
 
 function Pill({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -40,7 +41,9 @@ export function JobCard({ row, onOpen }: { row: JobRow; onOpen: (id: string) => 
       role="button"
       tabIndex={0}
       aria-label={`Open ${row.title} at ${row.company}`}
-      className="cursor-pointer rounded-[14px] border border-border bg-card p-4 outline-none transition-colors hover:border-border-h hover:bg-card-h focus-visible:border-accent"
+      onPointerMove={trackSpotlight}
+      style={{ '--spot-color': tierColor } as CSSProperties}
+      className="js-spotlight-card cursor-pointer rounded-[14px] border border-border bg-card p-4 outline-none transition-colors hover:border-border-h hover:bg-card-h focus-visible:border-accent"
     >
       <div className="flex items-start gap-3">
         <div className="flex w-11 shrink-0 flex-col items-center pt-0.5">
