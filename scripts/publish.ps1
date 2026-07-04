@@ -156,7 +156,7 @@ $Name  = "rinz0x0cruz"
 $Email = "rinz0x0cruz@users.noreply.github.com"
 
 if (-not (Test-Path (Join-Path $DashDir ".git"))) {
-    git clone --quiet --branch $Branch --single-branch $Repo $DashDir
+    git clone --quiet --branch $Branch --single-branch $Repo $DashDir 2>&1 | ForEach-Object { Write-Host $_ }
     if ($LASTEXITCODE -ne 0) { throw "clone of $Repo ($Branch) failed (is a credential cached?)" }
 }
 
@@ -166,22 +166,28 @@ Copy-Item (Join-Path $Dist "*") $DashDir -Recurse -Force
 New-Item -ItemType File -Path (Join-Path $DashDir ".nojekyll") -Force | Out-Null
 
 Push-Location $DashDir
+# git writes warnings (LF/CRLF) and push status to stderr; under Windows PowerShell 5.1
+# with ErrorActionPreference=Stop that aborts the script, so relax it here and gate on
+# $LASTEXITCODE instead (2>&1 merges stderr into the output stream so it just prints).
+$eapPrev = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 try {
-    git checkout -q $Branch
+    git checkout -q $Branch 2>&1 | ForEach-Object { Write-Host $_ }
 
-    git add -A
+    git add -A 2>&1 | ForEach-Object { Write-Host $_ }
     git diff --cached --quiet
     if ($LASTEXITCODE -eq 0) {
         Write-Host "==> No changes to publish."
     } else {
         $stamp = (Get-Date).ToUniversalTime().ToString("o")
-        git -c user.name=$Name -c user.email=$Email commit -q -m "chore: publish dashboard $stamp"
+        git -c user.name=$Name -c user.email=$Email commit -q -m "chore: publish dashboard $stamp" 2>&1 | ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -ne 0) { throw "commit failed" }
-        git push -q origin $Branch
+        git push -q origin $Branch 2>&1 | ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -ne 0) { throw "push failed (is a credential cached / remote reachable?)" }
         Write-Host "==> Published -> https://rinz0x0cruz.github.io/jobscope/"
     }
 }
 finally {
+    $ErrorActionPreference = $eapPrev
     Pop-Location
 }

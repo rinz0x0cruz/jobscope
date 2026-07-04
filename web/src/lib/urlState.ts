@@ -23,6 +23,22 @@ export const searchSchema = z.object({
 
 export type SearchState = z.infer<typeof searchSchema>
 
+// Defaults matching each field's `.catch(...)` above. Fed to the router's
+// stripSearchParams middleware so a view at defaults yields a clean URL (no
+// tab=all&q=&resume=[]... noise); only changed filters appear in the hash.
+export const SEARCH_DEFAULTS: Partial<SearchState> = {
+  tab: 'all',
+  q: '',
+  resume: [],
+  country: [],
+  place: [],
+  mode: [],
+  funding: [],
+  scope: [],
+  group: false,
+  hideClosed: true,
+}
+
 export type FacetKey = 'resume' | 'country' | 'place' | 'mode' | 'funding' | 'scope'
 
 export interface FacetDef {
