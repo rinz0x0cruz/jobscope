@@ -161,3 +161,12 @@ output:
   db_path: "data/jobscope.db"
   dashboard_path: "data/dashboard.html"
   public_dashboard_path: "data/public-dashboard.html"   # redacted copy for `dashboard --public` / GitHub Pages
+
+# Local dashboard server (`jobscope serve`). The served page shows a
+# localhost-only "Refresh & Publish" button that syncs your Gmail inbox
+# (append-only), rescores matches, rebuilds the dashboard, and publishes the
+# redacted/encrypted site -- at most once per day. Never exposed on the public site.
+serve:
+  refresh_enabled: true      # show/allow the Refresh & Publish button
+  refresh_full_scan: false   # also re-scrape job boards (429-prone) before matching
+  inbox_days: 7              # Gmail lookback window for the button's inbox sync

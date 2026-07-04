@@ -133,6 +133,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dashboard_path": "data/dashboard.html",
         "public_dashboard_path": "data/public-dashboard.html",
     },
+    # Local dashboard server (`jobscope serve`). The served page shows a
+    # localhost-only "Refresh & Publish" button that syncs the Gmail inbox
+    # (append-only), rescores matches, rebuilds the dashboard, and publishes the
+    # redacted/encrypted site -- at most once per day. Never exposed publicly.
+    "serve": {
+        "refresh_enabled": True,     # show/allow the Refresh & Publish button
+        "refresh_full_scan": False,  # also re-scrape job boards (429-prone) before matching
+        "inbox_days": 7,             # Gmail lookback window for the button's inbox sync
+    },
 }
 
 CONFIG_CANDIDATES = ("config.yaml", "config.yml", "config.json")

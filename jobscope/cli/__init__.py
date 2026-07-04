@@ -114,6 +114,14 @@ def cmd_serve(args, cfg):
     return serve.run(cfg, port=args.port, open_browser=args.open)
 
 
+def cmd_refresh(args, cfg):
+    from ..deliver import serve
+    res = serve.perform_refresh(cfg, force=args.force, full_scan=args.full_scan,
+                                on_step=lambda name, message: print(f"  {message}"))
+    print(f"  {res['message']}")
+    return 0
+
+
 def cmd_track(args, cfg):
     from ..apply import track
     with _store(args, cfg) as store:
@@ -327,6 +335,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=8799)
     sp.add_argument("--open", action="store_true")
     sp.set_defaults(func=cmd_serve)
+
+    sp = sub.add_parser("refresh",
+                        help="Sync Gmail + rescore + rebuild + publish (once-per-day guard)")
+    sp.add_argument("--force", action="store_true",
+                    help="Run even if already refreshed today")
+    sp.add_argument("--full-scan", action="store_true",
+                    help="Also re-scrape job boards before matching (slower, 429-prone)")
+    sp.set_defaults(func=cmd_refresh)
 
     sp = sub.add_parser("track", help="View / update application status")
     sp.add_argument("--set", default=None, help="job_id=status")
