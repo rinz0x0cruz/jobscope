@@ -39,7 +39,7 @@ export function AppCard({ app }: { app: Application }) {
   const date = (app.applied_at || app.updated || '').slice(0, 10)
 
   return (
-    <article className="rounded-[10px] border border-border bg-card p-3 transition-colors hover:border-border-h hover:bg-card-h">
+    <article className="js-gradient-card rounded-[10px] border border-border bg-card p-3 transition-colors hover:border-border-h hover:bg-card-h">
       <div className="flex items-baseline gap-2">
         <span className="min-w-0 flex-1 truncate text-sm font-semibold">{app.company || '—'}</span>
         {date && <time className="shrink-0 text-[11px] text-mute tnum">{date}</time>}

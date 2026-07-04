@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Lock, Moon, Search, Sun } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
+import { SignalLottie } from '@/components/SignalLottie'
 
 interface Props {
   total: number
@@ -14,12 +15,14 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
   const { theme, toggle } = useTheme()
   const reduce = useReducedMotion()
   return (
-    <header className="sticky top-0 z-20 flex flex-wrap items-center gap-4 border-b border-border bg-bg/70 px-6 py-3.5 backdrop-blur-lg backdrop-saturate-150">
-      <div className="flex items-center gap-2.5">
-        <div className="h-[22px] w-[22px] rounded-[7px] bg-gradient-to-br from-accent to-[#b7a6ff] shadow-[0_6px_16px_-6px_var(--accent)]" />
+    <header className="js-header-gradient sticky top-0 z-20 flex flex-wrap items-center gap-4 overflow-hidden border-b border-border bg-bg/70 px-6 py-3.5 backdrop-blur-lg backdrop-saturate-150">
+      <div className="flex items-center gap-3">
+        <div className="js-logo-mark grid h-12 w-12 place-items-center">
+          <SignalLottie size={48} />
+        </div>
         <div>
-          <h1 className="text-base font-semibold leading-none tracking-tight">jobscope</h1>
-          <div className="mt-0.5 text-xs text-mute tnum">
+          <h1 className="js-neon-title text-xl font-black leading-none tracking-tight">jobscope</h1>
+          <div className="mt-1 text-xs font-medium text-dim tnum">
             {shown === total ? `${total} roles` : `${shown} / ${total} roles`} &middot; {generated}
           </div>
         </div>
@@ -33,7 +36,7 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
           value={query}
           onChange={(e) => onQuery(e.target.value)}
           placeholder="Search title, company, place…"
-          className="w-64 rounded-[10px] border border-border bg-card py-2 pl-9 pr-9 text-[13px] text-fg outline-none transition-[width,box-shadow,border-color] focus:w-72 focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-dim)]"
+          className="w-64 rounded-[12px] border border-border bg-card/90 py-2.5 pl-9 pr-9 text-[13px] text-fg outline-none shadow-[0_0_24px_-20px_var(--accent)] transition-[width,box-shadow,border-color] focus:w-72 focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-dim),0_0_34px_-16px_var(--accent)]"
         />
         <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-border px-1.5 py-0.5 text-[10px] text-mute">
           /
@@ -43,7 +46,7 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
       <a
         href="applications.html"
         title="Your applications — passphrase-protected"
-        className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-border bg-card px-3 text-[13px] text-dim transition hover:border-border-h hover:text-fg"
+        className="js-hot-button inline-flex h-10 items-center gap-1.5 rounded-[12px] border border-border bg-card px-3.5 text-[13px] font-semibold text-dim transition hover:border-border-h hover:text-fg"
       >
         <Lock size={14} />
         Applications
@@ -53,7 +56,7 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
         type="button"
         onClick={toggle}
         aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-        className="relative grid h-9 w-9 place-items-center overflow-hidden rounded-[10px] border border-border bg-card text-dim transition hover:border-border-h hover:text-fg"
+        className="js-hot-button relative grid h-10 w-10 place-items-center overflow-hidden rounded-[12px] border border-border bg-card text-dim transition hover:border-border-h hover:text-fg"
       >
         <AnimatePresence initial={false}>
           <motion.span
