@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from typing import Optional
 
 from .config import api_key
@@ -51,6 +52,14 @@ def chat(cfg: dict, store, system: str, user: str, *, cache: bool = True,
     # single-model path below if quorum is absent, disabled, or returns nothing.
     try:
         from quorum.api import chat as _quorum_chat
+        # Embedded quorum reads the provider key from os.environ; surface the
+        # host-resolved key (which may live in the OS keychain) so a keychain-only
+        # secret still reaches quorum's model calls.
+        _env = cfg.get("ai", {}).get("api_key_env", "")
+        if _env and not os.environ.get(_env):
+            _k = api_key(cfg)
+            if _k:
+                os.environ[_env] = _k
         try:
             out = _quorum_chat(cfg, store, system, user, temperature=temperature,
                                strategy=strategy, history=history, context=context)
