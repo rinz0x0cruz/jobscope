@@ -11,6 +11,7 @@
   :root {
     --bg: #0a0a0b; --panel: #141417; --panel2: #1c1c21; --line: #2a2a31;
     --fg: #e7e7ea; --dim: #9a9aa5; --accent: #8b5cf6;
+    --neon-cyan: #27d9ff; --neon-blue: #2f7bff; --neon-violet: #8b5cf6; --neon-emerald: #22e6a8;
     --applied: #3b82f6; --interview: #f59e0b; --offer: #22c55e;
     --rejected: #ef4444; --prepared: #64748b; --new: #64748b;
   }
@@ -39,9 +40,28 @@
   .chip b { font-variant-numeric: tabular-nums; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .metrics { color: var(--dim); font-size: 12.5px; margin: -8px 0 18px; }
+  @keyframes railPulse {
+    0%, 100% { box-shadow: 0 0 10px color-mix(in srgb, var(--status-color) 34%, transparent); }
+    50% { box-shadow: 0 0 24px color-mix(in srgb, var(--status-color) 72%, transparent); }
+  }
   /* cards */
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-    padding: 13px 14px; margin-bottom: 10px; }
+  .card { --spot-x: 50%; --spot-y: 50%; --status-color: var(--accent);
+    position: relative; isolation: isolate; overflow: hidden;
+    background:
+      linear-gradient(color-mix(in srgb, var(--panel) 88%, #000 12%), color-mix(in srgb, var(--panel) 94%, var(--neon-blue) 6%)) padding-box,
+      linear-gradient(128deg, var(--neon-cyan), var(--neon-blue), var(--neon-violet), var(--neon-emerald)) border-box;
+    border: 1px solid transparent; border-radius: 14px;
+    padding: 13px 14px 13px 16px; margin-bottom: 10px;
+    box-shadow: 0 0 34px -28px var(--status-color); }
+  .card::before { content: ""; position: absolute; inset: 10px auto 10px 0; width: 3px;
+    border-radius: 999px; background: var(--status-color);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--status-color) 58%, transparent); }
+  .card::after { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+    background: radial-gradient(180px circle at var(--spot-x) var(--spot-y), color-mix(in srgb, var(--status-color) 22%, transparent), transparent 58%);
+    opacity: 0; transition: opacity .22s ease-out; }
+  .card:hover::after { opacity: 1; }
+  .card.status-offer::before, .card.status-interview::before { animation: railPulse 2.2s ease-in-out infinite; }
+  .card > * { position: relative; z-index: 1; }
   .card .top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
   .co { font-weight: 650; }
   .date { color: var(--dim); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -171,7 +191,8 @@ window.__ENC__ = {"v":1,"kdf":"PBKDF2-SHA256","iter":210000,"salt":"K0d1q2Eql55C
       }
       var tl = a.timeline || [];
       var card = document.createElement("div");
-      card.className = "card";
+      card.className = "card status-" + String(a.status || "new").replace(/[^a-z0-9_-]/gi, "").toLowerCase();
+      card.style.setProperty("--status-color", color(a.status));
       var html = '<div class="top"><span class="co">' + esc(a.company || "(unknown)") + "</span>" +
                  '<span class="date">' + esc(fmtDate(a.applied_at || a.updated)) + "</span></div>";
       if (a.title) html += '<div class="title">' + esc(a.title) + "</div>";
@@ -197,6 +218,14 @@ window.__ENC__ = {"v":1,"kdf":"PBKDF2-SHA256","iter":210000,"salt":"K0d1q2Eql55C
       if (!btn) return;
       var box = document.getElementById("tl" + btn.getAttribute("data-i"));
       if (box) box.classList.toggle("open");
+    });
+
+    list.addEventListener("pointermove", function (ev) {
+      var card = ev.target.closest(".card");
+      if (!card) return;
+      var rect = card.getBoundingClientRect();
+      card.style.setProperty("--spot-x", (ev.clientX - rect.left) + "px");
+      card.style.setProperty("--spot-y", (ev.clientY - rect.top) + "px");
     });
 
     document.getElementById("sub").textContent = "Updated " + fmtDate(data.generated);
