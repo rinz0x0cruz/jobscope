@@ -37,8 +37,9 @@ jobscope/
     deliver/         Dashboards & exports: render, exporter, serve, pdf, email, schema/
     cli/             build_parser + cmd_* + main (+ pipeline, scaffold, selftest)
     __main__.py      Thin shim → cli.main (console-script + `python -m jobscope`)
-  web/               Vite + React + TS dashboard (consumes the JSON contract)
+  web/               Vite + React + TS dashboard (consumes the JSON contract; PWA/Pages UI)
     src/
+  scripts/           Publish helpers + encrypted applications.html template
   tests/             pytest suite (offline; mirrors the module layout)
   data/              Runtime artifacts (SQLite db, dashboard json) — gitignored
   ARCHITECTURE.md    This file
@@ -304,10 +305,12 @@ Representative API: `upsert_job()`, `update_score()`, `update_ai_seniority()`, `
 
 ---
 
-## 8. Web dashboard (`web/`)
+## 8. Web dashboard (`web/` + encrypted apps shell)
 
-Vite + React 19 + TS + Tailwind v4 + TanStack Router (hash) + Motion. The build bakes in
+Vite + React 19 + TS + Tailwind v4 + TanStack Router (hash) + Motion + Lottie. The build bakes in
 [web/src/data/dashboard.json](web/src/data/dashboard.json) (emitted by `jobscope dashboard --emit-json`).
+The public Pages build is redacted; the separate [scripts/apps-template.html](scripts/apps-template.html)
+is the static shell for the end-to-end encrypted applications page.
 
 | Area | Files | Responsibility |
 |------|-------|----------------|
@@ -316,8 +319,9 @@ Vite + React 19 + TS + Tailwind v4 + TanStack Router (hash) + Motion. The build 
 | **Contract** | [lib/schema.ts](web/src/lib/schema.ts) | TS mirror of the Python payload (keep 1:1) |
 | **State** | [lib/urlState.ts](web/src/lib/urlState.ts), [hooks/useSearchState.ts](web/src/hooks/useSearchState.ts) | URL = single source of truth; `FACETS`, `searchSchema`, `TAB_VALUES` |
 | **Filter/search** | [lib/filters.ts](web/src/lib/filters.ts), [lib/search.ts](web/src/lib/search.ts), [lib/overview.ts](web/src/lib/overview.ts), [lib/format.ts](web/src/lib/format.ts) | `tabPool`→`applyFacets`→`makeFuse`→`fuzzy`→`buildDisplayItems`; Fuse.js; formatting |
-| **Components** | `Header`, `Tabs`, `Switch`, `JobList`, `JobCard`, `JobDrawer`, `Kpis`, `filters/*`, `overview/*` | Virtualized list, deep-linkable drawer, facets, KPI/donut/bars |
+| **Components** | `Header`, `SignalLottie`, `CyberSakura`, `Tabs`, `Switch`, `JobList`, `JobCard`, `JobDrawer`, `Kpis`, `applications/*`, `filters/*`, `overview/*` | Virtualized list, deep-linkable drawer, facets, KPI/donut/bars, Applications board, animated visual shell |
 | **Hooks** | [hooks/useTheme.ts](web/src/hooks/useTheme.ts) | Dark/light toggle |
+| **Motion helpers** | [lib/spotlight.ts](web/src/lib/spotlight.ts), [styles/theme.css](web/src/styles/theme.css) | Cursor-follow card spotlight, animated gradients, status rails, cyber-sakura leaves, reduced-motion guard |
 
 **State pipeline** (all in `App.tsx`, driven by the URL):
 
@@ -327,6 +331,16 @@ flowchart LR
     S --> tabPool --> applyFacets --> makeFuse --> fuzzy --> buildDisplayItems --> JobList
     S --> JobDrawer
 ```
+
+**Visual/motion layer:** the dashboard has a self-contained animated treatment: `SignalLottie` renders a
+briefcase/scope mark over local Lottie data, `CyberSakura` draws a right-rail SVG cyber tree with falling
+leaf spans, and `theme.css` owns the aurora gradients, cursor spotlight, status rails, and reduced-motion
+fallbacks. None of this changes the JSON contract or deterministic backend behavior.
+
+**Encrypted applications shell:** [scripts/apps-template.html](scripts/apps-template.html) is intentionally
+not part of the Vite bundle. `scripts/build-secure-apps.mjs` injects only an encrypted payload into it.
+The shell has its own CSS/JS for pipeline bars, status rails, and cursor spotlight, and must preserve
+`window.__ENC__ = __ENC_BLOB__;` so the sensitive payload remains encrypted at rest on Pages.
 
 ---
 
@@ -368,12 +382,15 @@ flowchart LR
 | 9 | Stock/comp field pick | `_enrich_summary()` key subset | `format.ts:stockLabel()` | Added stock field invisible until schema updated |
 | 10 | Public redaction | `_redact_public()` | no type-level public/private distinction | A missed field could leak private data |
 | 11 | `gaps` tuple | `[[skill, count]]` | `[string, number][]` | Structural change breaks index access |
+| 12 | Visual shell classes | `web/src/components/*`, `scripts/apps-template.html` | `theme.css` + encrypted apps inline CSS | Class drift silently drops animation/status affordances |
 
 > **Mitigation (P-A · done):** a JSON-Schema artifact lives at
 > [jobscope/deliver/schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) and a
 > structural contract test ([tests/test_dashboard_json.py](tests/test_dashboard_json.py)) asserts the
 > emitted `dashboard.json` matches the shape (and that the public build is redacted). *Opportunistic
 > next:* generate `schema.ts` from Python so the mirror can't drift.
+> The visual shell has a lightweight source-asset guard in [tests/test_web_assets.py](tests/test_web_assets.py)
+> for Lottie/cyber-sakura/spotlight wiring and encrypted applications shell markers.
 
 ---
 
@@ -403,6 +420,12 @@ in `scrape`/`ats` → emit it in `_job_record` ([render.py](jobscope/deliver/ren
 **Add a web facet:** add the key to `FACETS`, `FacetKey`, and `searchSchema`
 ([urlState.ts](web/src/lib/urlState.ts)); render it in `FacetBar`; ensure the underlying field
 is present on `JobRow`.
+
+**Add a visual dashboard effect:** keep it self-contained in `web/src` or `theme.css`; no runtime CDN/fetch.
+Decorative elements must be `aria-hidden` and `pointer-events: none`; interactive card effects should use
+[lib/spotlight.ts](web/src/lib/spotlight.ts) or CSS variables rather than ad hoc listeners. If the same
+affordance belongs on the encrypted applications page, mirror it in [scripts/apps-template.html](scripts/apps-template.html)
+without touching the encrypted payload marker.
 
 ---
 

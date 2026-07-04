@@ -133,16 +133,18 @@ html.light {
   z-index: 1;
   width: clamp(180px, 22vw, 315px);
   height: min(68vh, 510px);
+  overflow: hidden;
   pointer-events: none;
-  opacity: .72;
+  opacity: .46;
   mix-blend-mode: screen;
+  border-radius: 28px;
 }
 .js-cyber-tree-svg {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  overflow: visible;
+  overflow: hidden;
   filter: drop-shadow(0 0 20px color-mix(in srgb, var(--neon-cyan) 38%, transparent));
 }
 .js-tree-trunk,
@@ -183,7 +185,7 @@ html.light {
 .js-sakura-leaves {
   position: absolute;
   inset: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 .js-sakura-leaf {
   position: absolute;
@@ -204,6 +206,14 @@ html.light {
   fill: url(#treeLeaf);
   stroke: color-mix(in srgb, white 42%, transparent);
   stroke-width: 1.2;
+}
+
+html.light .js-cyber-tree {
+  opacity: .16;
+  mix-blend-mode: multiply;
+}
+html.light .js-cyber-tree-svg {
+  filter: none;
 }
 
 .js-header-gradient { position: sticky; }

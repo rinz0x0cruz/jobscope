@@ -51,6 +51,24 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 
 ---
 
+## Dashboard UX / motion layer
+
+- **Published React dashboard:** Vite/React/PWA build with static `dashboard.json` baked in. The public build
+  is redacted: contacts, rationale, resume-base, search targets, funnel, and all applications are stripped.
+- **Flashy system skin:** animated aurora gradients, neon blue/cyan/violet/emerald card frames, a Lottie-powered
+  briefcase/scope logo, and a decorative cyber-sakura tree with occasional falling leaves. These are all local
+  code/assets — no CDN or runtime animation fetch.
+- **Interaction polish:** KPI, role, and application cards use cursor-follow spotlight variables (`--spot-x`,
+  `--spot-y`) and preserve keyboard focus rings. Application cards also get status-colored rails; `interview`
+  and `offer` rails pulse gently to surface active outcomes.
+- **Applications page:** `applications.html` is a standalone encrypted shell. Its UI shell mirrors the
+  dashboard's status rails and cursor spotlight after unlock, while the sensitive applications payload remains
+  AES-GCM encrypted and only decrypts in-browser with the passphrase.
+- **Reduced motion:** CSS, Motion, and Lottie animation respects the global `prefers-reduced-motion` guard;
+  decorative layers are `aria-hidden`/`pointer-events: none`.
+
+---
+
 ## Resume import & parsing
 
 - Accepts Markdown / JSON Resume / PDF / plain text.
