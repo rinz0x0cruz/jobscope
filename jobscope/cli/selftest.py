@@ -56,6 +56,14 @@ def run() -> int:
     c.ok("quorum strategy_generative default", _ai.strategy_for(DEFAULT_CONFIG, "generative") == "council")
     c.ok("quorum strategy_classify default", _ai.strategy_for(DEFAULT_CONFIG, "classify") == "ensemble")
     c.ok("quorum strategy_for empty -> None", _ai.strategy_for({"quorum": {}}, "generative") is None)
+    from ..core.model import Job as _J, Resume as _R
+    from ..analyze.match import ai_review as _air
+    _tiers = {"strong": 75, "good": 55, "stretch": 35}
+    c.ok("ai_review near_boundary",
+         _air.near_boundary(73, _tiers, 8) and not _air.near_boundary(90, _tiers, 8))
+    c.ok("ai_review tier_of", _air._tier_of(80, _tiers) == "Strong" and _air._tier_of(10, _tiers) == "Skip")
+    c.ok("ai_review off -> None",
+         _air.review_job(cfg, None, _J(source="x", title="t", company="c"), _R(), 73.0, "Good", _tiers) is None)
 
     # --- store ------------------------------------------------------------
     from ..core.model import Application, Resume

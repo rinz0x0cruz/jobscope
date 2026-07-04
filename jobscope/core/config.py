@@ -51,6 +51,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "target_seniority": "",   # "" = infer from resume; else junior/mid/senior... (down-ranks roles above it)
         "ai_seniority_tiebreak": True,   # if ai.enabled: AI-classify ambiguous non-Skip postings
         "ai_tiebreak_max_calls": 0,      # 0 = unbounded; else cap AI classify calls per match run
+        # Optional multi-model second opinion on jobs near a tier cut (off by default;
+        # needs quorum.enabled). CLI-only: never changes the deterministic score/tier.
+        "ai_score_review": False,
+        "ai_score_margin": 8,            # review jobs within this many points of a tier cut
+        "ai_score_max_calls": 12,        # 0 = unbounded; else cap judge calls per match run
         "prefer_locations": [],
         "prefer_companies": [],
         "prefer_company_size": "any",
