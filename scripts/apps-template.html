@@ -39,6 +39,16 @@
   .chip b { font-variant-numeric: tabular-nums; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .metrics { color: var(--dim); font-size: 12.5px; margin: -8px 0 18px; }
+  /* pipeline funnel graph */
+  .chart-wrap { margin: 2px 0 22px; }
+  .chart-h { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--dim); margin-bottom: 11px; }
+  .chart { display: flex; flex-direction: column; gap: 11px; }
+  .bar-row { display: flex; flex-direction: column; gap: 5px; }
+  .bar-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
+  .bar-label { color: var(--fg); }
+  .bar-count { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .bar-track { height: 10px; background: var(--panel2); border-radius: 999px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; width: 0; transition: width .65s cubic-bezier(.22,.61,.36,1); }
   /* cards */
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
     padding: 13px 14px; margin-bottom: 10px; }
@@ -81,6 +91,7 @@
     <div id="sub" class="sub"></div>
     <div id="chips" class="chips"></div>
     <div id="metrics" class="metrics"></div>
+    <div class="chart-wrap"><div class="chart-h">Pipeline funnel</div><div id="chart" class="chart"></div></div>
     <div id="list"></div>
     <div class="foot">Decrypted locally in your browser &middot; nothing was sent anywhere.</div>
   </main>
@@ -148,6 +159,23 @@ window.__ENC__ = __ENC_BLOB__;
     var pct = function (n) { return submitted ? Math.round((n / submitted) * 100) : 0; };
     document.getElementById("metrics").textContent =
       submitted + " tracked \u00B7 " + pct(responded) + "% response \u00B7 " + pct(interviews) + "% interview+";
+
+    var offers = apps.filter(function (a) { return a.status === "offer"; }).length;
+    var cvar = function (v) { return (getComputedStyle(document.documentElement).getPropertyValue(v) || "").trim() || "#8b5cf6"; };
+    var chart = document.getElementById("chart");
+    chart.innerHTML = "";
+    [["Applied", submitted, cvar("--applied")], ["Responded", responded, cvar("--accent")],
+     ["Interview", interviews, cvar("--interview")], ["Offer", offers, cvar("--offer")]
+    ].forEach(function (st) {
+      var row = document.createElement("div");
+      row.className = "bar-row";
+      row.innerHTML = '<div class="bar-top"><span class="bar-label">' + st[0] + '</span>' +
+                      '<span class="bar-count">' + st[1] + " \u00B7 " + pct(st[1]) + '%</span></div>' +
+                      '<div class="bar-track"><div class="bar-fill" style="background:' + st[2] + '"></div></div>';
+      chart.appendChild(row);
+      var fill = row.querySelector(".bar-fill");
+      requestAnimationFrame(function () { fill.style.width = ((st[1] / Math.max(submitted, 1)) * 100) + "%"; });
+    });
 
     var order = {}; STATUS_ORDER.forEach(function (s, i) { order[s] = i; });
     apps.sort(function (a, b) {
