@@ -160,8 +160,10 @@ if (-not (Test-Path (Join-Path $DashDir ".git"))) {
     if ($LASTEXITCODE -ne 0) { throw "clone of $Repo ($Branch) failed (is a credential cached?)" }
 }
 
-# Replace the published files with the fresh build (hashed asset names change per build).
-Get-ChildItem $DashDir -Force | Where-Object { $_.Name -ne ".git" } | Remove-Item -Recurse -Force
+# Replace the published files with the fresh build (hashed asset names change per
+# build). Preserve a previously published encrypted applications.html: only an
+# -Encrypted run rebuilds it into $Dist, so a plain redacted publish must not drop it.
+Get-ChildItem $DashDir -Force | Where-Object { $_.Name -ne ".git" -and $_.Name -ne "applications.html" } | Remove-Item -Recurse -Force
 Copy-Item (Join-Path $Dist "*") $DashDir -Recurse -Force
 New-Item -ItemType File -Path (Join-Path $DashDir ".nojekyll") -Force | Out-Null
 
