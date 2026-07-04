@@ -15,8 +15,9 @@ Design notes:
   try/except), mirroring ``scrape.py``.
 * **Credentials via env only.** App passwords are read from the environment
   variable named in config; nothing sensitive is stored on disk by jobscope.
-* **AI optional.** An ambiguous ``other`` classification may be refined by the
-  gated AI layer, but classification never requires it.
+* **AI optional.** When weighted scoring leaves two or more signals in a
+  close-call tie, the gated AI/quorum layer may arbitrate among the tied
+  labels only; classification never requires it and degrades deterministically.
 """
 from __future__ import annotations
 

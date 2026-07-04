@@ -192,13 +192,24 @@ Per company, best-effort and non-blocking (`enrich` toggles):
 - OpenAI-compatible client; **Groq by default** (`ai.provider`, `ai.base_url`, `ai.model`).
 - **Off unless** `ai.enabled: true` **and** the API key env var (`ai.api_key_env`) is set. Ollama needs no key.
 - Responses are cached in SQLite (`ai_cache`) keyed by hash(prompt+model).
-- AI is used only for: resume bullet rewrite, cover letter, application free-text answers, Reddit/news
-  summaries, outreach drafts. Everything has a deterministic fallback.
+- Optional `quorum` backend: when `quorum.enabled` is true and the package is installed, `ai.chat()`
+  delegates to quorum instead of one direct model. Per-task overrides keep the strategy matched to the
+  task: `quorum.strategy_generative` (default `council`) for summaries, cover letters, and "why here";
+  `quorum.strategy_classify` (default `ensemble`) for seniority/discipline and ambiguous inbox labels.
+  Empty overrides inherit the global `quorum.strategy`; older quorum versions are retried without the
+  per-call strategy argument.
+- Quorum generative calls get fuller grounding: tailored summary/cover calls pass the full job description
+  (and the recent-news hook when present) as `context` DATA rather than truncating all useful evidence into
+  the prompt. The single-model fallback ignores `strategy`/`context` and behaves as before.
+- AI is used only for: resume summary/cover rewrite, application free-text answers, seniority/discipline
+  tie-breaks, ambiguous inbox label tie-breaks, Reddit/news summaries, and outreach drafts. Everything has
+  a deterministic fallback.
 
 ## Tailoring & PDF
 
 - Deterministic ATS pass: matched vs missing keywords, coverage %, non-destructive tailored resume + cover.
-- AI upgrades the summary/cover when enabled.
+- AI upgrades the summary/cover when enabled; the quorum path uses the generative strategy and receives
+  the full JD/news context as grounding data. If AI is off or unavailable, the deterministic template is used.
 - PDF via Playwright (Markdown → ATS-friendly HTML → PDF); graceful HTML fallback if Chromium is absent.
 
 ## Apply / prep
@@ -231,9 +242,13 @@ application emails into funnel updates, so the pipeline reflects reality without
   never in config — consistent with the no-account-automation rule (reads only, never sends or acts).
 - **Deterministic classification (AI never required).** `mailrules.py` (pure functions) classifies each
   email by **sender domain** (Greenhouse / Lever / Ashby / Workday / iCIMS / Workable / LinkedIn / Indeed …)
-  + ordered **keyword rules** into a signal: `confirmation / recruiter / assessment / interview / offer /
-  rejection / other`. Rejection/offer are matched first so a rejection that also says "interview" isn't
-  mis-read. An optional AI pass refines only the residual `other` bucket when `ai.enabled`.
+  + **weighted keyword scoring** into a signal: `confirmation / recruiter / assessment / interview / offer /
+  rejection / other`. Each phrase carries a weight (3 = decisive, 2 = moderate, 1 = weak/boilerplate) and
+  subject-line hits count double; the highest-scoring signal wins. A decisive rejection/offer phrase
+  short-circuits from anywhere and a subject-authority rule pins plain confirmations, so a rejection that
+  also says "interview" isn't mis-read and a precedence order breaks exact ties. When two or more signals
+  finish in a genuine close-call tie, the optional quorum classify strategy can arbitrate **only among the
+  tied labels**; it never invents a new status and is skipped when AI/quorum is unavailable.
 - **Precision.** ATS domains always count as job-related; job-board/unknown domains need a strong signal,
   and board digests/alerts/community senders are dropped — so newsletters and social noise never reach the
   funnel.

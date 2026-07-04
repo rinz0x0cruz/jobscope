@@ -18,7 +18,7 @@ structure the codebase has settled into. Keep it current (see
 |-----------|-----------------------|
 | **Deterministic-first** | `match`, `resume`, `mailrules`, `companies` are pure functions — no network, no LLM. Same input → same output. |
 | **Offline-first** | Base layers have zero third-party network deps; scrapers/enrichers are best-effort and never break a run. |
-| **AI-optional** | `ai.chat()` returns `None` when disabled; every AI caller (`classify`, `tailor`, `enrich/brief`) has a deterministic fallback. |
+| **AI-optional** | `ai.chat()` returns `None` when disabled; every AI caller has a deterministic fallback. The optional quorum backend accepts per-call `strategy`, `history`, and grounding `context` without changing the deterministic path. |
 | **Additive persistence** | `store` upgrades old databases in place via `ALTER TABLE ADD COLUMN`; never a destructive migration. |
 | **Best-effort enrichment** | Each enrich source is isolated; one failure is caught and does not stop the others. |
 
@@ -130,11 +130,11 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
 | [model.py](jobscope/core/model.py) | 228 | Core dataclasses + id/slug helpers | — | `Job`, `Resume`, `Application`, `Contact`, `MailEvent`, `job_id()`, `slugify()`, `derive_remote_scope()` |
-| [config.py](jobscope/core/config.py) | 176 | Load YAML/JSON, deep-merge over `DEFAULT_CONFIG`, env-only secrets | — | `DEFAULT_CONFIG`, `load_config()`, `api_key()`, `smtp_password()`, `inbox_password()` |
+| [config.py](jobscope/core/config.py) | 200 | Load YAML/JSON, deep-merge over `DEFAULT_CONFIG`, env-only secrets, AI/quorum strategy defaults | — | `DEFAULT_CONFIG`, `load_config()`, `api_key()`, `smtp_password()`, `inbox_password()` |
 | [store/](jobscope/core/store/) | 527 | **Package** — SQLite persistence (10 tables) + additive migrations, split into `base` + `jobs`/`enrichment`/`applications`/`mail`/`profile`/`meta` mixins behind a `Store` facade | model | `Store`, `now_iso()` |
 | [companies.py](jobscope/core/companies.py) | 128 | Curated prestige/size/funding tiers (deterministic) | — | `company_quality()`, `company_size()`, `company_funding()` |
 | [httpx.py](jobscope/core/httpx.py) | 37 | Thin `requests` wrapper (UA, timeout, JSON) | — | `get()`, `get_json()`, `get_text()` |
-| [ai.py](jobscope/core/ai.py) | 82 | OpenAI-compatible chat (Groq/Ollama); optional | config | `available()`, `chat()` |
+| [ai.py](jobscope/core/ai.py) | 105 | OpenAI-compatible chat (Groq/Ollama) + optional quorum delegation with per-call strategy/history/context; bridges the keychain-resolved key into the environment for embedded quorum | config | `available()`, `strategy_for()`, `chat()` |
 
 ### ingest — acquire jobs & signals
 
@@ -142,15 +142,15 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 |--------|-----|----------------|------------------|-------------|
 | [scrape.py](jobscope/ingest/scrape.py) | 153 | JobSpy + ATS boards → `Job` upserts (per-term isolation) | model, store | `run()`, `_row_to_job()` |
 | [ats.py](jobscope/ingest/ats.py) | 213 | Direct Greenhouse/Lever/Ashby board fetch | httpx, model, store | `fetch_company()`, `run()` |
-| [inbox.py](jobscope/ingest/inbox.py) | 283 | Gmail IMAP sync (read-only, incremental) → classify → `mail_events` → advance funnel | ats, config, model, store, mailrules | `run()` |
-| [mailrules.py](jobscope/ingest/mailrules.py) | 340 | Deterministic email classification + company/role parsing (pure, no I/O) | — | `classify_signal()`, `is_job_related()`, `parse_company_role()`, `signal_to_status()`, `advance_status()`, `normalize_company()` |
+| [inbox.py](jobscope/ingest/inbox.py) | 289 | Gmail IMAP sync (read-only, incremental) → weighted classify (+ optional quorum tie-break on ambiguous labels) → `mail_events` → advance funnel | ats, config, model, store, mailrules, (ai lazy) | `run()` |
+| [mailrules.py](jobscope/ingest/mailrules.py) | 444 | Deterministic **weighted-keyword** email classification (signal scoring + ambiguity flag) + company/role parsing (pure, no I/O) | — | `classify_signal()`, `score_signals()`, `classify_scored()`, `is_job_related()`, `parse_company_role()`, `signal_to_status()`, `advance_status()`, `normalize_company()` |
 
 ### analyze — the deterministic core
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
 | [match/](jobscope/analyze/match/) | 670 | **Package** — transparent fit scoring, tiers, filters, resume routing; split into `seniority`/`experience`/`filters`/`scoring`/`routing`/`run` submodules (all public + private names re-exported) | model, resume, (companies lazy) | `score_job()`, `apply_filters()`, `select_base()`, `run()`, `SENIORITY_RANK` |
-| [classify.py](jobscope/analyze/classify.py) | 60 | Optional AI seniority + discipline tie-breaker | ai, match, model | `classify_seniority()` |
+| [classify.py](jobscope/analyze/classify.py) | 61 | Optional AI/quorum seniority + discipline tie-breaker, routed through the classify strategy | ai, match, model | `classify_seniority()` |
 | [resume.py](jobscope/analyze/resume.py) | 339 | Parse Markdown/JSON-Resume/PDF/text → `Resume` + skills | match, model | `import_resume()`, `parse_resume()`, `SKILL_LEXICON` |
 | [insights.py](jobscope/analyze/insights.py) | 47 | Skill-gap analysis across matched jobs | resume, store | `skill_gap()`, `run()` |
 
@@ -172,8 +172,8 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [apply.py](jobscope/apply/apply.py) | 245 | Prep package + human-in-loop ATS autofill (Playwright) | ai, email, tailor, model, store | `prep()`, `apply()` |
-| [tailor.py](jobscope/apply/tailor.py) | 191 | Per-job resume + cover tailoring (deterministic + AI rewrite) | ai, pdf, model, resume, store | `run()`, `analyze()` |
+| [apply.py](jobscope/apply/apply.py) | 246 | Prep package + human-in-loop ATS autofill (Playwright); optional generative strategy for filled answers | ai, email, tailor, model, store | `prep()`, `apply()` |
+| [tailor.py](jobscope/apply/tailor.py) | 198 | Per-job resume + cover tailoring (deterministic + AI/quorum rewrite grounded with full JD/news context) | ai, pdf, model, resume, store | `run()`, `analyze()` |
 | [track.py](jobscope/apply/track.py) | 114 | Application funnel, status, follow-up reminders | model, store | `run()`, `run_new()` |
 | [brief.py](jobscope/apply/brief.py) | 21 | Thin CLI wrapper → `enrich.brief.build()` | enrich.brief | `run()` |
 
@@ -206,7 +206,7 @@ artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboar
 |--------|-----|----------------|------------------|-------------|
 | [cli/__init__.py](jobscope/cli/__init__.py) | 195 | argparse dispatch for 18 subcommands — `build_parser` + all `cmd_*` + `main` (lazy per-command imports) | ~all (lazy) | `main()`, `build_parser()` |
 | [pipeline.py](jobscope/cli/pipeline.py) | 46 | One-shot `scan → match → enrich → prep → digest` | apply, email, enrich, match, scrape | `run()` |
-| [selftest.py](jobscope/cli/selftest.py) | 229 | Offline self-tests (validate the full stack, no network) | model, config, store, match, mailrules, ats, inbox | `run()` |
+| [selftest.py](jobscope/cli/selftest.py) | 233 | Offline self-tests (validate the full stack, no network), including quorum strategy defaults | model, config, store, match, mailrules, ats, inbox, ai | `run()` |
 | [scaffold.py](jobscope/cli/scaffold.py) | 50 | `init`: scaffold config + data dir (non-destructive) | config | `run()` |
 | [__main__.py](jobscope/__main__.py) | 9 | Thin entry-point shim at the package root (`from .cli import main`) | cli | `main` (re-exported) |
 | [__init__.py](jobscope/__init__.py) | 6 | Package marker, `__version__` | — | `__version__` |
@@ -227,9 +227,9 @@ Fan-in = how many modules import it; fan-out = how many it imports (internal onl
 | **analyze/match/** | 670 | ~6 | 3 | Largest logic area. **Split done (P-E):** `seniority`/`experience`/`filters`/`scoring`/`routing`/`run` submodules, layered so leaves never import up; scores identical, all names re-exported. |
 | **deliver/render.py** | 852 | 2 | 2 | Big only because of the inline HTML template (~850 lines of `_TEMPLATE`); the emitter is small. Shrinks once the HTML page retires. |
 | **cli/__init__.py** | 195 | 0 | ~18 | Orchestrator (`build_parser` + `cmd_*` + `main`); wide fan-out but **lazy imports** keep startup light. Healthy. |
-| **core/config.py** | 176 | ~6 | 0 | Pure config layer. Healthy. |
+| **core/config.py** | 200 | ~6 | 0 | Pure config layer, including AI/quorum defaults. Healthy. |
 | **enrich/__init__.py** | 78 | 2 | 8 | Coordinator that **iterates the source registry** (P-B done); sources self-register via `@source(...)`. Healthy. |
-| **core/ai.py** | 82 | ~4 | 1 | Optional layer; all callers have deterministic fallbacks. Healthy. |
+| **core/ai.py** | 105 | ~4 | 1 | Optional layer; all callers have deterministic fallbacks. Quorum-only `strategy`/`history`/`context` arguments are additive and ignored by the single-model fallback. Healthy. |
 
 ---
 
@@ -259,6 +259,29 @@ flowchart LR
 
 Stages communicate **only through the store** (no shared in-memory state), which keeps each
 stage independently runnable from its own subcommand.
+
+### Optional AI/quorum overlay (`core/ai.py`)
+
+All AI paths call [core/ai.py](jobscope/core/ai.py). `available(cfg)` gates the layer, and
+`chat()` returns `None` on disabled config, missing keys, import failure, HTTP failure, or an empty quorum
+result. Callers always keep a deterministic fallback.
+
+When `quorum.enabled` is true and the optional `quorum` package is installed, `chat()` delegates to
+`quorum.api.chat(...)` before the single-model OpenAI-compatible path. The delegation is additive:
+
+- `strategy=ai.strategy_for(cfg, "generative")` routes summaries, cover letters, and filled answers through
+  `quorum.strategy_generative` (default `council`).
+- `strategy=ai.strategy_for(cfg, "classify")` routes seniority/discipline and ambiguous inbox-label calls
+  through `quorum.strategy_classify` (default `ensemble`).
+- `context=[...]` carries grounding data for generative calls (full job description and optional news hook);
+  quorum frames it as DATA, not instructions.
+- A `TypeError` retry preserves compatibility with older quorum builds that do not yet accept `strategy=`.
+- Before delegating, `chat()` bridges the resolved key into `os.environ[ai.api_key_env]` (keychain-first via
+  `config.api_key()`) so the **embedded** quorum backend — which reads provider keys from the environment —
+  authenticates without a separate `.env`. Nothing is written to disk; the value is only exported in-process.
+
+If quorum is absent or returns `None`, the single-model fallback ignores `strategy`/`history`/`context` and
+uses the existing prompt/cache path.
 
 ---
 
@@ -366,6 +389,11 @@ the module to the import line in [enrich/__init__.py](jobscope/enrich/__init__.p
 at import (import = register — no `if cfg[...]` ladder edit); add its toggle to the `enrich` section of
 `DEFAULT_CONFIG` ([core/config.py](jobscope/core/config.py)); surface fields via `_enrich_summary` +
 `schema.ts`.
+
+**Add an AI-assisted path:** call `ai.chat()` with a deterministic fallback in the caller. For quorum-aware
+tasks, pass `strategy=ai.strategy_for(cfg, "generative")` for prose generation or
+`strategy=ai.strategy_for(cfg, "classify")` for constrained labels. Pass `context=[{"title": ..., "text": ...}]`
+only for grounding data; never make scoring, filtering, storage, or CLI success depend on an LLM response.
 
 **Add a `Job` field end-to-end:** add it to the `Job` dataclass ([model.py](jobscope/core/model.py)) →
 add the column to `SCHEMA` + `_ensure_columns()` ([store/base.py](jobscope/core/store/base.py)) → set it

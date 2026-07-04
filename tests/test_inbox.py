@@ -149,6 +149,51 @@ def test_classify_scored_rejection_decisive_not_ambiguous():
     assert ambiguous is False
 
 
+# --- inbox: quorum tie-break wiring (gated, deterministic fallback) ----------
+def test_quorum_pick_returns_none_when_ai_unavailable(monkeypatch):
+    # Tie-break is gated: with AI/quorum off, the deterministic label stands.
+    from jobscope.core import ai
+    monkeypatch.setattr(ai, "available", lambda cfg: False)
+    assert inbox._quorum_pick({}, None, "Next round", "body", ["assessment", "interview"]) is None
+
+
+def test_quorum_pick_needs_two_candidates(monkeypatch):
+    # A lone candidate is not a tie, so the AI layer is never consulted.
+    from jobscope.core import ai
+    seen = {"chat": False}
+
+    def _chat(*a, **k):
+        seen["chat"] = True
+        return "interview"
+
+    monkeypatch.setattr(ai, "available", lambda cfg: True)
+    monkeypatch.setattr(ai, "chat", _chat)
+    assert inbox._quorum_pick({}, None, "s", "b", ["interview"]) is None
+    assert seen["chat"] is False
+
+
+def test_quorum_pick_arbitrates_only_among_tied(monkeypatch):
+    # Quorum may choose a tied label (case/punctuation-tolerant) but never one outside the set.
+    from jobscope.core import ai
+    monkeypatch.setattr(ai, "available", lambda cfg: True)
+    monkeypatch.setattr(ai, "strategy_for", lambda cfg, task: "ensemble")
+
+    monkeypatch.setattr(ai, "chat", lambda *a, **k: "Interview.")
+    assert inbox._quorum_pick({}, None, "s", "b", ["assessment", "interview"]) == "interview"
+
+    monkeypatch.setattr(ai, "chat", lambda *a, **k: "offer")  # outside the tied set -> rejected
+    assert inbox._quorum_pick({}, None, "s", "b", ["assessment", "interview"]) is None
+
+
+def test_quorum_pick_none_when_ai_returns_nothing(monkeypatch):
+    # An empty/None AI response falls back to the deterministic label.
+    from jobscope.core import ai
+    monkeypatch.setattr(ai, "available", lambda cfg: True)
+    monkeypatch.setattr(ai, "strategy_for", lambda cfg, task: "ensemble")
+    monkeypatch.setattr(ai, "chat", lambda *a, **k: None)
+    assert inbox._quorum_pick({}, None, "s", "b", ["assessment", "interview"]) is None
+
+
 # --- mailrules: relevance gating --------------------------------------------
 def test_is_job_related_by_domain():
     assert mailrules.is_job_related("greenhouse.io", "other") is True

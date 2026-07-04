@@ -92,3 +92,26 @@ def test_chat_falls_back_when_quorum_lacks_strategy(monkeypatch):
         out = ai.chat(cfg, store, "sys", "user", strategy="council")
         assert out == "SINGLE"  # TypeError retry -> None -> single-model fallback
         store.close()
+
+
+def test_chat_bridges_key_to_env_for_embedded_quorum(monkeypatch):
+    # Embedded quorum reads the provider key from os.environ; chat() must export
+    # the host-resolved (possibly keychain-only) key before delegating.
+    pytest.importorskip("quorum.api")
+    import quorum.api as qapi
+    env_name = "JOBSCOPE_TEST_BRIDGE_KEY"
+    monkeypatch.delenv(env_name, raising=False)          # absent -> bridge should fill it
+    monkeypatch.setattr(ai, "api_key", lambda cfg: "bridged-key")  # no real keychain
+    cfg = _cfg(enabled=True, provider="groq")
+    cfg["ai"]["api_key_env"] = env_name
+    seen = {}
+
+    def fake_q(cfg, store, system, user, *, temperature=None, strategy=None,
+               history=None, context=None):
+        seen["env"] = os.environ.get(env_name)   # captured at delegation time
+        return "Q"
+
+    monkeypatch.setattr(qapi, "chat", fake_q)
+    assert ai.chat(cfg, None, "sys", "user") == "Q"
+    assert seen["env"] == "bridged-key"          # bridge ran before delegating
+
