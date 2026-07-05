@@ -32,8 +32,16 @@ if ([string]::IsNullOrEmpty($env:JOBSCOPE_DB_KEY)) {
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("js-seed-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
-    node (Join-Path $RepoRoot "scripts\crypt-file.mjs") encrypt $db (Join-Path $tmp "jobscope.db.enc")
-    if ($LASTEXITCODE -ne 0) { throw "encryption failed" }
+    # crypt-file.mjs prints a status line to stderr; under ErrorActionPreference=Stop
+    # (Windows PowerShell 5.1) that would abort the seed, so relax it around the node
+    # call and gate on the exit code instead (2>&1 merges the line so it just prints).
+    $eapPrev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    node (Join-Path $RepoRoot "scripts\crypt-file.mjs") encrypt $db (Join-Path $tmp "jobscope.db.enc") 2>&1 |
+        ForEach-Object { Write-Host $_ }
+    $encExit = $LASTEXITCODE
+    $ErrorActionPreference = $eapPrev
+    if ($encExit -ne 0) { throw "encryption failed (exit $encExit)" }
 
     Push-Location $tmp
     try {
