@@ -236,3 +236,63 @@ def test_refresh_disabled_no_widget_and_403(monkeypatch):
             httpd.shutdown()
             httpd.server_close()
             thread.join(timeout=3)
+
+
+def test_build_on_start_rebuilds_even_with_dist(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)  # a built SPA fixture is already present
+        cfg["serve"]["build_on_start"] = True
+        Store(cfg["output"]["db_path"]).close()
+        built = {"n": 0}
+        monkeypatch.setattr(serve, "_build_local_spa",
+                            lambda c, s: built.__setitem__("n", built["n"] + 1))
+        httpd, port, token, thread = _serve_bg(cfg)
+        try:
+            assert built["n"] == 1   # rebuilt on start despite an existing dist
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_no_rebuild_when_dist_present(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)  # dist present, build_on_start defaults False
+        Store(cfg["output"]["db_path"]).close()
+        built = {"n": 0}
+        monkeypatch.setattr(serve, "_build_local_spa",
+                            lambda c, s: built.__setitem__("n", built["n"] + 1))
+        httpd, port, token, thread = _serve_bg(cfg)
+        try:
+            assert built["n"] == 0   # served the existing dist, no build
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_publish_selects_platform_script(monkeypatch):
+    import subprocess
+    captured = {}
+
+    def fake_run(args, **kw):
+        captured["args"] = list(args)
+
+        class _R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _R()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(serve, "_apps_passphrase", lambda: "pw")
+
+    note = serve._publish({})
+
+    joined = " ".join(captured["args"])
+    if os.name == "nt":
+        assert "publish.ps1" in joined and "-Force" in joined and "-Encrypted" in joined
+    else:
+        assert "publish.sh" in joined and "--force" in joined and "--encrypted" in joined
+    assert note == ""

@@ -125,7 +125,8 @@ def _build_server(cfg: dict, port: int):
     serve_cfg = cfg.get("serve", {}) or {}
     refresh_on = bool(serve_cfg.get("refresh_enabled", True))
 
-    if not os.path.exists(os.path.join(directory, "index.html")):
+    build_on_start = bool(serve_cfg.get("build_on_start", False))
+    if build_on_start or not os.path.exists(os.path.join(directory, "index.html")):
         with Store(cfg["output"]["db_path"]) as store:
             _build_local_spa(cfg, store)
     with Store(cfg["output"]["db_path"]) as store:
@@ -348,38 +349,59 @@ def _npm_build(web_dir: str) -> None:
         raise RuntimeError("web build failed: " + " / ".join(t.strip() for t in tail)[:300])
 
 
-def _has_apps_passphrase() -> bool:
-    if os.environ.get("JOBSCOPE_APPS_PASSPHRASE"):
-        return True
+def _apps_passphrase() -> str:
+    """The applications-page passphrase from the environment or OS keychain (or "")."""
+    val = os.environ.get("JOBSCOPE_APPS_PASSPHRASE")
+    if val:
+        return val
     try:
         import keyring
         from jobscope.core.config import KEYRING_SERVICE
-        return bool(keyring.get_password(KEYRING_SERVICE, "JOBSCOPE_APPS_PASSPHRASE"))
+        return keyring.get_password(KEYRING_SERVICE, "JOBSCOPE_APPS_PASSPHRASE") or ""
     except Exception:  # noqa: BLE001 - keyring optional / backend may be absent
-        return False
+        return ""
+
+
+def _has_apps_passphrase() -> bool:
+    return bool(_apps_passphrase())
 
 
 def _publish(cfg: dict) -> str:
-    """Run scripts/publish.ps1 to build + push the redacted (and, when a
-    passphrase is available, encrypted) site. Returns a short status note."""
+    """Build + push the redacted (and, when a passphrase is available, encrypted)
+    site via the publish script -- ``publish.ps1`` on Windows, ``publish.sh`` on
+    POSIX. Returns a short status note."""
     import shutil
     import subprocess
 
     root = _repo_root()
-    ps1 = os.path.join(root, "scripts", "publish.ps1")
-    if os.name != "nt" or not os.path.exists(ps1):
-        raise RuntimeError("Publishing is Windows-only for now (scripts/publish.ps1).")
-    shell = "pwsh" if shutil.which("pwsh") else "powershell"
-    args = [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-Force"]
-    note = ""
-    if _has_apps_passphrase():
-        args.append("-Encrypted")
+    scripts = os.path.join(root, "scripts")
+    have_pass = _has_apps_passphrase()
+    note = "" if have_pass else (
+        " (applications page skipped \u2014 set JOBSCOPE_APPS_PASSPHRASE in the keychain)")
+    env = None
+
+    if os.name == "nt":
+        ps1 = os.path.join(scripts, "publish.ps1")
+        if not os.path.exists(ps1):
+            raise RuntimeError("scripts/publish.ps1 not found.")
+        shell = "pwsh" if shutil.which("pwsh") else "powershell"
+        args = [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-Force"]
+        if have_pass:
+            args.append("-Encrypted")  # publish.ps1 resolves env -> keychain itself
     else:
-        note = " (applications page skipped \u2014 set JOBSCOPE_APPS_PASSPHRASE in the keychain)"
+        sh = os.path.join(scripts, "publish.sh")
+        if not os.path.exists(sh):
+            raise RuntimeError("scripts/publish.sh not found.")
+        args = [shutil.which("bash") or "bash", sh, "--force"]
+        if have_pass:
+            args.append("--encrypted")
+            # publish.sh reads the passphrase from the env; hand it the resolved value.
+            env = {**os.environ, "JOBSCOPE_APPS_PASSPHRASE": _apps_passphrase()}
+
     # stdin=DEVNULL so a missing passphrase fails fast instead of blocking on a prompt.
-    proc = subprocess.run(args, cwd=root, stdin=subprocess.DEVNULL,
+    proc = subprocess.run(args, cwd=root, stdin=subprocess.DEVNULL, env=env,
                           capture_output=True, text=True, timeout=900)
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-4:]
-        raise RuntimeError("publish.ps1 failed: " + " / ".join(t.strip() for t in tail)[:300])
+        raise RuntimeError("publish failed: " + " / ".join(t.strip() for t in tail)[:300])
     return note

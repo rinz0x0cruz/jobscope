@@ -141,6 +141,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "refresh_enabled": True,     # show/allow the Refresh & Publish button
         "refresh_full_scan": False,  # also re-scrape job boards (429-prone) before matching
         "inbox_days": 7,             # Gmail lookback window for the button's inbox sync
+        "build_on_start": False,     # rebuild the SPA when `serve` starts (else serve the last build)
+        "web_dist": None,            # override the served SPA dir (default: <repo>/web/dist)
     },
 }
 
