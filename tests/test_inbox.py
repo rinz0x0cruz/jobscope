@@ -264,6 +264,9 @@ def test_is_newsletter_domain():
     assert mailrules.is_newsletter_domain("substack.com") is True
     assert mailrules.is_newsletter_domain("email.mg1.substack.com") is True   # subdomain
     assert mailrules.is_newsletter_domain("medium.com") is True
+    assert mailrules.is_newsletter_domain("thinkific.com") is True            # course platform
+    assert mailrules.is_newsletter_domain("notify.thinkific.com") is True     # course-enrollment subdomain
+    assert mailrules.is_newsletter_domain("eatclub.in") is True               # food-delivery receipts
     assert mailrules.is_newsletter_domain("greenhouse.io") is False           # ATS, not a newsletter
     assert mailrules.is_newsletter_domain("zscaler.com") is False             # employer
     assert mailrules.is_newsletter_domain("") is False
@@ -598,6 +601,31 @@ def test_inbox_drops_newsletter_domain(monkeypatch):
 
     assert store.mail_events() == []        # dropped up front, no event stored
     assert store.applications() == []       # and never advanced any application
+    store.close()
+
+
+def test_inbox_drops_course_and_consumer_domains(monkeypatch):
+    # A Thinkific course "Training & Assessment" enrollment (-> assessment) and an
+    # Eatclub food "order confirmation" both score otherwise-strong signals, but
+    # come from non-job domains and must be dropped -- never landing in Interview.
+    FakeIMAP.mailbox = {
+        1: _raw("PURSUIT Academy <no-reply@notify.thinkific.com>",
+                "You are now enrolled in PURSUIT - Volunteer Training & Assessment!",
+                "Welcome! Thank you for enrolling in the training course.", "<enr-1@thinkific.com>"),
+        2: _raw("Eatclub <orders@eatclub.in>",
+                "Eatclub Confirmation - You have successfully paid online for your order",
+                "Thank You for ordering with Eatclub. ORDER STATUS ORDER SUMMARY.", "<ord-1@eatclub.in>"),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+
+    inbox.run(cfg, store)
+
+    assert store.mail_events() == []
+    assert store.applications() == []
     store.close()
 
 
