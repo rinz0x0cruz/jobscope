@@ -34,9 +34,6 @@ export default defineConfig({
         clientsClaim: true,
         skipWaiting: true,
         cleanupOutdatedCaches: true,
-        // applications.html is a standalone, post-build-injected encrypted page;
-        // keep the SPA navigation fallback from shadowing it with index.html.
-        navigateFallbackDenylist: [/applications\.html$/],
       },
     }),
   ],

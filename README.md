@@ -213,15 +213,15 @@ Your applications stay **redacted** from the public site — they remain visible
 your local `dashboard` view.
 
 **Private applications on your phone (encrypted).** To view your applications remotely
-without exposing them, publish an **end-to-end encrypted** page:
-`scripts/publish.ps1 -Refresh -Encrypted -Force` (or double-click
+without exposing them, publish them **end-to-end encrypted** into the dashboard's
+**Applications** tab: `scripts/publish.ps1 -Refresh -Encrypted -Force` (or double-click
 `scripts/refresh-and-publish-secure.cmd`). You're prompted for a passphrase; the
 un-redacted data is encrypted with **AES-256-GCM** and only the encrypted blob is
-published, so it's safe on a public URL. Open
-`https://<user>.github.io/jobscope/applications.html` on your phone, enter the passphrase,
-and it decrypts **in your browser** — nothing is sent anywhere. Use a **long** passphrase
-(4–5 random words); offline it's the only thing protecting your history. For scheduled
-runs the passphrase can come from `$env:JOBSCOPE_APPS_PASSPHRASE` (never committed).
+published, so it's safe on a public URL. Open `https://<user>.github.io/jobscope/` on
+your phone, open the **Applications** tab, enter the passphrase, and it decrypts **in
+your browser** — nothing is sent anywhere. Use a **long** passphrase (4–5 random words);
+offline it's the only thing protecting your history. For scheduled runs the passphrase
+can come from `$env:JOBSCOPE_APPS_PASSPHRASE` (never committed).
 
 > GitHub Pages is **public**. Only the redacted dashboard — and, with `-Encrypted`, an
 > AES-256-GCM-encrypted applications blob (useless without your passphrase) — is published.

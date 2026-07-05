@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { dashboard } from '@/data'
+import { dashboard, encryptedApplications } from '@/data'
+import type { Application } from '@/lib/schema'
 import type { FacetKey, TabValue } from '@/lib/urlState'
 import { FACET_KEYS } from '@/lib/urlState'
 import type { FacetOption } from '@/lib/filters'
@@ -24,6 +25,7 @@ import { SearchPalette } from '@/components/filters/SearchPalette'
 import { JobList } from '@/components/JobList'
 import { Overview } from '@/components/overview/Overview'
 import { Applications } from '@/components/applications/Applications'
+import { UNLOCK_KEY } from '@/components/applications/ApplicationsGate'
 import { JobDrawer } from '@/components/JobDrawer'
 import { CyberSakura } from '@/components/CyberSakura'
 import { Toaster } from 'sonner'
@@ -32,13 +34,24 @@ export default function App() {
   const rows = dashboard.rows
   const { state, set } = useSearchState()
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
+  // Apps come baked in for a local/un-redacted build; for a public build they
+  // arrive encrypted and are unlocked (and cached in sessionStorage) at runtime.
+  const [unlockedApps, setUnlockedApps] = useState<Application[] | null>(() => {
+    try {
+      const s = sessionStorage.getItem(UNLOCK_KEY)
+      return s ? (JSON.parse(s) as Application[]) : null
+    } catch {
+      return null
+    }
+  })
+  const apps = unlockedApps ?? dashboard.applications ?? []
 
   const tabCounts = useMemo(() => {
     const base = tabPool(rows, 'all', state.hideClosed)
-    const c: Record<TabValue, number> = { overview: base.length, applications: dashboard.applications?.length ?? 0, all: base.length, Strong: 0, Good: 0, Stretch: 0, Skip: 0 }
+    const c: Record<TabValue, number> = { overview: base.length, applications: apps.length, all: base.length, Strong: 0, Good: 0, Stretch: 0, Skip: 0 }
     for (const r of base) c[r.tier] += 1
     return c
-  }, [rows, state.hideClosed])
+  }, [rows, state.hideClosed, apps.length])
 
   const tabbed = useMemo(
     () => tabPool(rows, state.tab, state.hideClosed),
@@ -101,7 +114,7 @@ export default function App() {
         {state.tab === 'overview' ? (
           <Overview rows={rows} stats={dashboard.overview} onOpen={openDrawer} />
         ) : state.tab === 'applications' ? (
-          <Applications apps={dashboard.applications ?? []} />
+          <Applications apps={apps} encBlob={encryptedApplications} onUnlock={setUnlockedApps} />
         ) : (
           <>
             <FacetBar

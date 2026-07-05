@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Lock, Moon, Search, Sun } from 'lucide-react'
+import { Moon, Search, Sun } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
 import { SignalLottie } from '@/components/SignalLottie'
 
@@ -42,15 +42,6 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
           /
         </kbd>
       </label>
-
-      <a
-        href="applications.html"
-        title="Your applications — passphrase-protected"
-        className="js-hot-button inline-flex h-10 items-center gap-1.5 rounded-[12px] border border-border bg-card px-3.5 text-[13px] font-semibold text-dim transition hover:border-border-h hover:text-fg"
-      >
-        <Lock size={14} />
-        Applications
-      </a>
 
       <button
         type="button"

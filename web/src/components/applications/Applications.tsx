@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useReducedMotion } from 'motion/react'
-import type { Application } from '@/lib/schema'
+import type { Application, EncBlob } from '@/lib/schema'
 import { trackSpotlight } from '@/lib/spotlight'
 import { CountUp } from '@/components/overview/CountUp'
 import { AppCard } from './AppCard'
+import { ApplicationsGate } from './ApplicationsGate'
 import { PipelineFlow } from './PipelineFlow'
 import { pct, pipelineMetrics, presentStatuses, statusColor, statusCounts, statusLabel } from './constants'
 
@@ -92,7 +93,15 @@ function KanbanBoard({ apps }: { apps: Application[] }) {
   )
 }
 
-export function Applications({ apps }: { apps: Application[] }) {
+export function Applications({
+  apps,
+  encBlob,
+  onUnlock,
+}: {
+  apps: Application[]
+  encBlob?: EncBlob | null
+  onUnlock?: (apps: Application[]) => void
+}) {
   const summary = useMemo(() => {
     const p = pipelineMetrics(apps)
     const responded = p.reachedIv + p.rejBefore
@@ -106,6 +115,11 @@ export function Applications({ apps }: { apps: Application[] }) {
   }, [apps])
 
   if (apps.length === 0) {
+    // No baked apps: this is a redacted/public build. If an encrypted blob was
+    // shipped, offer the passphrase gate; otherwise show the empty state.
+    if (encBlob && onUnlock) {
+      return <ApplicationsGate blob={encBlob} onUnlock={onUnlock} />
+    }
     return (
       <div className="grid min-h-40 place-items-center rounded-[14px] border border-border bg-card p-8 text-center text-[13px] text-mute">
         No applications tracked yet — mark roles as applied to build your funnel.
