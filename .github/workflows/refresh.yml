@@ -1,0 +1,161 @@
+# Cloud auto-refresh: scan Gmail + rescore + republish on a schedule (and on
+# demand), so the published dashboard stays fresh without your PC being on. The
+# mail scan runs here on GitHub's runners rather than localhost, so it needs a few
+# repository Secrets -- see the SETUP block at the bottom of this file.
+#
+# Privacy model: the SQLite DB (your mail + application history) is kept AES-256-GCM
+# encrypted on the private, force-updated `data` branch -- only the latest encrypted
+# blob is ever stored, and it's useless without JOBSCOPE_DB_KEY. Only the redacted
+# dashboard + the passphrase-encrypted applications blob are published to gh-pages,
+# exactly like the local publish. AI is left off here (deterministic scoring).
+
+name: refresh
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"    # every 3 hours (UTC)
+  workflow_dispatch:           # manual "Run workflow" button -- works from the GitHub mobile app
+    inputs:
+      full_scan:
+        description: "Also scan job boards (slower)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+permissions:
+  contents: write              # push the encrypted DB to `data` and the site to `gh-pages`
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code (main)
+        uses: actions/checkout@v4
+
+      - name: Guard -- required secrets present
+        id: guard
+        env:
+          JOBSCOPE_CONFIG: ${{ secrets.JOBSCOPE_CONFIG }}
+          JOBSCOPE_DB_KEY: ${{ secrets.JOBSCOPE_DB_KEY }}
+          JOBSCOPE_GMAIL_APP_PW: ${{ secrets.JOBSCOPE_GMAIL_APP_PW }}
+        run: |
+          if [ -z "$JOBSCOPE_CONFIG" ] || [ -z "$JOBSCOPE_DB_KEY" ] || [ -z "$JOBSCOPE_GMAIL_APP_PW" ]; then
+            echo "::notice::Cloud refresh is not configured yet (missing secrets) -- skipping. See the SETUP block in .github/workflows/refresh.yml."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.guard.outputs.ready == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        if: steps.guard.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python deps
+        if: steps.guard.outputs.ready == 'true'
+        run: pip install --upgrade pip pyyaml requests feedparser markdown keyring
+
+      - name: Write config (from secret -- contains no passwords)
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          JOBSCOPE_CONFIG: ${{ secrets.JOBSCOPE_CONFIG }}
+        run: |
+          mkdir -p data
+          printf '%s' "$JOBSCOPE_CONFIG" > config.yaml
+
+      - name: Restore encrypted DB from the `data` branch
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          JOBSCOPE_DB_KEY: ${{ secrets.JOBSCOPE_DB_KEY }}
+        run: |
+          if git fetch --depth 1 origin data 2>/dev/null; then
+            git show FETCH_HEAD:jobscope.db.enc > data/jobscope.db.enc 2>/dev/null || true
+            if [ -s data/jobscope.db.enc ]; then
+              node scripts/crypt-file.mjs decrypt data/jobscope.db.enc data/jobscope.db
+              echo "restored DB from the data branch"
+            fi
+          else
+            echo "::warning::No data branch yet -- starting from an empty DB. Seed it once to keep your history (see SETUP)."
+          fi
+
+      - name: Sync inbox + rescore (AI off)
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          PYTHONPATH: "."
+          JOBSCOPE_GMAIL_APP_PW: ${{ secrets.JOBSCOPE_GMAIL_APP_PW }}
+          JOBSCOPE_GMAIL_APP_PW_2: ${{ secrets.JOBSCOPE_GMAIL_APP_PW_2 }}
+        run: |
+          if [ "${{ inputs.full_scan }}" = "true" ]; then
+            python -m jobscope scan || echo "::warning::job-board scan failed (non-fatal)"
+          fi
+          python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)"
+          python -m jobscope match
+
+      - name: Save encrypted DB back to the `data` branch
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          JOBSCOPE_DB_KEY: ${{ secrets.JOBSCOPE_DB_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/crypt-file.mjs encrypt data/jobscope.db data/jobscope.db.enc
+          tmp="$(mktemp -d)"
+          cp data/jobscope.db.enc "$tmp/jobscope.db.enc"
+          cd "$tmp"
+          git init -q
+          git checkout -q -b data
+          git add jobscope.db.enc
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "chore: encrypted db snapshot $(date -u +%FT%TZ)"
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
+
+      - name: Install web deps
+        if: steps.guard.outputs.ready == 'true'
+        run: cd web && npm ci
+
+      - name: Configure git auth for the publish push
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Publish redacted + encrypted site to gh-pages
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          PYTHONPATH: "."
+          JOBSCOPE_APPS_PASSPHRASE: ${{ secrets.JOBSCOPE_APPS_PASSPHRASE }}
+          JOBSCOPE_PUBLISH_FORCE: "1"
+        run: bash scripts/publish.sh --encrypted --force
+
+# ============================================================================
+# SETUP (one-time)
+#
+# 1. Repository Secrets  (Settings -> Secrets and variables -> Actions -> New secret):
+#      JOBSCOPE_DB_KEY           a long random string -- encrypts your DB on the `data` branch
+#      JOBSCOPE_APPS_PASSPHRASE  the same passphrase you unlock the Applications tab with
+#      JOBSCOPE_GMAIL_APP_PW     Gmail app-password for account 1
+#      JOBSCOPE_GMAIL_APP_PW_2   Gmail app-password for account 2 (omit if you have one account)
+#      JOBSCOPE_CONFIG           your full config.yaml as text, but with NO passwords in it
+#                                (accounts use password_env: JOBSCOPE_GMAIL_APP_PW / _2),
+#                                and set:  ai: { enabled: false },  output: { db_path: data/jobscope.db },
+#                                inbox.include_spam: true
+#
+# 2. Seed your history once (so the cloud DB starts from your real data), from your
+#    local checkout on `main` -- encrypts data/jobscope.db and force-pushes it to `data`:
+#      $env:JOBSCOPE_DB_KEY = "<same value as the JOBSCOPE_DB_KEY secret>"
+#      ./scripts/seed-cloud-db.ps1
+#
+# 3. Trigger a first run manually: Actions -> refresh -> "Run workflow" (also how you
+#    scan on demand from your phone via the GitHub mobile app). The cron then keeps it
+#    fresh every 3 hours.
+# ============================================================================
