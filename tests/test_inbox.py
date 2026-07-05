@@ -400,6 +400,22 @@ def test_parse_company_ignores_system_display():
     assert company == ""
 
 
+def test_successfactors_eu_is_ats_domain():
+    # SAP SuccessFactors' EU data-center domain is an ATS relay, not an employer.
+    assert mailrules.is_ats_domain("successfactors.eu") is True
+    assert mailrules.domain_platform("system.successfactors.eu") == "successfactors"
+    assert mailrules.company_from_domain("successfactors.eu") == ""
+
+
+def test_parse_company_from_email_display_name():
+    # A SuccessFactors relay whose display name embeds the employer domain
+    # ("HR@Bayer.com") must resolve to the employer, not the ATS platform.
+    company, _ = mailrules.parse_company_role(
+        "HR@Bayer.com", "successfactors.eu", "Thank you for your application",
+        "You\u2019ve applied for the position of Cyber Security Engineer with Bayer.")
+    assert company == "Bayer"
+
+
 # --- mailrules: status machine ----------------------------------------------
 def test_signal_to_status():
     assert mailrules.signal_to_status("confirmation") == "applied"
