@@ -28,9 +28,11 @@ def _raw(from_, subject, body, msgid, date="Mon, 01 Jun 2026 10:00:00 +0000"):
 
 
 class FakeIMAP:
-    """Minimal stand-in for imaplib.IMAP4_SSL driven by a class-level mailbox."""
+    """Minimal stand-in for imaplib.IMAP4_SSL. ``mailbox`` is INBOX; ``mailboxes``
+    holds any extra folders (e.g. "[Gmail]/Spam") for multi-folder tests."""
 
     mailbox: dict[int, bytes] = {}
+    mailboxes: dict[str, dict[int, bytes]] = {}
     instances: list["FakeIMAP"] = []
 
     def __init__(self, host, port):
@@ -38,6 +40,7 @@ class FakeIMAP:
         self.selected = None
         self.readonly = None
         self.logged_out = False
+        self._cur = FakeIMAP.mailbox
         FakeIMAP.instances.append(self)
 
     def login(self, user, pw):
@@ -47,16 +50,23 @@ class FakeIMAP:
     def select(self, folder, readonly=False):
         self.selected = folder
         self.readonly = readonly
-        return ("OK", [b"1"])
+        key = (folder or "").strip('"')
+        if key == "INBOX":
+            self._cur = FakeIMAP.mailbox
+        elif key in FakeIMAP.mailboxes:
+            self._cur = FakeIMAP.mailboxes[key]
+        else:
+            return ("NO", [b"no such folder"])
+        return ("OK", [str(len(self._cur)).encode()])
 
     def uid(self, command, *args):
         cmd = command.lower()
         if cmd == "search":
-            ids = b" ".join(str(u).encode() for u in sorted(FakeIMAP.mailbox))
+            ids = b" ".join(str(u).encode() for u in sorted(self._cur))
             return ("OK", [ids])
         if cmd == "fetch":
             uid = int(args[0])
-            raw = FakeIMAP.mailbox.get(uid)
+            raw = self._cur.get(uid)
             if raw is None:
                 return ("NO", [None])
             return ("OK", [(f"{uid} (UID {uid})".encode(), raw)])
@@ -500,6 +510,7 @@ def _load_mailbox():
         4: _raw("Deals <news@shopping-newsletter.com>", "50% off everything",
                 "Buy now!", "<n-4@shop.com>"),
     }
+    FakeIMAP.mailboxes = {}
     FakeIMAP.instances = []
 
 
@@ -577,6 +588,7 @@ def test_inbox_drops_newsletter_domain(monkeypatch):
                 "Coding Challenge #125 - Online Diff Viewer",
                 "This week's challenge: build an online diff viewer.", "<cc-125@substack.com>"),
     }
+    FakeIMAP.mailboxes = {}
     FakeIMAP.instances = []
     monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
     store = _store()
@@ -586,4 +598,66 @@ def test_inbox_drops_newsletter_domain(monkeypatch):
 
     assert store.mail_events() == []        # dropped up front, no event stored
     assert store.applications() == []       # and never advanced any application
+    store.close()
+
+
+def test_folders_for_default_and_spam():
+    assert inbox._folders_for({}) == ["INBOX"]
+    assert inbox._folders_for({"folder": "INBOX"}) == ["INBOX"]
+    assert inbox._folders_for({"include_spam": True}) == ["INBOX", "[Gmail]/Spam"]
+    assert inbox._folders_for({"include_spam": True, "spam_folder": "Junk"}) == ["INBOX", "Junk"]
+    # include_spam off -> spam never scanned
+    assert inbox._folders_for({"include_spam": False}) == ["INBOX"]
+
+
+def test_uid_marker_inbox_uses_legacy_key():
+    # INBOX keeps the pre-multi-folder key so existing watermarks stay valid.
+    assert inbox._uid_marker("me@x.com", "INBOX") == "inbox:me@x.com:last_uid"
+    assert inbox._uid_marker("me@x.com", "[Gmail]/Spam") == "inbox:me@x.com:[Gmail]/Spam:last_uid"
+
+
+def test_inbox_scans_spam_folder_when_enabled(monkeypatch):
+    # A real application email Gmail misfiled into Spam is picked up when
+    # inbox.include_spam is set -- in addition to everything in INBOX.
+    FakeIMAP.mailbox = {
+        1: _raw("Databricks <no-reply@greenhouse.io>", "Thank you for applying to Databricks",
+                "We have received your application.", "<db-1@greenhouse.io>"),
+    }
+    FakeIMAP.mailboxes = {
+        "[Gmail]/Spam": {
+            5: _raw("Stripe <no-reply@hire.lever.co>", "Interview with Stripe",
+                    "We'd like to schedule a call. Please share your availability.",
+                    "<st-5@lever.co>"),
+        }
+    }
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+    cfg["inbox"]["include_spam"] = True
+
+    inbox.run(cfg, store)
+
+    sigs = {e["company"].lower(): e["signal"] for e in store.mail_events() if e["company"]}
+    assert sigs.get("databricks") == "confirmation"   # from INBOX
+    assert sigs.get("stripe") == "interview"          # rescued from [Gmail]/Spam
+    store.close()
+
+
+def test_inbox_skips_spam_folder_by_default(monkeypatch):
+    # With include_spam off (default), the spam folder is never opened.
+    FakeIMAP.mailbox = {}
+    FakeIMAP.mailboxes = {
+        "[Gmail]/Spam": {
+            5: _raw("Stripe <no-reply@hire.lever.co>", "Interview with Stripe",
+                    "We'd like to schedule a call.", "<st-5@lever.co>"),
+        }
+    }
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)   # include_spam defaults False
+
+    inbox.run(cfg, store)
+    assert store.mail_events() == []          # spam folder left untouched
     store.close()

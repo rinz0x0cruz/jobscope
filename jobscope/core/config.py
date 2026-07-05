@@ -119,6 +119,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "imap_host": "imap.gmail.com",
         "imap_port": 993,
         "folder": "INBOX",
+        "include_spam": False,   # also sweep the spam folder -- a real application email misfiled as spam is still caught
+        "spam_folder": "[Gmail]/Spam",  # Gmail's IMAP spam folder (localize if your account isn't English)
         "lookback_days": 90,     # first run scans this far back; later runs are incremental
         "store_snippets": False, # persist a short email-body excerpt? off = classify in memory then discard (less PII at rest)
     },
