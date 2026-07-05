@@ -1,12 +1,11 @@
-"""Static HTML dashboard renderer.
+"""Dashboard JSON emitter.
 
-Builds a single self-contained ``dashboard.html`` (inline CSS/JS, no external
-deps) from the stored jobs and any enrichment. Mirrors the threatscope/exploitrank
-dashboard approach: ranked rows, tier chips, click-to-filter, and a search box.
+Assembles the dashboard data contract (per-job records, overview, and the
+Applications board) from the stored jobs and enrichment, and writes it to
+``data/dashboard[.public].json`` for the React web app (``web/``) to consume.
 """
 from __future__ import annotations
 
-import html
 import json
 import os
 import re
