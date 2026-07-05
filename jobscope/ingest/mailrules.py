@@ -67,13 +67,15 @@ JOB_DOMAINS: dict[str, str] = {
 }
 
 # --- Newsletter / content-publishing platforms ------------------------------
-# These blast blog posts, digests, and course/challenge announcements -- never
-# real application status -- yet their subjects routinely collide with lifecycle
-# keywords (a "Coding Challenge" newsletter reads as an "assessment", a "Your
-# weekly interview prep" digest as an "interview"). Mail from these domains is
-# dropped up front, even when it scores an otherwise-strong signal, so it never
-# reaches the funnel. Distinct from _RELAY_DOMAINS (ESPs that relay *employer*
-# mail): here the domain itself is the publisher, so it is never job-related.
+# These blast blog posts, digests, course/challenge announcements, and consumer
+# transactional receipts (food delivery, etc.) -- never real application status --
+# yet their subjects routinely collide with lifecycle keywords (a "Coding
+# Challenge" newsletter reads as an "assessment", a course "Training & Assessment"
+# enrollment as an "assessment", a food "order confirmation" as a lifecycle event).
+# Mail from these domains is dropped up front, even when it scores an otherwise-
+# strong signal, so it never reaches the funnel. Distinct from _RELAY_DOMAINS (ESPs
+# that relay *employer* mail): here the domain itself is the publisher, so it is
+# never job-related.
 NEWSLETTER_DOMAINS: frozenset[str] = frozenset({
     "substack.com",
     "medium.com",
@@ -86,6 +88,8 @@ NEWSLETTER_DOMAINS: frozenset[str] = frozenset({
     "mailerlite.com",
     "convertkit-mail.com",
     "convertkit-mail2.com",
+    "thinkific.com",   # online-course platform: "Training & Assessment" enrollments read as an assessment
+    "eatclub.in",      # food delivery: "order confirmation" receipts read as lifecycle events
 })
 
 # --- Weighted signal keywords -----------------------------------------------
