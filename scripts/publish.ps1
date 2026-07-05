@@ -198,7 +198,10 @@ $ErrorActionPreference = "Continue"
 try {
     git checkout -q $Branch 2>&1 | ForEach-Object { Write-Host $_ }
 
-    git add -A 2>&1 | ForEach-Object { Write-Host $_ }
+    # Selective staging per AGENTS.md: `git add .` stages the wholesale build replacement
+    # (new + modified + removed old hashed assets; git >=2.0 stages removals), scoped to this
+    # dedicated, gitignored gh-pages clone. The source tree is never blanket-staged.
+    git add . 2>&1 | ForEach-Object { Write-Host $_ }
     git diff --cached --quiet
     if ($LASTEXITCODE -eq 0) {
         Write-Host "==> No changes to publish."

@@ -124,7 +124,10 @@ touch "$DASH_DIR/.nojekyll"
 
 cd "$DASH_DIR"
 git checkout -q "$BRANCH"
-git add -A
+# Selective staging per AGENTS.md: `git add .` stages the wholesale build replacement
+# (new + modified + removed old hashed assets; git >=2.0 stages removals), scoped to this
+# dedicated, gitignored gh-pages clone. The source tree is never blanket-staged.
+git add .
 if git diff --cached --quiet; then
     echo "==> No changes to publish."
 else
