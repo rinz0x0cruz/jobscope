@@ -283,9 +283,20 @@ application emails into funnel updates, so the pipeline reflects reality without
   also says "interview" isn't mis-read and a precedence order breaks exact ties. When two or more signals
   finish in a genuine close-call tie, the optional quorum classify strategy can arbitrate **only among the
   tied labels**; it never invents a new status and is skipped when AI/quorum is unavailable.
-- **Precision.** ATS domains always count as job-related; job-board/unknown domains need a strong signal,
-  and board digests/alerts/community senders are dropped — so newsletters and social noise never reach the
-  funnel.
+- **Precision — noise dropped by sender.** ATS domains always count as job-related; job-board/unknown
+  domains need a strong signal. Senders that only *look* like applications are dropped up front by domain,
+  whatever keyword they score: newsletters/digests/community blasts, online-course platforms (a Thinkific
+  "Training & Assessment" enrollment), and consumer/transactional receipts (a food-delivery order) — so a
+  lifecycle keyword colliding in their subject never reaches the funnel.
+- **Employer, not the ATS platform.** When mail arrives *through* an applicant-tracking or relay platform
+  (SuccessFactors, Workday, Greenhouse, Oracle, iCIMS…), the company is recovered from the real employer —
+  the sender display name (including an embedded `HR@employer.com`), a subject pattern (`…applying to
+  <Company>`), or a body signal (a Workday careers-URL tenant, `employer.wdN.myworkdayjobs.com`) — never the
+  platform's own domain, and a trailing platform token glued onto the display ("NCR Voyix Workday") is
+  stripped. Real mis-parses are pinned as regression cases in `tests/test_fp_corpus.py`.
+- **Spam-folder aware.** With `inbox.include_spam: true` the scan also reads `[Gmail]/Spam` (or
+  `inbox.spam_folder`), since genuine confirmations occasionally land there; the same read-only `BODY.PEEK`
+  rules apply.
 - **Signal → status (monotonic).** confirmation/recruiter → `applied`, assessment/interview → `interview`,
   offer → `offer`, rejection → `rejected`. Status only advances forward (a late "received" can't undo an
   offer); `rejected` is terminal. Granular per-email signals are preserved in `mail_events` even though the
@@ -375,8 +386,17 @@ Fed by `track` + `inbox` — your application pipeline, not the job search.
   and push `web/dist` (+ `.nojekyll`) to the `gh-pages` branch via a gitignored persistent single-branch clone
   (`.dashboard-repo/`), pinned to the `rinz0x0cruz` identity. `scripts/register-publish-task.ps1` runs it as a
   daily Windows Scheduled Task.
-- **Rules:** publishing originates locally (the SQLite DB is local/gitignored, so CI can't regenerate it);
-  only ever publish the **redacted** build (`data/dashboard.public.json` -> `web/dist`) — never the un-redacted local data.
+- **Cloud auto-refresh (no PC needed).** A GitHub Actions workflow (`.github/workflows/refresh.yml`) scans
+  your Gmail and republishes on a schedule (every 3h) **and on demand — including from the GitHub mobile
+  app's *Run workflow* button, so you can refresh from your phone.** It runs the same deterministic
+  `inbox → match → publish` (AI off) on GitHub's runners. Privacy model: the SQLite DB is kept
+  **AES-256-GCM-encrypted** on a private, force-updated **`data`** branch (only the latest blob is stored,
+  useless without the key); only the redacted dashboard + the passphrase-encrypted applications blob are
+  published to `gh-pages`, exactly like the local publish. Gated on five repo secrets (config, DB key, apps
+  passphrase, two Gmail app-passwords); without them the workflow no-ops.
+- **Rules:** only ever publish the **redacted** build (`data/dashboard.public.json` -> `web/dist`) — never
+  the un-redacted local data. Locally the SQLite DB stays on your machine; in the cloud it is only ever
+  present **encrypted** (restored from the `data` branch for the run, re-encrypted before the push).
 
 ---
 
@@ -395,7 +415,7 @@ Copy from `config.example.yaml`; secrets go in `.env`. Key groups:
 - `ai` — `enabled`, `provider`, `base_url`, `model`, `temperature`, `max_tokens`, `api_key_env`.
 - `email` — `enabled`, `smtp_host`, `smtp_port`, `from_addr`, `to_addr`, `password_env`.
 - `inbox` — `enabled`, `accounts[]` (`email`, `password_env`, optional per-account `lookback_days`),
-  `imap_host`, `imap_port`, `folder`, `lookback_days`.
+  `imap_host`, `imap_port`, `folder`, `lookback_days`, `include_spam`, `spam_folder`, `store_snippets`.
 - `apply` — `assist`, `package_dir`, `auto_prep_top`, `followup_days`.
 - `output` — `db_path`, `dashboard_path`.
 

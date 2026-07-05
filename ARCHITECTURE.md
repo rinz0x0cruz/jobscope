@@ -39,7 +39,8 @@ jobscope/
     __main__.py      Thin shim → cli.main (console-script + `python -m jobscope`)
   web/               Vite + React + TS dashboard (consumes the JSON contract; PWA/Pages UI)
     src/
-  scripts/           Publish helpers + encrypted applications.html template
+  scripts/           Publish helpers, encrypted-apps template, cloud-refresh crypt/seed (crypt-file.mjs, seed-cloud-db.ps1)
+  .github/           workflows/refresh.yml — cloud auto-refresh (scan Gmail + republish; encrypted DB on the `data` branch)
   tests/             pytest suite (offline; mirrors the module layout)
   data/              Runtime artifacts (SQLite db, dashboard json) — gitignored
   ARCHITECTURE.md    This file
@@ -352,6 +353,17 @@ decrypts it in-browser). [scripts/apps-template.html](scripts/apps-template.html
 the Vite bundle; `scripts/build-secure-apps.mjs` can still inject an encrypted payload into it to produce a
 standalone page. The shell has its own CSS/JS for pipeline bars, status rails, and cursor spotlight, and must
 preserve `window.__ENC__ = __ENC_BLOB__;` so the sensitive payload remains encrypted at rest on Pages.
+
+**Cloud auto-refresh ([.github/workflows/refresh.yml](.github/workflows/refresh.yml)).** The site can refresh
+without a local machine: a scheduled + `workflow_dispatch` Action restores the encrypted DB, runs
+`inbox → match` (AI off), re-saves the DB, and publishes — so a phone (the GitHub mobile *Run workflow*
+button) can trigger a scan. The DB never leaves in the clear: it is AES-256-GCM/PBKDF2-encrypted by
+[scripts/crypt-file.mjs](scripts/crypt-file.mjs) and force-pushed as a single blob to a private **`data`**
+branch (seeded once from local by [scripts/seed-cloud-db.ps1](scripts/seed-cloud-db.ps1)); only the redacted
+dashboard + the passphrase-encrypted applications blob reach `gh-pages`. Five repo secrets gate it
+(`JOBSCOPE_CONFIG`, `JOBSCOPE_DB_KEY`, `JOBSCOPE_APPS_PASSPHRASE`, `JOBSCOPE_GMAIL_APP_PW[_2]`); missing any,
+the job no-ops. Note the workflow only **pushes** `gh-pages` — the actual publish is GitHub's separate
+"pages build and deployment" run, so a green refresh does not by itself prove a live update.
 
 ---
 
