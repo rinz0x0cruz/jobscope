@@ -1,9 +1,10 @@
 """Refresh & Publish pipeline + serve endpoint guards.
 
 Covers the once-per-day guard, the shared ``perform_refresh`` wiring (inbox ->
-match -> render -> publish, with the optional board scan), and the loopback /
-CSRF-token guard on the ``/api/refresh`` endpoint. Fully offline: the networked
-steps and the publish subprocess are stubbed.
+match -> publish -> rebuild local SPA, with the optional board scan), the
+serve-time Refresh-widget injection into the SPA, and the loopback / CSRF-token
+guard on ``/api/refresh``. Fully offline: the networked steps, the publish
+subprocess, and the npm build are stubbed; the SPA is a one-line fixture.
 """
 import datetime as dt
 import json
@@ -22,11 +23,19 @@ from jobscope.deliver import serve
 from jobscope.ingest import inbox as inbox_mod
 from jobscope.ingest import scrape as scrape_mod
 
+_INDEX_HTML = '<!doctype html><html><head></head><body><div id="root"></div></body></html>'
+
 
 def _cfg(tmp):
     cfg = load_config(None)
     cfg["output"]["db_path"] = os.path.join(tmp, "p.db")
     cfg["output"]["dashboard_path"] = os.path.join(tmp, "dash.html")
+    # A minimal built SPA fixture so _build_server serves it without an npm build.
+    dist = os.path.join(tmp, "dist")
+    os.makedirs(dist, exist_ok=True)
+    with open(os.path.join(dist, "index.html"), "w", encoding="utf-8") as fh:
+        fh.write(_INDEX_HTML)
+    cfg.setdefault("serve", {})["web_dist"] = dist
     return cfg
 
 
@@ -38,7 +47,8 @@ def _reset_state():
 
 
 def _patch_pipeline(monkeypatch):
-    calls = {"inbox": 0, "match": 0, "scrape": 0, "publish": 0, "since": None}
+    calls = {"inbox": 0, "match": 0, "scrape": 0, "publish": 0, "render": 0,
+             "since": None, "order": []}
 
     def fake_inbox(cfg, store, **kw):
         calls["inbox"] += 1
@@ -55,12 +65,18 @@ def _patch_pipeline(monkeypatch):
 
     def fake_publish(cfg):
         calls["publish"] += 1
+        calls["order"].append("publish")
         return ""
+
+    def fake_build_spa(cfg, store):
+        calls["render"] += 1
+        calls["order"].append("render")
 
     monkeypatch.setattr(inbox_mod, "run", fake_inbox)
     monkeypatch.setattr(match_mod, "run", fake_match)
     monkeypatch.setattr(scrape_mod, "run", fake_scrape)
     monkeypatch.setattr(serve, "_publish", fake_publish)
+    monkeypatch.setattr(serve, "_build_local_spa", fake_build_spa)
     return calls
 
 
@@ -74,7 +90,10 @@ def test_perform_refresh_runs_and_stamps(monkeypatch):
 
         assert res["state"] == "done"
         assert calls["inbox"] == 1 and calls["match"] == 1 and calls["publish"] == 1
+        assert calls["render"] == 1
         assert calls["scrape"] == 0  # full scan off by default
+        # Public publish happens before the local un-redacted rebuild.
+        assert calls["order"] == ["publish", "render"]
         days = cfg["serve"]["inbox_days"]
         assert calls["since"] == (dt.date.today() - dt.timedelta(days=days)).isoformat()
         with Store(cfg["output"]["db_path"]) as store:
@@ -92,6 +111,7 @@ def test_per_day_guard_skips(monkeypatch):
 
         assert res["state"] == "skipped"
         assert calls["inbox"] == 0 and calls["match"] == 0 and calls["publish"] == 0
+        assert calls["render"] == 0
 
 
 def test_force_overrides_guard(monkeypatch):
@@ -137,6 +157,30 @@ def _req(method, url, headers=None, data=None):
         return exc.code, None
 
 
+def _get_text(url, headers=None):
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return resp.status, resp.read().decode("utf-8", "replace")
+
+
+def test_serves_spa_and_injects_widget(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        try:
+            status, html = _get_text(base + "/")
+            assert status == 200
+            assert 'id="root"' in html          # the SPA shell is served
+            assert "jsRefreshFab" in html        # the Refresh widget is injected
+            assert "/api/refresh" in html
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
 def test_endpoints_and_csrf_guard(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
@@ -173,7 +217,7 @@ def test_endpoints_and_csrf_guard(monkeypatch):
             thread.join(timeout=3)
 
 
-def test_refresh_disabled_returns_403(monkeypatch):
+def test_refresh_disabled_no_widget_and_403(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
         cfg["serve"]["refresh_enabled"] = False
@@ -183,6 +227,8 @@ def test_refresh_disabled_returns_403(monkeypatch):
         try:
             status, body = _req("GET", base + "/api/token")
             assert status == 200 and body["enabled"] is False
+            status, html = _get_text(base + "/")
+            assert "jsRefreshFab" not in html     # no widget when disabled
             status, _ = _req("POST", base + "/api/refresh", data="{}",
                              headers={"X-Refresh-Token": token, "Origin": base})
             assert status == 403

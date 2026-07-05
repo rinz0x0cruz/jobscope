@@ -513,18 +513,6 @@ main{padding:12px 24px 60px; display:grid; gap:11px}
 .empty code{background:var(--card); border:1px solid var(--border); border-radius:6px; padding:2px 7px; font:12px var(--mono)}
 footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
-#refreshbtn{display:inline-flex; align-items:center; gap:7px; width:auto; padding:0 12px; font-size:13px; font-weight:600; color:var(--fg)}
-#refreshbtn[disabled]{opacity:.6; cursor:progress}
-#refreshbtn svg{flex:none}
-#refreshbtn.spin svg{animation:rspin 1s linear infinite}
-@keyframes rspin{to{transform:rotate(360deg)}}
-#refreshtoast{position:fixed; right:16px; bottom:16px; z-index:60; max-width:340px;
-  padding:11px 14px; border-radius:10px; font-size:13px; line-height:1.4;
-  background:var(--card); color:var(--fg); border:1px solid var(--border);
-  box-shadow:0 8px 30px rgba(0,0,0,.28)}
-#refreshtoast.run{border-color:#3b82f6}
-#refreshtoast.ok{border-color:#22c55e}
-#refreshtoast.err{border-color:#ef4444}
 </style></head><body>
 <header>
   <div class="brand">
@@ -550,10 +538,6 @@ footer{color:var(--mute); font-size:12px; text-align:center; padding:24px}
   </select>
   <button class="iconbtn" id="theme" title="Toggle theme">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
-  </button>
-  <button class="iconbtn" id="refreshbtn" title="Sync Gmail &amp; publish (Shift-click to force a same-day rerun)" hidden>
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
-    <span id="refreshlbl">Refresh</span>
   </button>
 </header>
 <nav class="tabs" id="tabs"></nav>
@@ -804,52 +788,4 @@ q.oninput=()=>render();
 hideClosed.onchange=()=>render();
 DATA.forEach((r,i)=>r._i=i);
 facetFilters(); render();
-</script>
-<div id="refreshtoast" hidden></div>
-<script>
-/* Localhost-only Refresh & Publish control. Hidden unless the page is served by
-   `jobscope serve` (which answers /api/token); posts to /api/refresh with the
-   per-run token and polls /api/status. Absent from the published static site. */
-(function(){
-  var btn=document.getElementById('refreshbtn');
-  if(!btn){ return; }
-  var lbl=document.getElementById('refreshlbl'), toast=document.getElementById('refreshtoast');
-  var local=location.protocol==='http:'&&(location.hostname==='127.0.0.1'||location.hostname==='localhost');
-  var token=null, poll=null, sawRunning=false;
-  function show(msg,kind){ toast.textContent=msg||''; toast.className=kind||''; toast.hidden=!msg; }
-  function busy(b){ btn.disabled=b; btn.classList.toggle('spin',b); lbl.textContent=b?'Refreshing':'Refresh'; }
-  function stop(){ if(poll){ clearInterval(poll); poll=null; } busy(false); }
-  function done(s){
-    stop();
-    if(s.state==='done'){ show(s.message||'Published.','ok'); if(sawRunning){ setTimeout(function(){ location.reload(); },1500); } }
-    else if(s.state==='skipped'){ show(s.message||'Already refreshed today.','ok'); setTimeout(function(){ show(''); },6000); }
-    else if(s.state==='error'){ show('Error: '+(s.message||'refresh failed'),'err'); }
-    sawRunning=false;
-  }
-  function check(){
-    fetch('/api/status').then(function(r){ return r.json(); }).then(function(s){
-      if(s.state==='running'){ sawRunning=true; if(s.message){ show(s.message,'run'); } }
-      else { done(s); }
-    }).catch(function(){ stop(); show('Lost connection to jobscope serve.','err'); });
-  }
-  function go(force){
-    busy(true); show('Starting\u2026','run');
-    fetch('/api/refresh',{method:'POST',headers:{'X-Refresh-Token':token,'Content-Type':'application/json'},body:JSON.stringify({force:!!force})})
-      .then(function(r){ return r.json(); }).then(function(j){
-        if(j.state==='busy'){ show('A refresh is already running\u2026','run'); }
-        if(!poll){ poll=setInterval(check,1300); }
-      }).catch(function(){ busy(false); show('Could not start refresh.','err'); });
-  }
-  btn.addEventListener('click',function(e){ if(token){ go(e.shiftKey); } });
-  if(local){
-    fetch('/api/token').then(function(r){ return r.ok?r.json():null; }).then(function(j){
-      if(j&&j.enabled){
-        token=j.token; btn.hidden=false;
-        fetch('/api/status').then(function(r){ return r.json(); }).then(function(s){
-          if(s.state==='running'){ busy(true); sawRunning=true; poll=setInterval(check,1500); check(); }
-        }).catch(function(){});
-      }
-    }).catch(function(){});
-  }
-})();
 </script></body></html>"""

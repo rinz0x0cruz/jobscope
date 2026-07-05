@@ -1,13 +1,14 @@
-"""Serve the dashboard over local HTTP, with an optional localhost-only
-"Refresh & Publish" endpoint.
+"""Serve the jobscope web dashboard (the React SPA) over local HTTP, with a
+localhost-only "Refresh & Publish" control.
 
-`jobscope serve` builds the static dashboard and serves it on 127.0.0.1. When
-`serve.refresh_enabled` is set (the default), the served page shows a Refresh &
-Publish button that POSTs to ``/api/refresh``; the server then syncs the Gmail
-inbox (last ``serve.inbox_days`` days, append-only), rescores matches, rebuilds
-the dashboard, and publishes the redacted/encrypted site -- at most once per day
-unless forced. The endpoints bind to loopback and are CSRF-guarded (localhost
-Origin + a per-run token); they never exist on the published static site.
+`jobscope serve` serves the built SPA from ``web/dist`` on 127.0.0.1 (building it
+first, un-redacted, if it is missing) and injects a floating Refresh button into
+the served page. The button POSTs to ``/api/refresh``; the server then syncs the
+Gmail inbox (last ``serve.inbox_days`` days, append-only), rescores matches,
+publishes the redacted/encrypted public site, and rebuilds the local un-redacted
+SPA -- at most once per day unless forced. The endpoints bind to loopback and are
+CSRF-guarded (loopback Origin + a per-run token); the button is injected only at
+serve time, so it never exists on the published site.
 """
 from __future__ import annotations
 
@@ -46,22 +47,92 @@ def _repo_root() -> str:
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def _dist_dir(cfg: dict) -> str:
+    """Directory of the built SPA to serve. ``serve.web_dist`` overrides the
+    default ``<repo>/web/dist`` (used by tests to point at a fixture)."""
+    override = (cfg.get("serve", {}) or {}).get("web_dist")
+    return os.path.abspath(override) if override else os.path.join(_repo_root(), "web", "dist")
+
+
+# Floating Refresh control injected into the served SPA's index.html. It lives
+# outside React's #root (appended to <body>), appears only on localhost, and
+# reveals itself only after /api/token confirms the endpoint exists -- so it never
+# shows on the statically-hosted public site (served without injection).
+_REFRESH_WIDGET = """
+<style id="js-refresh-style">
+#jsRefreshFab{position:fixed;right:18px;bottom:18px;z-index:2147483000;display:inline-flex;
+  align-items:center;gap:8px;padding:11px 16px;border-radius:999px;border:1px solid rgba(255,255,255,.16);
+  background:#7c6cff;color:#fff;font:600 13px/1 system-ui,-apple-system,sans-serif;cursor:pointer;
+  box-shadow:0 10px 34px rgba(0,0,0,.4)}
+#jsRefreshFab[disabled]{opacity:.65;cursor:progress}
+#jsRefreshFab svg{width:15px;height:15px;flex:none}
+#jsRefreshFab.spin svg{animation:jsspin 1s linear infinite}
+@keyframes jsspin{to{transform:rotate(360deg)}}
+#jsRefreshToast{position:fixed;right:18px;bottom:72px;z-index:2147483000;max-width:320px;
+  padding:10px 13px;border-radius:10px;font:13px/1.45 system-ui,-apple-system,sans-serif;
+  background:#151827;color:#e8e9f0;border:1px solid #2a2e42;box-shadow:0 10px 34px rgba(0,0,0,.45);display:none}
+#jsRefreshToast.show{display:block}
+#jsRefreshToast.ok{border-color:#22c55e}
+#jsRefreshToast.err{border-color:#ef4444}
+#jsRefreshToast.run{border-color:#3b82f6}
+@media (prefers-reduced-motion:reduce){#jsRefreshFab.spin svg{animation:none}}
+</style>
+<script>
+(function(){
+  if(window.__jsRefreshInit){return;} window.__jsRefreshInit=1;
+  var local=location.protocol==='http:'&&(location.hostname==='127.0.0.1'||location.hostname==='localhost');
+  if(!local){return;}
+  var token=null, poll=null, sawRunning=false;
+  var fab=document.createElement('button');
+  fab.id='jsRefreshFab';
+  fab.title='Sync Gmail & publish (Shift-click to force a same-day rerun)';
+  fab.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg><span>Refresh</span>';
+  var toast=document.createElement('div'); toast.id='jsRefreshToast';
+  function show(m,k){toast.textContent=m||'';toast.className=(m?'show ':'')+(k||'');}
+  function busy(b){fab.disabled=b;fab.classList.toggle('spin',b);fab.querySelector('span').textContent=b?'Refreshing':'Refresh';}
+  function stop(){if(poll){clearInterval(poll);poll=null;}busy(false);}
+  function done(s){stop();
+    if(s.state==='done'){show(s.message||'Published.','ok');if(sawRunning){setTimeout(function(){location.reload();},1600);}}
+    else if(s.state==='skipped'){show(s.message||'Already refreshed today.','ok');setTimeout(function(){show('');},6000);}
+    else if(s.state==='error'){show('Error: '+(s.message||'refresh failed'),'err');}
+    sawRunning=false;}
+  function check(){fetch('/api/status').then(function(r){return r.json();}).then(function(s){
+    if(s.state==='running'){sawRunning=true;if(s.message){show(s.message,'run');}}else{done(s);}
+  }).catch(function(){stop();show('Lost connection to jobscope serve.','err');});}
+  function go(force){busy(true);show('Starting\u2026','run');
+    fetch('/api/refresh',{method:'POST',headers:{'X-Refresh-Token':token,'Content-Type':'application/json'},body:JSON.stringify({force:!!force})})
+      .then(function(r){return r.json();}).then(function(j){if(j.state==='busy'){show('A refresh is already running\u2026','run');}if(!poll){poll=setInterval(check,1300);}})
+      .catch(function(){busy(false);show('Could not start refresh.','err');});}
+  fab.addEventListener('click',function(e){if(token){go(e.shiftKey);}});
+  fetch('/api/token').then(function(r){return r.ok?r.json():null;}).then(function(j){
+    if(j&&j.enabled){token=j.token;document.body.appendChild(toast);document.body.appendChild(fab);
+      fetch('/api/status').then(function(r){return r.json();}).then(function(s){if(s.state==='running'){busy(true);sawRunning=true;poll=setInterval(check,1500);check();}}).catch(function(){});}
+  }).catch(function(){});
+})();
+</script>
+"""
+
+
 def _build_server(cfg: dict, port: int):
-    """Build (but do not start) the dashboard HTTP server with the refresh API
-    wired in. Returns ``(httpd, page, token, refresh_enabled)``. Exposed so tests
-    can drive the endpoints on an ephemeral port."""
-    from . import render
+    """Build (but do not start) the SPA HTTP server with the refresh API wired
+    in. Serves ``web/dist`` (building it once, un-redacted, if absent) and injects
+    the Refresh widget into index.html. Returns ``(httpd, page, token,
+    refresh_enabled)``; exposed so tests can drive the endpoints on an ephemeral
+    port."""
     from jobscope.core.store import Store
 
-    with Store(cfg["output"]["db_path"]) as store:
-        path = render.build(cfg, store)
-        _STATE["last_date"] = store.meta_get("refresh:last_date", "") or ""
-
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    page = os.path.basename(path)
+    directory = _dist_dir(cfg)
     serve_cfg = cfg.get("serve", {}) or {}
     refresh_on = bool(serve_cfg.get("refresh_enabled", True))
+
+    if not os.path.exists(os.path.join(directory, "index.html")):
+        with Store(cfg["output"]["db_path"]) as store:
+            _build_local_spa(cfg, store)
+    with Store(cfg["output"]["db_path"]) as store:
+        _STATE["last_date"] = store.meta_get("refresh:last_date", "") or ""
+
     token = secrets.token_hex(16)
+    inject = refresh_on
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -80,6 +151,22 @@ def _build_server(cfg: dict, port: int):
             self.end_headers()
             self.wfile.write(body)
 
+        def _serve_index(self) -> None:
+            try:
+                with open(os.path.join(directory, "index.html"), "rb") as fh:
+                    html = fh.read()
+            except OSError:
+                self.send_error(404, "dashboard not built")
+                return
+            if inject and b"</body>" in html:
+                html = html.replace(b"</body>", _REFRESH_WIDGET.encode("utf-8") + b"</body>", 1)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(html)
+
         def _authorized(self) -> bool:
             # CSRF/loopback guard: reject any cross-origin caller (Origin whose
             # hostname is not a loopback address), and require the per-run token
@@ -94,12 +181,20 @@ def _build_server(cfg: dict, port: int):
 
         # -- routes -------------------------------------------------------
         def do_GET(self):  # noqa: N802 - http.server API
-            route = self.path.split("?", 1)[0]
+            route = self.path.split("?", 1)[0].split("#", 1)[0]
             if route == "/api/token":
                 self._send_json(200, {"token": token, "enabled": refresh_on})
                 return
             if route == "/api/status":
                 self._send_json(200, dict(_STATE))
+                return
+            if route in ("/", "/index.html"):
+                self._serve_index()
+                return
+            # SPA client route with no backing file -> serve the (injected) shell.
+            fs = self.translate_path(self.path)
+            if not os.path.exists(fs) and "." not in os.path.basename(route):
+                self._serve_index()
                 return
             super().do_GET()
 
@@ -137,7 +232,7 @@ def _build_server(cfg: dict, port: int):
         allow_reuse_address = True
         daemon_threads = True
 
-    return Server(("127.0.0.1", port), Handler), page, token, refresh_on
+    return Server(("127.0.0.1", port), Handler), "index.html", token, refresh_on
 
 
 def run(cfg: dict, port: int = 8799, open_browser: bool = False) -> int:
@@ -169,7 +264,6 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
     or ``skipped``), ``message`` and ``last_date``. Used by both the serve button
     and the ``refresh`` CLI command / scheduled task.
     """
-    from . import render
     from jobscope.core.store import Store
 
     def step(name: str, message: str) -> None:
@@ -196,12 +290,15 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
         step("match", "Scoring matches\u2026")
         from jobscope.analyze import match
         match.run(cfg, store)
-        step("render", "Rebuilding dashboard\u2026")
-        render.build(cfg, store)
         store.meta_set("refresh:last_date", today)
         store.log_run("refresh", 0, "ok")
-    step("publish", "Publishing to GitHub Pages\u2026")
-    note = _publish(cfg)
+        # Publish the redacted/encrypted PUBLIC site first (this rebuilds web/dist
+        # for the push), then rebuild the LOCAL un-redacted SPA so the localhost
+        # dashboard keeps its full Applications board and reflects the new data.
+        step("publish", "Publishing to GitHub Pages\u2026")
+        note = _publish(cfg)
+        step("render", "Rebuilding local dashboard\u2026")
+        _build_local_spa(cfg, store)
     return {"state": "done", "message": "Refreshed & published." + note,
             "last_date": today}
 
@@ -220,6 +317,35 @@ def _run_refresh(cfg: dict, force: bool, full_scan: bool) -> None:
     except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
         _STATE.update(state="error", step="error", message=str(exc)[:300],
                       finished=_now())
+
+
+def _build_local_spa(cfg: dict, store) -> None:
+    """Bake un-redacted dashboard data into the web app and run the Vite build,
+    producing ``web/dist`` for the LOCAL (localhost-only) view."""
+    import shutil
+
+    from . import render
+
+    web = os.path.join(_repo_root(), "web")
+    json_path = render.emit_json(cfg, store, public=False)  # -> data/dashboard.json (un-redacted)
+    dst = os.path.join(web, "src", "data", "dashboard.json")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copyfile(json_path, dst)
+    _npm_build(web)
+
+
+def _npm_build(web_dir: str) -> None:
+    import shutil
+    import subprocess
+
+    npm = shutil.which("npm") or shutil.which("npm.cmd")
+    if not npm:
+        raise RuntimeError("npm not found on PATH; install Node.js to build the web dashboard.")
+    proc = subprocess.run([npm, "run", "build"], cwd=web_dir, stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True, timeout=900)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-4:]
+        raise RuntimeError("web build failed: " + " / ".join(t.strip() for t in tail)[:300])
 
 
 def _has_apps_passphrase() -> bool:
