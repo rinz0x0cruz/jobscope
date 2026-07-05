@@ -38,8 +38,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `tailor <job_id>` | Produces a non-destructive tailored resume + cover letter (deterministic ATS keyword pass; AI-upgraded if enabled). |
 | `prep <job_id>` | Builds a review-ready application package folder (tailored resume/cover PDF, filled-answers, index, contacts) and marks status `prepared`. |
 | `apply <job_id> [--assist]` | Opens the posting URL for you to submit. `--assist` = headed Playwright autofill of a **public** ATS form that **stops before submit**. |
-| `dashboard [--open] [--public]` | Renders the self-contained `data/dashboard.html` (job buckets **and** an **Applications** board: pipeline-flow Sankey + kanban columns + per-application email timelines). `--public` also writes a **redacted** copy (per-job contacts/rationale/resume-base, the Overview funnel/targets, **and all applications** stripped) to `output.public_dashboard_path` — safe to host publicly. |
-| `serve [--port 8799] [--open]` | Serves the dashboard over local HTTP. |
+| `dashboard [--public]` | Emits the dashboard JSON payload the web app consumes (`data/dashboard.json`; `--public` writes the **redacted** `data/dashboard.public.json` — per-job contacts/rationale/resume-base, the Overview funnel/targets, **and all applications** stripped). Used by the publish scripts to bake the site. |
+| `serve [--port 8799] [--open]` | Builds (if needed) + serves the **web SPA** on 127.0.0.1 with a localhost-only **Refresh & Publish** button (syncs Gmail -> rescore -> publish -> rebuild). |
 | `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox. |
 | `new` | Lists new Strong/Good jobs since your last review, then advances the review marker. |
@@ -309,7 +309,7 @@ application emails into funnel updates, so the pipeline reflects reality without
 
 ## Dashboard
 
-Self-contained `data/dashboard.html` (inline CSS/JS, no deps, no network). Your data stays local.
+The **React SPA** in `web/` (built to `web/dist`, served locally by `jobscope serve`). Your data stays local; only a redacted build is published to Pages.
 
 ### Tabs
 - **Overview**, **Applications**, + one tab per score bucket: **Strong / Good / Stretch / Skip**, each with a live count.
@@ -375,7 +375,7 @@ Fed by `track` + `inbox` — your application pipeline, not the job search.
   (`.dashboard-repo/`), pinned to the `rinz0x0cruz` identity. `scripts/register-publish-task.ps1` runs it as a
   daily Windows Scheduled Task.
 - **Rules:** publishing originates locally (the SQLite DB is local/gitignored, so CI can't regenerate it);
-  only ever publish the **redacted** copy — never `data/dashboard.html`.
+  only ever publish the **redacted** build (`data/dashboard.public.json` -> `web/dist`) — never the un-redacted local data.
 
 ---
 

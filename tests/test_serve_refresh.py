@@ -29,7 +29,6 @@ _INDEX_HTML = '<!doctype html><html><head></head><body><div id="root"></div></bo
 def _cfg(tmp):
     cfg = load_config(None)
     cfg["output"]["db_path"] = os.path.join(tmp, "p.db")
-    cfg["output"]["dashboard_path"] = os.path.join(tmp, "dash.html")
     # A minimal built SPA fixture so _build_server serves it without an npm build.
     dist = os.path.join(tmp, "dist")
     os.makedirs(dist, exist_ok=True)
