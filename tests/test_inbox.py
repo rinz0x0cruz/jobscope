@@ -416,6 +416,24 @@ def test_parse_company_from_email_display_name():
     assert company == "Bayer"
 
 
+def test_parse_company_strips_trailing_workday_platform():
+    # Workday appends its platform name to the sender display ("NCR Voyix Workday");
+    # the employer ("NCR Voyix", acronym preserved) must survive the strip.
+    company, _ = mailrules.parse_company_role(
+        "NCR Voyix Workday", "myworkday.com", "Thank You for Your Application!", "")
+    assert company == "NCR Voyix"
+
+
+def test_parse_company_from_workday_tenant_url():
+    # A Workday confirmation with a generic subject / empty display resolves the
+    # employer from the careers-URL tenant in the body.
+    company, _ = mailrules.parse_company_role(
+        "", "myworkday.com", "Thanks for your application!",
+        "Thank you for taking the time to apply for the R6521 Associate Threat "
+        "Response Analyst role. https://mimecast.wd5.myworkdayjobs.com/Mimecast-Careers")
+    assert company == "Mimecast"
+
+
 # --- mailrules: status machine ----------------------------------------------
 def test_signal_to_status():
     assert mailrules.signal_to_status("confirmation") == "applied"
