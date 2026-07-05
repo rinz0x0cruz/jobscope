@@ -4,6 +4,7 @@ Private fields (third-party referral contacts, the application funnel, search
 terms, and score rationale) must never reach a publicly-hosted dashboard, while
 public job info and fit scores are kept. Fully offline -- no network.
 """
+import json
 import os
 import tempfile
 
@@ -30,24 +31,20 @@ def test_public_mode_redacts_sensitive_fields():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = load_config(None)
         cfg["output"]["db_path"] = os.path.join(tmp, "p.db")
-        cfg["output"]["dashboard_path"] = os.path.join(tmp, "dash.html")
-        cfg["output"]["public_dashboard_path"] = os.path.join(tmp, "public.html")
         cfg["search"]["terms"] = ["threat detection engineer"]
 
         store = Store(cfg["output"]["db_path"])
         _seed(store)
 
-        # Full (local) dashboard embeds everything.
-        full = open(render.build(cfg, store), encoding="utf-8").read()
+        # Full (local) payload embeds everything.
+        full = json.dumps(render.build_data(cfg, store, public=False), ensure_ascii=False)
         assert "Dana Recruiter" in full
         assert "dana-secret" in full
         assert "threat detection engineer" in full
         assert "1.7y experience" in full
 
-        # Public dashboard -> a separate file, with private fields stripped.
-        pub_path = render.build(cfg, store, public=True)
-        assert pub_path == cfg["output"]["public_dashboard_path"]
-        pub = open(pub_path, encoding="utf-8").read()
+        # Public payload -> private fields stripped.
+        pub = json.dumps(render.build_data(cfg, store, public=True), ensure_ascii=False)
         assert "Senior Security Engineer" in pub      # core public job info kept
         assert "Acme" in pub
         assert "Dana Recruiter" not in pub            # referral contact name gone

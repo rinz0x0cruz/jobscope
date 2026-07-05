@@ -182,24 +182,21 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [render.py](jobscope/deliver/render.py) | 749 | Legacy local HTML dashboard (job buckets + overview) **+** the JSON data contract — incl. the **Applications** board data (pipeline + kanban + email timelines) now consumed by the React app | companies, store | `build()`, `build_data()`, `emit_json()`, `_application_records()` |
+| [render.py](jobscope/deliver/render.py) | 272 | The JSON data contract for the React app — per-job records, overview, and the **Applications** board data (pipeline + kanban + email timelines) | companies, store | `build_data()`, `emit_json()`, `_job_record()`, `_application_records()`, `_overview_data()` |
 | [pdf.py](jobscope/deliver/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
 | [email.py](jobscope/deliver/email.py) | 36 | SMTP summaries (optional) | config | `send()` |
-| [serve.py](jobscope/deliver/serve.py) | 27 | Local HTTP server for the dashboard | render, store | `run()` |
+| [serve.py](jobscope/deliver/serve.py) | ~380 | Serves the built SPA (`web/dist`) on 127.0.0.1 + a localhost-only Refresh/publish API (injects the Refresh widget) | render, store | `run()`, `perform_refresh()` |
 | [exporter.py](jobscope/deliver/exporter.py) | 22 | Export ranked jobs to JSON/CSV | — | `run()` |
 
 Plus [schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) — the JSON-Schema
 artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboard_json.py](tests/test_dashboard_json.py).
 
-> **Note:** the bulk of `render.py` (~852 lines, now at [deliver/render.py](jobscope/deliver/render.py))
-> is the inline HTML `_TEMPLATE` string — the **local** self-contained dashboard (`jobscope dashboard`),
-> still the **only** UI with the **Applications board** (kanban + per-application email timelines) and the
-> inline-SVG **pipeline-flow Sankey**; the React app hasn't mirrored these yet. The **published** (public)
-> dashboard is now the React app in `web/`, built from the redacted emitter. The data-contract logic
-> (`build_data`/`_job_record`/`_application_records`/`_enrich_summary`/`_overview_data`/`emit_json`) is
-> the remainder, and the emitted `dashboard.json` is pinned by a JSON-Schema artifact + a contract test
-> (§9). Once the web app supersedes the HTML page, the template can shrink and `render.py` becomes a
-> slim emitter.
+> **Note:** `render.py` is now a slim JSON emitter (~270 lines). The **React app in `web/`** is the single
+> dashboard — served un-redacted locally by `jobscope serve` and published redacted to Pages — and owns the
+> **Applications board** (kanban + per-application email timelines) and pipeline funnel. The data-contract
+> logic (`build_data`/`_job_record`/`_application_records`/`_enrich_summary`/`_overview_data`/`emit_json`)
+> is pinned by a JSON-Schema artifact + a contract test (§9); the legacy inline HTML `_TEMPLATE` has been
+> removed.
 
 ### cli / orchestration
 
@@ -511,8 +508,8 @@ was updated.
 
 - Split `resume.py` per-format parsers; split `tailor.py` (deterministic `analyze` vs AI rewrite);
   inline the thin [apply/brief.py](jobscope/apply/brief.py) wrapper.
-- Retire `render.py`'s inline HTML `_TEMPLATE` once the React app mirrors the local-only Applications
-  board + pipeline Sankey (the React app is already the **published** dashboard), leaving a slim emitter.
+- ~~Retire `render.py`'s inline HTML `_TEMPLATE`~~ **done** — `render.py` is now a slim JSON emitter; the
+  React app in `web/` is the single dashboard (un-redacted locally via `jobscope serve`, redacted on Pages).
 - Generate `schema.ts` from the Python shapes (or the JSON Schema) so the TS mirror can't drift.
 
 **Invariants held across every tier:** deterministic-first, additive migrations, zero circular

@@ -130,8 +130,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "output": {
         "db_path": "data/jobscope.db",
-        "dashboard_path": "data/dashboard.html",
-        "public_dashboard_path": "data/public-dashboard.html",
     },
     # Local dashboard server (`jobscope serve`). The served page shows a
     # localhost-only "Refresh & Publish" button that syncs the Gmail inbox

@@ -12,7 +12,7 @@ Usage:
     python -m jobscope brief <job_id>              Blunt, risk-forward company brief
     python -m jobscope gaps [--top N]              Skill-gap learning plan across your jobs
     python -m jobscope new                          New Strong/Good jobs since last review
-    python -m jobscope dashboard [--open]          Render the HTML dashboard
+    python -m jobscope dashboard [--public]        Emit the dashboard JSON payload
     python -m jobscope serve [--port 8799 --open]  Serve the dashboard locally
     python -m jobscope track [--set job_id=status] Funnel + follow-up reminders
     python -m jobscope inbox [--dry-run]           Sync Gmail (IMAP) -> application funnel
@@ -97,15 +97,10 @@ def cmd_apply(args, cfg):
 def cmd_dashboard(args, cfg):
     from ..deliver import render
     with _store(args, cfg) as store:
-        if getattr(args, "emit_json", False):
-            path = render.emit_json(cfg, store, public=getattr(args, "public", False))
-            print(f"  dashboard json -> {path}")
-            return 0
-        path = render.build(cfg, store, public=getattr(args, "public", False))
-    print(f"  dashboard -> {path}")
+        path = render.emit_json(cfg, store, public=getattr(args, "public", False))
+    print(f"  dashboard json -> {path}")
     if getattr(args, "open", False):
-        import webbrowser
-        webbrowser.open(f"file://{__import__('os').path.abspath(path)}")
+        print("  view the dashboard with `jobscope serve`")
     return 0
 
 
@@ -321,14 +316,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Assisted fill of a PUBLIC ATS form; stops before submit")
     sp.set_defaults(func=cmd_apply)
 
-    sp = sub.add_parser("dashboard", help="Render the HTML dashboard")
-    sp.add_argument("--open", action="store_true", help="Open in browser")
+    sp = sub.add_parser("dashboard", help="Emit the dashboard JSON payload the web app consumes")
     sp.add_argument("--public", action="store_true",
-                    help="Render a redacted copy safe for public hosting "
+                    help="Emit the redacted public payload "
                          "(no referral contacts, application funnel, or search terms)")
     sp.add_argument("--emit-json", action="store_true",
-                    help="Write the dashboard data as JSON (data/dashboard[.public].json) "
-                         "for the web build, instead of rendering HTML")
+                    help="(default now) kept for compatibility with the publish scripts")
+    sp.add_argument("--open", action="store_true",
+                    help="(deprecated) view the dashboard with `jobscope serve`")
     sp.set_defaults(func=cmd_dashboard)
 
     sp = sub.add_parser("serve", help="Serve the dashboard locally")

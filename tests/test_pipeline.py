@@ -37,7 +37,6 @@ def test_pipeline_ranks_and_renders():
         db = os.path.join(tmp, "e2e.db")
         cfg = load_config(None)
         cfg["output"]["db_path"] = db
-        cfg["output"]["dashboard_path"] = os.path.join(tmp, "dash.html")
 
         store = Store(db)
         _seed(store)
@@ -50,12 +49,11 @@ def test_pipeline_ranks_and_renders():
         assert ranked[-1].company == "ShopCo"        # sales role at the bottom
         assert ranked[0].score > ranked[-1].score
 
-        path = render.build(cfg, store)
-        html = open(path, encoding="utf-8").read()
-        assert "Senior Security Engineer" in html
-        assert "jobscope" in html
-        # embedded data is valid + ordered by score
-        assert "Acme" in html and "ShopCo" in html
+        data = render.build_data(cfg, store)
+        companies = [r["company"] for r in data["rows"]]
+        assert "Senior Security Engineer" in [r["title"] for r in data["rows"]]
+        # payload is ordered by score (Acme strongest, ShopCo weakest)
+        assert companies[0] == "Acme" and companies[-1] == "ShopCo"
         store.close()
 
 
