@@ -34,7 +34,9 @@ ATS_DOMAINS: dict[str, str] = {
     "smartrecruiters.com": "smartrecruiters",
     "smartrecruitersmail.com": "smartrecruiters",
     "successfactors.com": "successfactors",
+    "successfactors.eu": "successfactors",
     "sapsf.com": "successfactors",
+    "sapsf.eu": "successfactors",
     "taleo.net": "taleo",
     "workable.com": "workable",
     "candidates.workable.com": "workable",
@@ -254,8 +256,9 @@ _COMPANY_STOP = {
 _RELAY_DOMAINS = {
     "amazonses.com", "sparkpostmail.com", "sparkpost.com", "sendgrid.net",
     "sendgrid.com", "mailgun.org", "mandrillapp.com", "mcsv.net", "rsgsv.net",
-    "oracle.com", "outlook.com", "office365.com", "sapsf.com",
-    "successfactors.com", "darwinbox.in", "darwinbox.com", "ycombinator.com",
+    "oracle.com", "outlook.com", "office365.com", "sapsf.com", "sapsf.eu",
+    "successfactors.com", "successfactors.eu", "darwinbox.in", "darwinbox.com",
+    "ycombinator.com",
 }
 
 # Subdomain / TLD labels stripped when deriving a company from a domain.
@@ -534,11 +537,20 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
 
 
 def _company_from_sender(from_name: str, from_domain: str) -> str:
-    name = _clean(re.split(r"[|@<]", from_name or "")[0])
+    raw = from_name or ""
+    name = _clean(re.split(r"[|@<]", raw)[0])
     # Drop pure-noise display names ("Recruiting", "No Reply", "Careers Team").
     stripped = normalize_company(name)
     if stripped and stripped not in _NOREPLY_LOCALPARTS and len(stripped) > 1:
         return _title(name)
+    # An email-address display name ("HR@Bayer.com", "careers@acme.com") carries the
+    # employer domain after the @; derive the company from it when the local part is
+    # noise, so an ATS relay (successfactors.eu) is never mistaken for the employer.
+    m = re.search(r"@\s*([A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,})", raw)
+    if m:
+        embedded = company_from_domain(m.group(1))
+        if embedded:
+            return embedded
     # Fall back to a direct employer domain (skips ATS/board/relay platforms).
     return company_from_domain(from_domain)
 
