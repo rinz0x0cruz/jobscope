@@ -142,8 +142,17 @@ if ($Encrypted) {
 Write-Host "==> Building web dashboard (npm run build)"
 Push-Location (Join-Path $RepoRoot "web")
 try {
-    npm run build
-    if ($LASTEXITCODE -ne 0) { throw "web build failed (exit $LASTEXITCODE)" }
+    # npm/Vite print progress and a benign lottie-web `eval` warning to stderr; under
+    # ErrorActionPreference=Stop (e.g. Windows PowerShell 5.1, where the native-stderr
+    # guard at the top is a no-op) that aborts the publish right before the push. Relax
+    # it here and gate on the exit code instead (2>&1 merges stderr into the stream so
+    # it just prints).
+    $eapPrev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    npm run build 2>&1 | ForEach-Object { Write-Host $_ }
+    $buildExit = $LASTEXITCODE
+    $ErrorActionPreference = $eapPrev
+    if ($buildExit -ne 0) { throw "web build failed (exit $buildExit)" }
 }
 finally { Pop-Location }
 
