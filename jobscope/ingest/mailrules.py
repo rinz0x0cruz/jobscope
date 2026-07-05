@@ -234,6 +234,13 @@ _COMPANY_SUFFIXES = re.compile(
     r"solutions|systems|group|holdings|team|talent|recruiting|recruitment|"
     r"careers|hr|people|hiring)\b", re.I)
 
+# ATS/HR platform names that get appended to a sender display ("NCR Voyix Workday",
+# "Acme Greenhouse") -- strip a trailing platform token so the employer remains.
+_TRAILING_PLATFORM = re.compile(
+    r"[\s|,\u2013\u2014-]+(?:workday|myworkday|myworkdayjobs|greenhouse|lever|ashby|"
+    r"icims|smartrecruiters|taleo|workable|jobvite|bamboohr|breezy|rippling|"
+    r"eightfold|paylocity|darwinbox|successfactors)\s*$", re.I)
+
 # "no-reply", "careers", etc. -- sender local-parts that are not a company name.
 _NOREPLY_LOCALPARTS = {
     "no-reply", "noreply", "no_reply", "donotreply", "do-not-reply", "careers",
@@ -486,6 +493,11 @@ _INTEREST_IN = re.compile(
 _AT_COMPANY = re.compile(
     r"\bat\s+(?P<company>[A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z0-9][A-Za-z0-9&.'-]*){0,3})"
     r"(?=\s*[|(]|[!.?,)]|\s+(?:for|and|as|team|careers?)\b|$)")
+# A Workday careers URL embeds the employer as the tenant subdomain
+# ("mimecast.wd5.myworkdayjobs.com" -> Mimecast): a last-resort body signal for
+# Workday confirmations with a generic subject and no usable sender display.
+_WORKDAY_TENANT = re.compile(
+    r"https?://([a-z0-9][a-z0-9-]{1,40})\.wd\d+\.myworkdayjobs\.com", re.I)
 
 
 def parse_company_role(from_name: str, from_domain: str, subject: str,
@@ -524,6 +536,11 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
     if not company:
         company = _pick(_company_from_sender(from_name, from_domain))
 
+    if not company:                      # Workday careers URL tenant (last resort)
+        m = _WORKDAY_TENANT.search(body or "")
+        if m:
+            company = _pick(_title(m.group(1)))
+
     if not role:
         m = _ROLE_DASH.match(subject.strip())
         if m:
@@ -559,6 +576,8 @@ def _clean(s: str) -> str:
     s = re.sub(r"\s+", " ", (s or "")).strip(" \t\r\n-\u2013\u2014|:,.")
     # Strip a trailing recruiting/careers tag left on a company token.
     s = _COMPANY_SUFFIXES.sub("", s).strip(" -|:,.")
+    # Strip a trailing ATS/HR platform token ("NCR Voyix Workday" -> "NCR Voyix").
+    s = _TRAILING_PLATFORM.sub("", s).strip(" -|:,.")
     return re.sub(r"\s+", " ", s).strip()
 
 
