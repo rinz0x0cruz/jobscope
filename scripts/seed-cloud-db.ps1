@@ -50,8 +50,16 @@ try {
         git add jobscope.db.enc
         git -c user.name="rinz0x0cruz" -c user.email="rinz0x0cruz@users.noreply.github.com" `
             commit -q -m "seed encrypted db"
+        # git streams its push progress + the final "To <url>" summary to stderr;
+        # under ErrorActionPreference=Stop (Windows PowerShell 5.1) that summary line
+        # aborts the seed *after* the push has already landed, so relax EAP around the
+        # push and gate on the exit code instead (same fix as the node call above).
+        $eapPush = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
         git push --force $Repo data 2>&1 | ForEach-Object { Write-Host $_ }
-        if ($LASTEXITCODE -ne 0) { throw "push failed (is a credential cached / remote reachable?)" }
+        $pushExit = $LASTEXITCODE
+        $ErrorActionPreference = $eapPush
+        if ($pushExit -ne 0) { throw "push failed (is a credential cached / remote reachable?)" }
     }
     finally { Pop-Location }
 
