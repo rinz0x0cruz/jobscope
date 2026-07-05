@@ -337,6 +337,16 @@ briefcase/scope mark over local Lottie data, `CyberSakura` draws a right-rail SV
 leaf spans, and `theme.css` owns the aurora gradients, cursor spotlight, status rails, and reduced-motion
 fallbacks. None of this changes the JSON contract or deterministic backend behavior.
 
+**Layout width:** the React dashboard's main content rail is controlled in [web/src/App.tsx](web/src/App.tsx)
+by the Tailwind max-width class on `<main>` (`max-w-6xl` as of this map). The cyber-sakura right rail is
+positioned in [web/src/styles/theme.css](web/src/styles/theme.css) and should be checked in browser after
+any width change so it stays decorative and never overlaps controls.
+
+**Resume facet visibility:** `JobRow.base` is emitted from `job.resume_base`, exposed as the `resume` facet
+in [web/src/lib/urlState.ts](web/src/lib/urlState.ts), and rendered by [FacetBar.tsx](web/src/components/filters/FacetBar.tsx)
+only when there are 2+ available options. If it looks missing, the dataset probably has one distinct resume
+base or the user has not rerun `match` after importing multiple named resumes.
+
 **Encrypted applications shell:** [scripts/apps-template.html](scripts/apps-template.html) is intentionally
 not part of the Vite bundle. `scripts/build-secure-apps.mjs` injects only an encrypted payload into it.
 The shell has its own CSS/JS for pipeline bars, status rails, and cursor spotlight, and must preserve

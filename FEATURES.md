@@ -61,6 +61,11 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Interaction polish:** KPI, role, and application cards use cursor-follow spotlight variables (`--spot-x`,
   `--spot-y`) and preserve keyboard focus rings. Application cards also get status-colored rails; `interview`
   and `offer` rails pulse gently to surface active outcomes.
+- **Wider console layout:** the React dashboard uses a wider scan-friendly container so KPI cards, charts,
+  and top-match tables have more breathing room on desktop while preserving the same mobile stack.
+- **Facet visibility:** dashboard facets hide when they have only one possible value. The Resume facet appears
+  once the emitted data contains 2+ distinct `resume_base` values (for example, after importing multiple named
+  resumes and rerunning `match`).
 - **Applications page:** `applications.html` is a standalone encrypted shell. Its UI shell mirrors the
   dashboard's status rails and cursor spotlight after unlock, while the sensitive applications payload remains
   AES-GCM encrypted and only decrypts in-browser with the passphrase.

@@ -128,7 +128,7 @@ html.light {
 
 .js-cyber-tree {
   position: fixed;
-  right: max(-22px, calc((100vw - 76rem) / 2 - 150px));
+  right: max(-260px, calc((100vw - 72rem) / 2 - 320px));
   top: 82px;
   z-index: 1;
   width: clamp(180px, 22vw, 315px);
