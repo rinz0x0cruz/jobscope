@@ -2,25 +2,34 @@ import { useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { ChevronDown, Mail } from 'lucide-react'
 import type { Application, ApplicationEvent } from '@/lib/schema'
-import { signalColor } from './constants'
+import { trackSpotlight } from '@/lib/spotlight'
+import type { CSSProperties } from 'react'
+import { signalColor, statusColor } from './constants'
 
 function TimelineRow({ e }: { e: ApplicationEvent }) {
   return (
-    <li className="flex items-center gap-2 text-[11.5px]">
-      <span
-        className="shrink-0 rounded-[5px] border px-1.5 font-mono text-[10px] font-bold capitalize leading-[1.35]"
-        style={{
-          color: signalColor(e.signal),
-          borderColor: `color-mix(in srgb, ${signalColor(e.signal)} 40%, transparent)`,
-        }}
-      >
-        {e.signal || 'other'}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-dim" title={e.subject}>
-        {e.subject || '—'}
-      </span>
-      {e.from && <span className="shrink-0 truncate text-mute" title={e.from}>{e.from}</span>}
-      {e.date && <time className="shrink-0 text-mute tnum">{e.date}</time>}
+    <li className="flex flex-col gap-1 text-[11.5px]">
+      <div className="flex items-center gap-2">
+        <span
+          className="shrink-0 rounded-[5px] border px-1.5 font-mono text-[10px] font-bold capitalize leading-[1.35]"
+          style={{
+            color: signalColor(e.signal),
+            borderColor: `color-mix(in srgb, ${signalColor(e.signal)} 40%, transparent)`,
+          }}
+        >
+          {e.signal || 'other'}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-dim" title={e.subject}>
+          {e.subject || '\u2014'}
+        </span>
+        {e.from && <span className="shrink-0 truncate text-mute" title={e.from}>{e.from}</span>}
+        {e.date && <time className="shrink-0 text-mute tnum">{e.date}</time>}
+      </div>
+      {e.summary && (
+        <p className="line-clamp-3 pl-[3px] text-[11px] leading-relaxed text-mute">
+          {e.summary}
+        </p>
+      )}
     </li>
   )
 }
@@ -30,9 +39,17 @@ export function AppCard({ app }: { app: Application }) {
   const [open, setOpen] = useState(false)
   const events = app.timeline ?? []
   const date = (app.applied_at || app.updated || '').slice(0, 10)
+  const status = app.status || 'new'
+  const accent = statusColor(status)
 
   return (
-    <article className="rounded-[10px] border border-border bg-card p-3 transition-colors hover:border-border-h hover:bg-card-h">
+    <article
+      data-status={status}
+      className="js-gradient-card js-spotlight-card js-status-card rounded-[10px] border border-border bg-card p-3 transition-colors hover:border-border-h hover:bg-card-h"
+      onPointerMove={trackSpotlight}
+      style={{ '--status-color': accent, '--spot-color': accent } as CSSProperties}
+    >
+      <span className="js-status-rail" aria-hidden="true" />
       <div className="flex items-baseline gap-2">
         <span className="min-w-0 flex-1 truncate text-sm font-semibold">{app.company || '—'}</span>
         {date && <time className="shrink-0 text-[11px] text-mute tnum">{date}</time>}

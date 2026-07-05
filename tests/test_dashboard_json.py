@@ -101,7 +101,7 @@ _APPLICATION = {
 }
 
 _TIMELINE_EVENT = {
-    "date": str, "signal": str, "subject": str, "from": str,
+    "date": str, "signal": str, "subject": str, "from": str, "summary": str,
 }
 
 # Optional sub-objects _enrich_summary() attaches; a present sub-object's keys
@@ -210,7 +210,7 @@ def test_build_data_matches_contract():
         assert len(app["timeline"]) == 1
         assert app["timeline"][0] == {
             "date": "2026-06-01", "signal": "confirmation",
-            "subject": "Thanks for applying", "from": "acme.com"}
+            "subject": "Thanks for applying", "from": "acme.com", "summary": ""}
 
         store.close()
 

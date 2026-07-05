@@ -93,11 +93,14 @@ export interface Overview {
 
 // One row of an application's email timeline (render.py: _application_records,
 // the `timeline[]` items). Every key is always emitted (Python defaults to '').
+// `summary` is a deterministic one-line preview of the email body, present only
+// when inbox.store_snippets is enabled (else '').
 export interface ApplicationEvent {
   date: string
   signal: string
   subject: string
   from: string
+  summary: string
 }
 
 // A tracked application for the Applications board (render.py: _application_records).

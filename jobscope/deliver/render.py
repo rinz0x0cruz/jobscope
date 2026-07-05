@@ -108,6 +108,16 @@ def _overview_data(cfg: dict, store) -> dict:
     return {"funnel": funnel, "gaps": gaps, "considered": considered, "targets": targets}
 
 
+def _summarize(text: str, limit: int = 220) -> str:
+    """One-line preview of an email body: collapse whitespace and truncate on a
+    word boundary. Deterministic (no AI); the raw snippet is only present when
+    ``inbox.store_snippets`` is enabled, so this is "" otherwise."""
+    s = re.sub(r"\s+", " ", text or "").strip()
+    if len(s) <= limit:
+        return s
+    return s[:limit].rsplit(" ", 1)[0].rstrip(",.;:") + "..."
+
+
 def _application_records(store) -> list[dict[str, Any]]:
     """Per-application records (company/title/status + email timeline) for the
     dashboard's Applications board. Best-effort: never breaks the dashboard."""
@@ -139,6 +149,7 @@ def _application_records(store) -> list[dict[str, Any]]:
                 "signal": e.get("signal") or "",
                 "subject": e.get("subject") or "",
                 "from": e.get("from_domain") or "",
+                "summary": _summarize(e.get("snippet") or ""),
             } for e in evs],
         })
     return out

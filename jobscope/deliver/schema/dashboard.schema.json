@@ -153,12 +153,13 @@
     "ApplicationEvent": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["date", "signal", "subject", "from"],
+      "required": ["date", "signal", "subject", "from", "summary"],
       "properties": {
         "date": {"type": "string"},
         "signal": {"type": "string"},
         "subject": {"type": "string"},
-        "from": {"type": "string"}
+        "from": {"type": "string"},
+        "summary": {"type": "string"}
       }
     }
   }

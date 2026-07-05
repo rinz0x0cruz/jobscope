@@ -91,6 +91,43 @@ def test_classify_rejection_beats_interview():
     ) == "rejection"
 
 
+def test_classify_confirmation_over_conditional_not_selected():
+    # An application-RECEIVED acknowledgment that mentions a *conditional* "if you
+    # are not selected, keep an eye on our jobs page" must stay a confirmation --
+    # the hypothetical "not selected" is dropped before rejection scoring.
+    assert mailrules.classify_signal(
+        "no-reply@hire.lever.co",
+        "Thank you for your application to Drivetrain",
+        "Thank you for your interest in Drivetrain! We received your application "
+        "for Security Engineer. If you are not selected for this position, keep an "
+        "eye on our jobs page as we're growing.") == "confirmation"
+
+
+def test_classify_confirmation_over_conditional_dont_hear():
+    # "If you don't hear from us ... you were not a fit" is a conditional future in
+    # an acknowledgment (Workday auto-reply), not a real rejection.
+    assert mailrules.classify_signal(
+        "no-reply@myworkday.com",
+        "Thanks for your application!",
+        "Thank you for taking the time to apply for the Analyst role. Your "
+        "application will be reviewed by our team, and if your experience matches "
+        "the requirements, we'll be in touch. If you don't hear from us in the next "
+        "four weeks it's likely that you were not a fit for this role.") == "confirmation"
+
+
+def test_classify_rejection_with_confirmation_padding():
+    # A real rejection ("we've decided not to move forward") that opens with
+    # confirmation padding ("Thank you for your interest ... for taking the time to
+    # apply") and a confirmation-ish subject must still read as a rejection -- the
+    # decision is stated unconditionally, so de-conditionalization keeps it.
+    assert mailrules.classify_signal(
+        "no-reply@us.greenhouse-mail.io",
+        "Update on your application to Endor Labs",
+        "Thank you for your interest in Endor Labs and for taking the time to "
+        "apply. After careful review, we've decided not to move forward with your "
+        "application at this time. We wish you all the best.") == "rejection"
+
+
 def test_classify_offer():
     assert mailrules.classify_signal(
         "x@ashbyhq.com", "Great news", "We are pleased to offer you the position."
@@ -211,6 +248,25 @@ def test_is_noise_sender():
     assert mailrules.is_noise_sender("Glassdoor Community", "noreply@glassdoor.com") is True
     assert mailrules.is_noise_sender("LinkedIn Job Alerts", "jobalerts-noreply@linkedin.com") is True
     assert mailrules.is_noise_sender("Databricks Recruiting", "no-reply@greenhouse.io") is False
+
+
+def test_is_newsletter_domain():
+    assert mailrules.is_newsletter_domain("substack.com") is True
+    assert mailrules.is_newsletter_domain("email.mg1.substack.com") is True   # subdomain
+    assert mailrules.is_newsletter_domain("medium.com") is True
+    assert mailrules.is_newsletter_domain("greenhouse.io") is False           # ATS, not a newsletter
+    assert mailrules.is_newsletter_domain("zscaler.com") is False             # employer
+    assert mailrules.is_newsletter_domain("") is False
+
+
+def test_strip_html_drops_style_and_script():
+    from jobscope.ingest.ats import _strip_html
+    raw = ("<style>#outlook a { padding:0; } body { margin:0; }</style>"
+           "<script>var x = 1;</script><!-- hidden --><p>Hi Mohit, "
+           "thank you for applying.</p>")
+    out = _strip_html(raw)
+    assert out == "Hi Mohit, thank you for applying."
+    assert "padding" not in out and "var x" not in out and "hidden" not in out
 
 
 # --- mailrules: parsing -----------------------------------------------------
@@ -509,4 +565,25 @@ def test_inbox_disabled_is_noop():
     cfg = load_config("__no_such_config_for_tests__.yaml")   # defaults: inbox.enabled == False
     assert inbox.run(cfg, store) == 0
     assert store.mail_events() == []
+    store.close()
+
+
+def test_inbox_drops_newsletter_domain(monkeypatch):
+    # A newsletter whose subject collides with a lifecycle keyword ("Coding
+    # Challenge" -> assessment) must be dropped by sender domain, never reaching
+    # the funnel -- even though the assessment signal is otherwise "job-related".
+    FakeIMAP.mailbox = {
+        1: _raw("John Crickett from Coding Challenges <codingchallenges@substack.com>",
+                "Coding Challenge #125 - Online Diff Viewer",
+                "This week's challenge: build an online diff viewer.", "<cc-125@substack.com>"),
+    }
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+
+    inbox.run(cfg, store)
+
+    assert store.mail_events() == []        # dropped up front, no event stored
+    assert store.applications() == []       # and never advanced any application
     store.close()

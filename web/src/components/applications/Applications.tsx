@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useReducedMotion } from 'motion/react'
 import type { Application } from '@/lib/schema'
+import { trackSpotlight } from '@/lib/spotlight'
 import { CountUp } from '@/components/overview/CountUp'
 import { AppCard } from './AppCard'
 import { PipelineFlow } from './PipelineFlow'
@@ -8,7 +9,7 @@ import { pct, pipelineMetrics, presentStatuses, statusColor, statusCounts, statu
 
 function Card({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   return (
-    <section className="rounded-[14px] border border-border bg-card p-4">
+    <section className="js-gradient-card js-spotlight-card rounded-[14px] border border-border bg-card p-4" onPointerMove={trackSpotlight}>
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <h3 className="text-sm font-semibold">{title}</h3>
         {subtitle && <span className="text-xs text-mute">{subtitle}</span>}
@@ -74,7 +75,8 @@ function KanbanBoard({ apps }: { apps: Application[] }) {
         <section
           key={col.status}
           aria-label={`${col.label} (${col.cards.length})`}
-          className="flex flex-col gap-2.5 self-start rounded-[14px] border border-border bg-bg2 p-3"
+          className="js-gradient-column js-spotlight-card flex flex-col gap-2.5 self-start rounded-[14px] border border-border bg-bg2 p-3"
+          onPointerMove={trackSpotlight}
         >
           <h4 className="flex items-center gap-2 text-[13px] font-semibold">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: col.color }} />
