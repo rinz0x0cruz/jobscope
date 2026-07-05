@@ -65,6 +65,24 @@ def run(cfg: dict, store, *, dry_run: bool = False, account: Optional[str] = Non
     return 0
 
 
+def _folders_for(icfg: dict) -> list[str]:
+    """Folders to scan per account: the configured folder (default INBOX), plus
+    Gmail's spam folder when ``inbox.include_spam`` is set -- so a real
+    application email Gmail misfiled as spam is still picked up."""
+    folders = [icfg.get("folder", "INBOX")]
+    if icfg.get("include_spam"):
+        spam = icfg.get("spam_folder", "[Gmail]/Spam")
+        if spam and spam not in folders:
+            folders.append(spam)
+    return [f for f in folders if f]
+
+
+def _uid_marker(addr: str, folder: str) -> str:
+    """Incremental UID watermark key, per account+folder. INBOX keeps the legacy
+    key so existing watermarks stay valid (no surprise full rescan on upgrade)."""
+    return f"inbox:{addr}:last_uid" if folder == "INBOX" else f"inbox:{addr}:{folder}:last_uid"
+
+
 def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optional[str],
                   backfill: bool) -> int:
     icfg = cfg["inbox"]
@@ -78,10 +96,7 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
 
     host = icfg.get("imap_host", "imap.gmail.com")
     port = int(icfg.get("imap_port", 993))
-    folder = icfg.get("folder", "INBOX")
     lookback_days = int(acct.get("lookback_days", icfg.get("lookback_days", 90)))
-    marker = f"inbox:{addr}:last_uid"
-    last_uid = 0 if (backfill or since) else int(store.meta_get(marker, "0") or 0)
 
     try:
         M = imaplib.IMAP4_SSL(host, port)
@@ -97,30 +112,14 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
             job_index.setdefault(mailrules.normalize_company(j.company), j.id)
 
     kept = 0
-    scanned = 0
-    max_uid = last_uid
     try:
         M.login(addr, pw)
-        M.select(folder, readonly=True)
-        uids = _search_uids(M, last_uid, since, lookback_days, backfill)
-        for uid in uids:
-            scanned += 1
-            u = int(uid)
-            if u > max_uid:
-                max_uid = u
-            try:
-                ev = _process_uid(M, addr, uid, store, cfg, job_index, dry_run=dry_run)
-            except Exception:  # noqa: BLE001 - one bad message never sinks the run
-                ev = None
-            if ev is not None:
-                kept += 1
-        if not dry_run and max_uid > last_uid:
-            store.meta_set(marker, str(max_uid))
-        store.log_run(f"inbox:{addr}", kept, "ok")
-        print(f"  [{addr}] {scanned} scanned / {kept} job-related"
-              + (" (dry-run)" if dry_run else ""))
+        for folder in _folders_for(icfg):
+            kept += _sync_folder(M, addr, folder, store, cfg, job_index,
+                                 dry_run=dry_run, since=since, backfill=backfill,
+                                 lookback_days=lookback_days)
     except imaplib.IMAP4.error as exc:
-        print(f"  [skip] {addr}: IMAP login/select failed ({exc}). "
+        print(f"  [skip] {addr}: IMAP login failed ({exc}). "
               f"Check the app password and that IMAP is enabled.")
         store.log_run(f"inbox:{addr}", 0, "error")
     finally:
@@ -128,6 +127,44 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
             M.logout()
         except Exception:  # noqa: BLE001
             pass
+    return kept
+
+
+def _sync_folder(M, addr: str, folder: str, store, cfg: dict, job_index: dict, *,
+                 dry_run: bool, since: Optional[str], backfill: bool,
+                 lookback_days: int) -> int:
+    """Scan a single IMAP folder for one account; returns the newly-ingested count.
+    A missing folder (e.g. no localized Spam) is skipped quietly."""
+    marker = _uid_marker(addr, folder)
+    last_uid = 0 if (backfill or since) else int(store.meta_get(marker, "0") or 0)
+    try:
+        typ, _ = M.select(folder, readonly=True)
+    except imaplib.IMAP4.error:
+        typ = "NO"
+    if typ != "OK":
+        return 0
+
+    kept = 0
+    scanned = 0
+    max_uid = last_uid
+    uids = _search_uids(M, last_uid, since, lookback_days, backfill)
+    for uid in uids:
+        scanned += 1
+        u = int(uid)
+        if u > max_uid:
+            max_uid = u
+        try:
+            ev = _process_uid(M, addr, uid, store, cfg, job_index, dry_run=dry_run)
+        except Exception:  # noqa: BLE001 - one bad message never sinks the run
+            ev = None
+        if ev is not None:
+            kept += 1
+    if not dry_run and max_uid > last_uid:
+        store.meta_set(marker, str(max_uid))
+    store.log_run(f"inbox:{addr}:{folder}", kept, "ok")
+    tag = "" if folder == "INBOX" else f" [{folder}]"
+    print(f"  [{addr}]{tag} {scanned} scanned / {kept} job-related"
+          + (" (dry-run)" if dry_run else ""))
     return kept
 
 
