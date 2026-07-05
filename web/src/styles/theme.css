@@ -400,6 +400,28 @@ html.light .js-cyber-tree-svg {
   stroke: color-mix(in srgb, var(--neon-cyan) 24%, transparent);
   stroke-width: 1.2;
 }
+.js-skill-point {
+  cursor: pointer;
+  transition: opacity .18s ease, filter .18s ease;
+}
+.js-skill-graph[data-has-selection="true"] .js-skill-point:not(.is-selected) {
+  opacity: .38;
+}
+.js-skill-point:focus-visible {
+  outline: none;
+}
+.js-skill-point:focus-visible .js-skill-node,
+.js-skill-point:hover .js-skill-node,
+.js-skill-point.is-selected .js-skill-node {
+  stroke: #fff;
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 18px color-mix(in srgb, var(--neon-emerald) 72%, transparent));
+}
+.js-skill-point:hover .js-skill-link,
+.js-skill-point.is-selected .js-skill-link {
+  stroke: color-mix(in srgb, var(--neon-emerald) 55%, transparent);
+  stroke-width: 2;
+}
 .js-skill-node-halo {
   fill: color-mix(in srgb, var(--neon-cyan) 14%, transparent);
   filter: blur(1px);

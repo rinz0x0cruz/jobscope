@@ -37,6 +37,8 @@ def test_web_dashboard_animation_assets_are_wired() -> None:
     assert "js-cyber-tree" in tree and "js-sakura-leaf" in tree
     assert "<SkillConstellation" in overview
     assert "js-skill-graph" in skill_graph and "js-skill-node" in skill_graph
+    assert "role=\"button\"" in skill_graph and "onSelect" in skill_graph
+    assert "Select a node to show roles" in overview and "rowMentionsSkill" in overview
     assert "trackSpotlight" in spotlight and "--spot-x" in spotlight and "--spot-y" in spotlight
 
     for marker in (

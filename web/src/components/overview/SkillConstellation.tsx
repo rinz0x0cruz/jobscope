@@ -11,15 +11,31 @@ const POINTS = [
   [318, 132],
 ] as const
 
-export function SkillConstellation({ items }: { items: BarItem[] }) {
+interface Props {
+  items: BarItem[]
+  selected?: string
+  onSelect?: (skill: string) => void
+}
+
+export function SkillConstellation({ items, selected = '', onSelect }: Props) {
   const top = items.slice(0, 8)
   if (top.length === 0) return null
 
   const max = Math.max(1, ...top.map((item) => item.value))
   const center = { x: 318, y: 132 }
+  const hasSelection = Boolean(selected)
+
+  const choose = (skill: string) => {
+    onSelect?.(skill === selected ? '' : skill)
+  }
 
   return (
-    <div className="js-skill-graph" role="img" aria-label="Skill gaps plotted by demand across matched roles">
+    <div
+      className="js-skill-graph"
+      data-has-selection={hasSelection ? 'true' : 'false'}
+      role="img"
+      aria-label="Skill gaps plotted by demand across matched roles; select a node to list matching roles"
+    >
       <svg viewBox="0 0 636 264" preserveAspectRatio="xMidYMid meet">
         <defs>
           <radialGradient id="skillNodeGlow" cx="50%" cy="45%" r="62%">
@@ -35,8 +51,22 @@ export function SkillConstellation({ items }: { items: BarItem[] }) {
           const radius = 9 + (item.value / max) * 17
           const labelY = y < center.y ? y - radius - 12 : y + radius + 18
           const anchor = x < center.x - 40 ? 'end' : x > center.x + 40 ? 'start' : 'middle'
+          const isSelected = selected === item.label
           return (
-            <g key={item.label}>
+            <g
+              key={item.label}
+              className={isSelected ? 'js-skill-point is-selected' : 'js-skill-point'}
+              role="button"
+              tabIndex={0}
+              aria-label={`Show roles asking for ${item.label}: ${item.value} matches`}
+              onClick={() => choose(item.label)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  choose(item.label)
+                }
+              }}
+            >
               <line className="js-skill-link" x1={center.x} y1={center.y} x2={x} y2={y} />
               <circle className="js-skill-node-halo" cx={x} cy={y} r={radius + 8} />
               <circle className="js-skill-node" cx={x} cy={y} r={radius} />
