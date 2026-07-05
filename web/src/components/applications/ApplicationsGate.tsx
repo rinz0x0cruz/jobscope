@@ -6,6 +6,13 @@ import type { Application, EncBlob } from '@/lib/schema'
 // but is cleared when the browser tab closes (never persisted to disk).
 export const UNLOCK_KEY = 'jobscope:apps'
 
+// Decrypted payload (mirrors build-secure-apps.mjs): the applications plus the
+// overview application funnel, so the Overview tab matches the local view too.
+export interface UnlockedApps {
+  apps: Application[]
+  funnel: Record<string, number>
+}
+
 function b64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64)
   const out = new Uint8Array(bin.length)
@@ -19,7 +26,7 @@ function b64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
  * 256-bit key from the passphrase, then AES-GCM decrypts the ciphertext.
  * Throws on a wrong passphrase (GCM tag mismatch).
  */
-async function decryptBlob(blob: EncBlob, passphrase: string): Promise<Application[]> {
+async function decryptBlob(blob: EncBlob, passphrase: string): Promise<UnlockedApps> {
   const enc = new TextEncoder()
   const baseKey = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey'])
   const key = await crypto.subtle.deriveKey(
@@ -30,12 +37,12 @@ async function decryptBlob(blob: EncBlob, passphrase: string): Promise<Applicati
     ['decrypt'],
   )
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(blob.iv) }, key, b64ToBytes(blob.ct))
-  const data = JSON.parse(new TextDecoder().decode(pt)) as { applications?: Application[] }
-  return data.applications ?? []
+  const data = JSON.parse(new TextDecoder().decode(pt)) as { applications?: Application[]; funnel?: Record<string, number> }
+  return { apps: data.applications ?? [], funnel: data.funnel ?? {} }
 }
 
 /** Passphrase form shown in the Applications tab when the data is encrypted. */
-export function ApplicationsGate({ blob, onUnlock }: { blob: EncBlob; onUnlock: (apps: Application[]) => void }) {
+export function ApplicationsGate({ blob, onUnlock }: { blob: EncBlob; onUnlock: (data: UnlockedApps) => void }) {
   const [pass, setPass] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -46,14 +53,14 @@ export function ApplicationsGate({ blob, onUnlock }: { blob: EncBlob; onUnlock: 
     setBusy(true)
     setError('')
     try {
-      const apps = await decryptBlob(blob, pass)
+      const data = await decryptBlob(blob, pass)
       try {
-        sessionStorage.setItem(UNLOCK_KEY, JSON.stringify(apps))
+        sessionStorage.setItem(UNLOCK_KEY, JSON.stringify(data))
       } catch {
         // sessionStorage may be unavailable (private mode) — unlock still works
         // for this view, it just won't survive a tab switch.
       }
-      onUnlock(apps)
+      onUnlock(data)
     } catch {
       setError('Wrong passphrase, or the data is corrupt.')
       setBusy(false)
