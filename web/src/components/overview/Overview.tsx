@@ -3,6 +3,7 @@ import type { JobRow, Overview as OverviewStats } from '@/lib/schema'
 import { funnelBars, tierSegments, topCompanies, topMatches } from '@/lib/overview'
 import { Donut } from './Donut'
 import { Bars } from './Bars'
+import { SkillConstellation } from './SkillConstellation'
 import { TopMatches } from './TopMatches'
 
 function Card({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
@@ -54,7 +55,7 @@ export function Overview({ rows, stats, onOpen }: { rows: JobRow[]; stats: Overv
         </Card>
         <Card title="Skill gaps in your matches" subtitle="most in-demand">
           {gaps.length > 0 ? (
-            <Bars items={gaps} color="var(--stretch)" />
+            <SkillConstellation items={gaps} />
           ) : (
             <div className="grid min-h-28 place-items-center text-[13px] text-mute">Not enough data.</div>
           )}

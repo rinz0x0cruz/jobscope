@@ -25,6 +25,8 @@ def test_web_dashboard_animation_assets_are_wired() -> None:
     header = _read("web/src/components/Header.tsx")
     lottie = _read("web/src/components/SignalLottie.tsx")
     tree = _read("web/src/components/CyberSakura.tsx")
+    overview = _read("web/src/components/overview/Overview.tsx")
+    skill_graph = _read("web/src/components/overview/SkillConstellation.tsx")
     spotlight = _read("web/src/lib/spotlight.ts")
     css = _read("web/src/styles/theme.css")
 
@@ -33,6 +35,8 @@ def test_web_dashboard_animation_assets_are_wired() -> None:
     assert "useLottie" in lottie and "jobscope signal" in lottie
     assert "js-signal-glyph" in lottie
     assert "js-cyber-tree" in tree and "js-sakura-leaf" in tree
+    assert "<SkillConstellation" in overview
+    assert "js-skill-graph" in skill_graph and "js-skill-node" in skill_graph
     assert "trackSpotlight" in spotlight and "--spot-x" in spotlight and "--spot-y" in spotlight
 
     for marker in (
@@ -43,6 +47,8 @@ def test_web_dashboard_animation_assets_are_wired() -> None:
         ".js-sakura-leaf",
         ".js-spotlight-card",
         ".js-status-card",
+        ".js-skill-graph",
+        ".js-skill-node",
         "@keyframes jsLeafFall",
     ):
         assert marker in css

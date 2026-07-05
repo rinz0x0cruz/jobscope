@@ -61,6 +61,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Interaction polish:** KPI, role, and application cards use cursor-follow spotlight variables (`--spot-x`,
   `--spot-y`) and preserve keyboard focus rings. Application cards also get status-colored rails; `interview`
   and `offer` rails pulse gently to surface active outcomes.
+- **Skill-gap view:** the Overview page uses a constellation-style demand graph for recurring missing skills,
+  replacing plain horizontal bars so high-demand gaps read as related signals instead of a ranked checklist.
 - **Wider console layout:** the React dashboard uses a wider scan-friendly container so KPI cards, charts,
   and top-match tables have more breathing room on desktop while preserving the same mobile stack.
 - **Facet visibility:** dashboard facets hide when they have only one possible value. The Resume facet appears

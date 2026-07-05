@@ -65,6 +65,19 @@ html.light {
   }
   a { color: inherit; }
 
+  * {
+    scrollbar-color: color-mix(in srgb, var(--neon-cyan) 46%, var(--border-h)) color-mix(in srgb, var(--bg2) 88%, #000 12%);
+    scrollbar-width: thin;
+  }
+  *::-webkit-scrollbar { width: 9px; height: 9px; }
+  *::-webkit-scrollbar-track { background: color-mix(in srgb, var(--bg2) 88%, #000 12%); border-radius: 999px; }
+  *::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--neon-cyan), var(--neon-violet));
+    border: 2px solid color-mix(in srgb, var(--bg2) 88%, #000 12%);
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, var(--neon-emerald), var(--neon-cyan)); }
+
   /* Visible keyboard focus for anything that doesn't opt out with an
      `outline-none` utility (those provide their own focus ring instead).
      The outline follows each element's own radius; the fallback radius here
@@ -357,6 +370,72 @@ html.light .js-cyber-tree-svg {
   background-size: 100% 100%, 260% 260%;
   box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent), 0 0 36px -30px var(--accent);
   animation: jsGradientSweep 7.5s ease-in-out infinite alternate;
+}
+
+.js-skill-graph {
+  min-height: 234px;
+  overflow: hidden;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 50% 52%, color-mix(in srgb, var(--neon-blue) 12%, transparent), transparent 38%),
+    linear-gradient(135deg, color-mix(in srgb, var(--bg2) 78%, transparent), transparent);
+}
+.js-skill-graph svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 232px;
+}
+.js-skill-orbit {
+  fill: none;
+  stroke: color-mix(in srgb, var(--neon-cyan) 18%, transparent);
+  stroke-dasharray: 4 10;
+  stroke-width: 1.4;
+}
+.js-skill-orbit-wide {
+  stroke: color-mix(in srgb, var(--neon-violet) 18%, transparent);
+  stroke-dasharray: 2 12;
+}
+.js-skill-link {
+  stroke: color-mix(in srgb, var(--neon-cyan) 24%, transparent);
+  stroke-width: 1.2;
+}
+.js-skill-node-halo {
+  fill: color-mix(in srgb, var(--neon-cyan) 14%, transparent);
+  filter: blur(1px);
+}
+.js-skill-node {
+  fill: url(#skillNodeGlow);
+  stroke: color-mix(in srgb, white 52%, transparent);
+  stroke-width: 1.4;
+  filter: drop-shadow(0 0 13px color-mix(in srgb, var(--neon-cyan) 44%, transparent));
+}
+.js-skill-core {
+  fill: color-mix(in srgb, var(--card) 74%, var(--neon-blue) 26%);
+  stroke: color-mix(in srgb, var(--neon-cyan) 50%, transparent);
+  stroke-width: 1.5;
+}
+.js-skill-value {
+  fill: #fff;
+  font: 800 12px var(--mono);
+  paint-order: stroke;
+  stroke: color-mix(in srgb, var(--bg) 82%, transparent);
+  stroke-width: 3px;
+}
+.js-skill-label,
+.js-skill-core-label {
+  fill: var(--dim);
+  font: 650 11px var(--font);
+  letter-spacing: .01em;
+  paint-order: stroke;
+  stroke: color-mix(in srgb, var(--bg) 88%, transparent);
+  stroke-width: 4px;
+}
+.js-skill-core-label {
+  fill: var(--fg);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
 }
 
 /* Strong-tier pill: a gentle glow loop to draw the eye to the best matches.

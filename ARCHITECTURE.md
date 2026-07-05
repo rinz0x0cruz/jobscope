@@ -334,8 +334,9 @@ flowchart LR
 
 **Visual/motion layer:** the dashboard has a self-contained animated treatment: `SignalLottie` renders a
 briefcase/scope mark over local Lottie data, `CyberSakura` draws a right-rail SVG cyber tree with falling
-leaf spans, and `theme.css` owns the aurora gradients, cursor spotlight, status rails, and reduced-motion
-fallbacks. None of this changes the JSON contract or deterministic backend behavior.
+leaf spans, `SkillConstellation` renders the Overview skill-gap graph, and `theme.css` owns the aurora
+gradients, cursor spotlight, status rails, custom scrollbars, and reduced-motion fallbacks. None of this
+changes the JSON contract or deterministic backend behavior.
 
 **Layout width:** the React dashboard's main content rail is controlled in [web/src/App.tsx](web/src/App.tsx)
 by the Tailwind max-width class on `<main>` (`max-w-6xl` as of this map). The cyber-sakura right rail is
