@@ -6,7 +6,10 @@
 // the ciphertext into apps-template.html. The output HTML is safe to host publicly:
 // it is useless without the passphrase, which is only ever entered in the browser.
 //
-// usage:  <passphrase-on-stdin> | node build-secure-apps.mjs <dashboard.json> <template.html> <out.html>
+// usage:  <passphrase-on-stdin> | node build-secure-apps.mjs <dashboard.json> <template.html> <out.html|-> [out.json]
+//
+// Pass "-" as <out.html> to skip the standalone page and only write the [out.json]
+// blob, which the SPA imports into its Applications tab (web/src/data).
 import { readFileSync, writeFileSync } from "node:fs";
 import crypto from "node:crypto";
 
@@ -14,9 +17,9 @@ function readStdin() {
   try { return readFileSync(0, "utf8"); } catch { return ""; }
 }
 
-const [, , dashPath, tplPath, outPath] = process.argv;
+const [, , dashPath, tplPath, outPath, outJsonPath] = process.argv;
 if (!dashPath || !tplPath || !outPath) {
-  console.error("usage: <passphrase-on-stdin> | node build-secure-apps.mjs <dashboard.json> <template.html> <out.html>");
+  console.error("usage: <passphrase-on-stdin> | node build-secure-apps.mjs <dashboard.json> <template.html> <out.html|-> [out.json]");
   process.exit(2);
 }
 
@@ -49,7 +52,14 @@ const blob = {
   ct: Buffer.concat([ct, tag]).toString("base64"), // ciphertext + 16-byte GCM tag (WebCrypto layout)
 };
 
-const tpl = readFileSync(tplPath, "utf8");
-if (!tpl.includes("__ENC_BLOB__")) { console.error("error: template is missing the __ENC_BLOB__ placeholder"); process.exit(1); }
-writeFileSync(outPath, tpl.replace("__ENC_BLOB__", JSON.stringify(blob)));
-console.log(`encrypted ${payload.applications.length} application(s) (${plaintext.length} bytes) -> ${outPath}`);
+const n = payload.applications.length;
+if (outPath !== "-") {
+  const tpl = readFileSync(tplPath, "utf8");
+  if (!tpl.includes("__ENC_BLOB__")) { console.error("error: template is missing the __ENC_BLOB__ placeholder"); process.exit(1); }
+  writeFileSync(outPath, tpl.replace("__ENC_BLOB__", JSON.stringify(blob)));
+  console.log(`encrypted ${n} application(s) (${plaintext.length} bytes) -> ${outPath}`);
+}
+if (outJsonPath) {
+  writeFileSync(outJsonPath, JSON.stringify(blob));
+  console.log(`encrypted ${n} application(s) (${plaintext.length} bytes) -> ${outJsonPath}`);
+}

@@ -30,7 +30,7 @@
     inbox (a fast, applications-focused refresh).
 
 .PARAMETER Encrypted
-    Also publish an end-to-end encrypted applications page (web/dist/applications.html):
+    Also bake an end-to-end encrypted applications blob into the SPA's Applications tab:
     AES-256-GCM over your un-redacted applications, decrypted only in the browser with a
     passphrase you enter. Prompted for the passphrase (or set $env:JOBSCOPE_APPS_PASSPHRASE).
 
@@ -94,7 +94,51 @@ $PublicJson = Join-Path $RepoRoot "data\dashboard.public.json"
 if (-not (Test-Path $PublicJson)) { throw "expected payload not found: $PublicJson" }
 Copy-Item $PublicJson (Join-Path $RepoRoot "web\src\data\dashboard.json") -Force
 
-# 2. Build the web dashboard (Vite/React) with the redacted data baked in.
+# 1b. Optional: bake an end-to-end encrypted applications blob into the SPA so the
+#     Applications tab can decrypt it in-browser (AES-256-GCM, passphrase-gated). This
+#     must run BEFORE the build so Vite bakes web/src/data/applications.encrypted.json
+#     into the bundle. Always clear a stale blob first, so a plain redacted publish can
+#     never ship one. The un-redacted data never leaves your machine in the clear --
+#     only the encrypted blob is published -- so it is safe to host publicly.
+$EncBlobJson = Join-Path $RepoRoot "web\src\data\applications.encrypted.json"
+Remove-Item $EncBlobJson -Force -ErrorAction SilentlyContinue
+if ($Encrypted) {
+    Write-Host "==> Emitting un-redacted data + encrypting applications for the SPA"
+    & $Py -m jobscope dashboard --emit-json   # -> data\dashboard.json (has applications; gitignored, local only)
+    if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json failed (exit $LASTEXITCODE)" }
+    $FullJson = Join-Path $RepoRoot "data\dashboard.json"
+    if (-not (Test-Path $FullJson)) { throw "expected payload not found: $FullJson" }
+
+    # Passphrase resolution: env var (unattended) -> OS keychain (jobscope secrets
+    # set JOBSCOPE_APPS_PASSPHRASE) -> hidden interactive prompt. Never echoed,
+    # logged, or committed. The keychain path lets a scheduled task publish the
+    # encrypted apps with no prompt (see scripts/register-publish-secure-task.ps1).
+    $plain = $env:JOBSCOPE_APPS_PASSPHRASE
+    $bstr = [IntPtr]::Zero
+    if ([string]::IsNullOrEmpty($plain)) {
+        $plain = (& $Py -c "import keyring,sys;from jobscope.core.config import KEYRING_SERVICE as s;v=keyring.get_password(s,'JOBSCOPE_APPS_PASSPHRASE');sys.stdout.write(v or '')" 2>$null)
+    }
+    if ([string]::IsNullOrEmpty($plain)) {
+        $sec = Read-Host "Passphrase to encrypt your applications (8+ chars)" -AsSecureString
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    }
+    try {
+        # "-" skips the retired standalone page; write only the JSON blob the SPA imports.
+        # 2>&1 so Node's status line doesn't trip PS 5.1's stop-on-native-stderr; the
+        # real exit code is still checked below.
+        $plain | node (Join-Path $RepoRoot "scripts\build-secure-apps.mjs") $FullJson (Join-Path $RepoRoot "scripts\apps-template.html") "-" $EncBlobJson 2>&1 | ForEach-Object { Write-Host "  $_" }
+        if ($LASTEXITCODE -ne 0) { throw "encrypting applications blob failed (exit $LASTEXITCODE)" }
+    }
+    finally {
+        if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+        Remove-Variable plain -ErrorAction SilentlyContinue
+    }
+    Write-Host "==> Encrypted applications baked in -> unlock in the Applications tab"
+}
+
+# 2. Build the web dashboard (Vite/React) with the redacted data (and, if -Encrypted,
+#    the encrypted applications blob) baked in.
 Write-Host "==> Building web dashboard (npm run build)"
 Push-Location (Join-Path $RepoRoot "web")
 try {
@@ -105,43 +149,6 @@ finally { Pop-Location }
 
 $Dist = Join-Path $RepoRoot "web\dist"
 if (-not (Test-Path (Join-Path $Dist "index.html"))) { throw "expected build output not found: $Dist\index.html" }
-
-# 2b. Optional: an end-to-end encrypted applications page (AES-256-GCM, decrypted only in
-#     your browser with a passphrase). The un-redacted data never leaves your machine in
-#     the clear -- only the encrypted blob is published -- so it is safe to host publicly.
-if ($Encrypted) {
-    Write-Host "==> Emitting un-redacted data + encrypting applications.html"
-    & $Py -m jobscope dashboard --emit-json   # -> data\dashboard.json (has applications; gitignored, local only)
-    if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json failed (exit $LASTEXITCODE)" }
-    $FullJson = Join-Path $RepoRoot "data\dashboard.json"
-    if (-not (Test-Path $FullJson)) { throw "expected payload not found: $FullJson" }
-
-    # Passphrase resolution: env var (unattended) -> OS keychain (jobscope secrets
-    # set JOBSCOPE_APPS_PASSPHRASE) -> hidden interactive prompt. Never echoed,
-    # logged, or committed. The keychain path lets a scheduled task publish the
-    # encrypted page with no prompt (see scripts/register-publish-secure-task.ps1).
-    $plain = $env:JOBSCOPE_APPS_PASSPHRASE
-    $bstr = [IntPtr]::Zero
-    if ([string]::IsNullOrEmpty($plain)) {
-        $plain = (& $Py -c "import keyring,sys;from jobscope.core.config import KEYRING_SERVICE as s;v=keyring.get_password(s,'JOBSCOPE_APPS_PASSPHRASE');sys.stdout.write(v or '')" 2>$null)
-    }
-    if ([string]::IsNullOrEmpty($plain)) {
-        $sec = Read-Host "Passphrase to encrypt applications.html (8+ chars)" -AsSecureString
-        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-        $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-    }
-    try {
-        # 2>&1 so Node's status line doesn't trip PS 5.1's stop-on-native-stderr; the
-        # real exit code is still checked below.
-        $plain | node (Join-Path $RepoRoot "scripts\build-secure-apps.mjs") $FullJson (Join-Path $RepoRoot "scripts\apps-template.html") (Join-Path $Dist "applications.html") 2>&1 | ForEach-Object { Write-Host "  $_" }
-        if ($LASTEXITCODE -ne 0) { throw "encrypting applications.html failed (exit $LASTEXITCODE)" }
-    }
-    finally {
-        if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-        Remove-Variable plain -ErrorAction SilentlyContinue
-    }
-    Write-Host "==> applications.html built -> unlock at https://rinz0x0cruz.github.io/jobscope/applications.html"
-}
 
 # Publish gate: only the designated publisher (the machine that ran
 # register-publish-task.ps1, which wrote .publish-primary) pushes, to avoid double
@@ -167,9 +174,9 @@ if (-not (Test-Path (Join-Path $DashDir ".git"))) {
 }
 
 # Replace the published files with the fresh build (hashed asset names change per
-# build). Preserve a previously published encrypted applications.html: only an
-# -Encrypted run rebuilds it into $Dist, so a plain redacted publish must not drop it.
-Get-ChildItem $DashDir -Force | Where-Object { $_.Name -ne ".git" -and $_.Name -ne "applications.html" } | Remove-Item -Recurse -Force
+# build). Encrypted applications are now baked into the SPA (Applications tab), so the
+# retired standalone applications.html is cleared from gh-pages on the next publish.
+Get-ChildItem $DashDir -Force | Where-Object { $_.Name -ne ".git" } | Remove-Item -Recurse -Force
 Copy-Item (Join-Path $Dist "*") $DashDir -Recurse -Force
 New-Item -ItemType File -Path (Join-Path $DashDir ".nojekyll") -Force | Out-Null
 

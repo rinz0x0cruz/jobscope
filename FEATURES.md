@@ -69,9 +69,10 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Facet visibility:** dashboard facets hide when they have only one possible value. The Resume facet appears
   once the emitted data contains 2+ distinct `resume_base` values (for example, after importing multiple named
   resumes and rerunning `match`).
-- **Applications page:** `applications.html` is a standalone encrypted shell. Its UI shell mirrors the
-  dashboard's status rails and cursor spotlight after unlock, while the sensitive applications payload remains
-  AES-GCM encrypted and only decrypts in-browser with the passphrase.
+- **Applications tab (encrypted):** with `-Encrypted`, your applications are published as an AES-256-GCM
+  blob baked into the SPA's **Applications** tab and decrypt in-browser once you enter the passphrase; the
+  sensitive payload is never served in the clear. [scripts/apps-template.html](scripts/apps-template.html)
+  remains a standalone reference shell that `build-secure-apps.mjs` can still produce.
 - **Reduced motion:** CSS, Motion, and Lottie animation respects the global `prefers-reduced-motion` guard;
   decorative layers are `aria-hidden`/`pointer-events: none`.
 

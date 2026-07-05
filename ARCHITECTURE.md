@@ -306,13 +306,14 @@ Representative API: `upsert_job()`, `update_score()`, `update_ai_seniority()`, `
 
 Vite + React 19 + TS + Tailwind v4 + TanStack Router (hash) + Motion + Lottie. The build bakes in
 [web/src/data/dashboard.json](web/src/data/dashboard.json) (emitted by `jobscope dashboard --emit-json`).
-The public Pages build is redacted; the separate [scripts/apps-template.html](scripts/apps-template.html)
-is the static shell for the end-to-end encrypted applications page.
+The public Pages build is redacted; with `-Encrypted`, applications are baked in as an AES-256-GCM blob
+([web/src/data/applications.encrypted.json](web/src/data/index.ts)) that the Applications tab decrypts
+in-browser. [scripts/apps-template.html](scripts/apps-template.html) remains a standalone reference shell.
 
 | Area | Files | Responsibility |
 |------|-------|----------------|
 | **Entry** | [main.tsx](web/src/main.tsx), [router.tsx](web/src/router.tsx), [App.tsx](web/src/App.tsx) | Mount; hash route `/` with zod-validated search params; wire filters→search→display |
-| **Data** | [data/index.ts](web/src/data/index.ts) | Static import of `dashboard.json` typed as `DashboardData` |
+| **Data** | [data/index.ts](web/src/data/index.ts) | Static import of `dashboard.json` (+ optional `applications.encrypted.json` blob) typed as `DashboardData` |
 | **Contract** | [lib/schema.ts](web/src/lib/schema.ts) | TS mirror of the Python payload (keep 1:1) |
 | **State** | [lib/urlState.ts](web/src/lib/urlState.ts), [hooks/useSearchState.ts](web/src/hooks/useSearchState.ts) | URL = single source of truth; `FACETS`, `searchSchema`, `TAB_VALUES` |
 | **Filter/search** | [lib/filters.ts](web/src/lib/filters.ts), [lib/search.ts](web/src/lib/search.ts), [lib/overview.ts](web/src/lib/overview.ts), [lib/format.ts](web/src/lib/format.ts) | `tabPool`→`applyFacets`→`makeFuse`→`fuzzy`→`buildDisplayItems`; Fuse.js; formatting |
@@ -345,10 +346,12 @@ in [web/src/lib/urlState.ts](web/src/lib/urlState.ts), and rendered by [FacetBar
 only when there are 2+ available options. If it looks missing, the dataset probably has one distinct resume
 base or the user has not rerun `match` after importing multiple named resumes.
 
-**Encrypted applications shell:** [scripts/apps-template.html](scripts/apps-template.html) is intentionally
-not part of the Vite bundle. `scripts/build-secure-apps.mjs` injects only an encrypted payload into it.
-The shell has its own CSS/JS for pipeline bars, status rails, and cursor spotlight, and must preserve
-`window.__ENC__ = __ENC_BLOB__;` so the sensitive payload remains encrypted at rest on Pages.
+**Encrypted applications shell (optional standalone):** the default `-Encrypted` publish bakes the blob into
+the SPA's Applications tab ([web/src/components/applications/ApplicationsGate.tsx](web/src/components/applications/ApplicationsGate.tsx)
+decrypts it in-browser). [scripts/apps-template.html](scripts/apps-template.html) is intentionally not part of
+the Vite bundle; `scripts/build-secure-apps.mjs` can still inject an encrypted payload into it to produce a
+standalone page. The shell has its own CSS/JS for pipeline bars, status rails, and cursor spotlight, and must
+preserve `window.__ENC__ = __ENC_BLOB__;` so the sensitive payload remains encrypted at rest on Pages.
 
 ---
 

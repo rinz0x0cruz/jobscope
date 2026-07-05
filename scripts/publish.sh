@@ -9,7 +9,7 @@
 # Usage: scripts/publish.sh [--refresh] [--no-scan] [--encrypted] [--force] [repo-url] [branch]
 #   --refresh    rerun scan -> match -> inbox first (fresh data on the published site)
 #   --no-scan    with --refresh, skip the slow job scan (rescore + inbox only)
-#   --encrypted  also publish an AES-256-GCM encrypted applications.html (passphrase in browser)
+#   --encrypted  also bake an AES-256-GCM encrypted applications blob into the Applications tab (passphrase in browser)
 #   defaults: https://github.com/rinz0x0cruz/jobscope.git  gh-pages
 set -euo pipefail
 
@@ -63,28 +63,36 @@ PUBLIC_JSON="$REPO_ROOT/data/dashboard.public.json"
 [ -f "$PUBLIC_JSON" ] || { echo "expected payload not found: $PUBLIC_JSON" >&2; exit 1; }
 cp "$PUBLIC_JSON" "$REPO_ROOT/web/src/data/dashboard.json"
 
-# 2. Build the web dashboard (Vite/React) with the redacted data baked in.
-echo "==> Building web dashboard (npm run build)"
-( cd "$REPO_ROOT/web" && npm run build )
-
-DIST="$REPO_ROOT/web/dist"
-[ -f "$DIST/index.html" ] || { echo "expected build output not found: $DIST/index.html" >&2; exit 1; }
-
-# 2b. Optional: an end-to-end encrypted applications page (AES-256-GCM). The un-redacted
-#     data never leaves the machine in the clear -- only the encrypted blob is published.
+# 1b. Optional: bake an end-to-end encrypted applications blob into the SPA so the
+#     Applications tab can decrypt it in-browser (AES-256-GCM, passphrase-gated). Must
+#     run BEFORE the build so Vite bakes web/src/data/applications.encrypted.json into
+#     the bundle. Clear a stale blob first so a plain redacted publish can't ship one.
+#     The un-redacted data never leaves the machine in the clear -- only the encrypted
+#     blob is published.
+ENC_BLOB_JSON="$REPO_ROOT/web/src/data/applications.encrypted.json"
+rm -f "$ENC_BLOB_JSON"
 if [ -n "${ENCRYPTED:-}" ]; then
-    echo "==> Emitting un-redacted data + encrypting applications.html"
+    echo "==> Emitting un-redacted data + encrypting applications for the SPA"
     "$PY" -m jobscope dashboard --emit-json   # -> data/dashboard.json (has applications; gitignored)
     FULL_JSON="$REPO_ROOT/data/dashboard.json"
     [ -f "$FULL_JSON" ] || { echo "expected payload not found: $FULL_JSON" >&2; exit 1; }
     PASS="${JOBSCOPE_APPS_PASSPHRASE:-}"
     if [ -z "$PASS" ]; then
-        read -r -s -p "Passphrase to encrypt applications.html (8+ chars): " PASS; echo
+        read -r -s -p "Passphrase to encrypt your applications (8+ chars): " PASS; echo
     fi
-    printf '%s' "$PASS" | node "$REPO_ROOT/scripts/build-secure-apps.mjs" "$FULL_JSON" "$REPO_ROOT/scripts/apps-template.html" "$DIST/applications.html"
+    # "-" skips the retired standalone page; write only the JSON blob the SPA imports.
+    printf '%s' "$PASS" | node "$REPO_ROOT/scripts/build-secure-apps.mjs" "$FULL_JSON" "$REPO_ROOT/scripts/apps-template.html" "-" "$ENC_BLOB_JSON"
     unset PASS
-    echo "==> applications.html built -> unlock at https://rinz0x0cruz.github.io/jobscope/applications.html"
+    echo "==> Encrypted applications baked in -> unlock in the Applications tab"
 fi
+
+# 2. Build the web dashboard (Vite/React) with the redacted data (and, if --encrypted,
+#    the encrypted applications blob) baked in.
+echo "==> Building web dashboard (npm run build)"
+( cd "$REPO_ROOT/web" && npm run build )
+
+DIST="$REPO_ROOT/web/dist"
+[ -f "$DIST/index.html" ] || { echo "expected build output not found: $DIST/index.html" >&2; exit 1; }
 
 # Publish gate: only the designated publisher (the machine that ran
 # register-publish-task.ps1, which wrote .publish-primary) pushes, to avoid double

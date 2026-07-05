@@ -91,6 +91,18 @@ export interface Overview {
   targets: string[]
 }
 
+// Encrypted applications blob (scripts/build-secure-apps.mjs): AES-256-GCM over
+// {generated, funnel, applications}, decrypted in-browser with the passphrase.
+// Present only in an encrypted build; imported optionally by web/src/data.
+export interface EncBlob {
+  v: number
+  kdf: string
+  iter: number
+  salt: string
+  iv: string
+  ct: string
+}
+
 // One row of an application's email timeline (render.py: _application_records,
 // the `timeline[]` items). Every key is always emitted (Python defaults to '').
 // `summary` is a deterministic one-line preview of the email body, present only
