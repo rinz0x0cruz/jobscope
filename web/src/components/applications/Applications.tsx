@@ -4,7 +4,7 @@ import type { Application, EncBlob } from '@/lib/schema'
 import { trackSpotlight } from '@/lib/spotlight'
 import { CountUp } from '@/components/overview/CountUp'
 import { AppCard } from './AppCard'
-import { ApplicationsGate } from './ApplicationsGate'
+import { ApplicationsGate, type UnlockedApps } from './ApplicationsGate'
 import { PipelineFlow } from './PipelineFlow'
 import { pct, pipelineMetrics, presentStatuses, statusColor, statusCounts, statusLabel } from './constants'
 
@@ -100,7 +100,7 @@ export function Applications({
 }: {
   apps: Application[]
   encBlob?: EncBlob | null
-  onUnlock?: (apps: Application[]) => void
+  onUnlock?: (data: UnlockedApps) => void
 }) {
   const summary = useMemo(() => {
     const p = pipelineMetrics(apps)

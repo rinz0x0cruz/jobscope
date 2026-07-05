@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { dashboard, encryptedApplications } from '@/data'
-import type { Application } from '@/lib/schema'
 import type { FacetKey, TabValue } from '@/lib/urlState'
 import { FACET_KEYS } from '@/lib/urlState'
 import type { FacetOption } from '@/lib/filters'
@@ -25,7 +24,7 @@ import { SearchPalette } from '@/components/filters/SearchPalette'
 import { JobList } from '@/components/JobList'
 import { Overview } from '@/components/overview/Overview'
 import { Applications } from '@/components/applications/Applications'
-import { UNLOCK_KEY } from '@/components/applications/ApplicationsGate'
+import { UNLOCK_KEY, type UnlockedApps } from '@/components/applications/ApplicationsGate'
 import { JobDrawer } from '@/components/JobDrawer'
 import { CyberSakura } from '@/components/CyberSakura'
 import { Toaster } from 'sonner'
@@ -36,15 +35,20 @@ export default function App() {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
   // Apps come baked in for a local/un-redacted build; for a public build they
   // arrive encrypted and are unlocked (and cached in sessionStorage) at runtime.
-  const [unlockedApps, setUnlockedApps] = useState<Application[] | null>(() => {
+  // Unlocking also restores the overview application funnel (redacted publicly).
+  const [unlocked, setUnlocked] = useState<UnlockedApps | null>(() => {
     try {
       const s = sessionStorage.getItem(UNLOCK_KEY)
-      return s ? (JSON.parse(s) as Application[]) : null
+      return s ? (JSON.parse(s) as UnlockedApps) : null
     } catch {
       return null
     }
   })
-  const apps = unlockedApps ?? dashboard.applications ?? []
+  const apps = unlocked?.apps ?? dashboard.applications ?? []
+  const overview =
+    unlocked && Object.keys(unlocked.funnel).length > 0
+      ? { ...dashboard.overview, funnel: unlocked.funnel }
+      : dashboard.overview
 
   const tabCounts = useMemo(() => {
     const base = tabPool(rows, 'all', state.hideClosed)
@@ -112,9 +116,9 @@ export default function App() {
         <Kpis rows={rows} />
         <Tabs value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
         {state.tab === 'overview' ? (
-          <Overview rows={rows} stats={dashboard.overview} onOpen={openDrawer} />
+          <Overview rows={rows} stats={overview} onOpen={openDrawer} />
         ) : state.tab === 'applications' ? (
-          <Applications apps={apps} encBlob={encryptedApplications} onUnlock={setUnlockedApps} />
+          <Applications apps={apps} encBlob={encryptedApplications} onUnlock={setUnlocked} />
         ) : (
           <>
             <FacetBar
