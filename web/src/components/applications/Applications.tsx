@@ -7,6 +7,7 @@ import { AppCard } from './AppCard'
 import { ActivityFeed } from './ActivityFeed'
 import { ApplicationsGate, type UnlockedApps } from './ApplicationsGate'
 import { PipelineFlow } from './PipelineFlow'
+import { PipelineHealth } from './PipelineHealth'
 import { pct, pipelineMetrics, presentStatuses, statusColor, statusCounts, statusLabel } from './constants'
 
 function Card({ title, subtitle, children, className = '' }: { title: string; subtitle?: string; children: ReactNode; className?: string }) {
@@ -150,6 +151,8 @@ export function Applications({
           </>
         )}
       </p>
+
+      <PipelineHealth apps={apps} onOpen={onOpen} />
 
       <div className="grid gap-4 md:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
         <Card title="Pipeline flow" subtitle="how far each application progressed">
