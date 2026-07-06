@@ -14,8 +14,8 @@ export function Donut({ segs, total }: { segs: Seg[]; total: number }) {
   }, [])
 
   return (
-    <div className="flex items-center gap-5">
-      <div className="relative h-[132px] w-[132px] shrink-0">
+    <div className="flex h-full min-h-[132px] flex-col items-center justify-center gap-3">
+      <div className="relative mx-auto aspect-square w-full max-w-[260px]">
         <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90">
           <circle cx={60} cy={60} r={R} fill="none" stroke="var(--border)" strokeWidth={14} />
           {segs.map((s) => (
@@ -36,13 +36,13 @@ export function Donut({ segs, total }: { segs: Seg[]; total: number }) {
         </svg>
         <div className="absolute inset-0 grid place-items-center">
           <div className="text-center">
-            <div className="text-2xl font-semibold tnum">{total}</div>
-            <div className="text-[11px] text-mute">roles</div>
+            <div className="text-3xl font-semibold tnum">{total}</div>
+            <div className="text-xs text-mute">roles</div>
           </div>
         </div>
       </div>
 
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5">
         {segs.map((s) => (
           <div key={s.label} className="flex items-center gap-2 text-[13px]">
             <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />

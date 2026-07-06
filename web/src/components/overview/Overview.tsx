@@ -74,9 +74,7 @@ export function Overview({ rows, stats, onOpen }: { rows: JobRow[]; stats: Overv
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-6">
         <Card title="Fit distribution" className="lg:col-span-2">
-          <div className="grid flex-1 place-items-center">
-            <Donut segs={segs} total={total} />
-          </div>
+          <Donut segs={segs} total={total} />
         </Card>
 
         <Card title="Application pipeline" className="lg:col-span-2">
