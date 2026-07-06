@@ -8,7 +8,7 @@ import { ActivityFeed } from './ActivityFeed'
 import { ApplicationsGate, type UnlockedApps } from './ApplicationsGate'
 import { PipelineFlow } from './PipelineFlow'
 import { PipelineHealth } from './PipelineHealth'
-import { pct, pipelineMetrics, presentStatuses, statusColor, statusCounts, statusLabel } from './constants'
+import { pct, pipelineMetrics, statusCounts } from './constants'
 
 function Card({ title, subtitle, children, className = '' }: { title: string; subtitle?: string; children: ReactNode; className?: string }) {
   return (
@@ -60,38 +60,27 @@ function StatusFunnel({ apps }: { apps: Application[] }) {
   )
 }
 
-function KanbanBoard({ apps }: { apps: Application[] }) {
-  const columns = useMemo(() => {
-    return presentStatuses(apps).map((status) => ({
-      status,
-      label: statusLabel(status),
-      color: statusColor(status),
-      cards: apps
-        .filter((a) => (a.status || 'new') === status)
-        .sort((a, b) => (b.updated || '').localeCompare(a.updated || '')),
-    }))
-  }, [apps])
+function ApplicationList({ apps }: { apps: Application[] }) {
+  const sorted = useMemo(
+    () =>
+      [...apps].sort((a, b) =>
+        (b.updated || b.applied_at || '').localeCompare(a.updated || a.applied_at || ''),
+      ),
+    [apps],
+  )
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3.5">
-      {columns.map((col) => (
-        <section
-          key={col.status}
-          aria-label={`${col.label} (${col.cards.length})`}
-          className="js-gradient-column js-spotlight-card flex flex-col gap-2.5 self-start rounded-[14px] border border-border bg-bg2 p-3"
-          onPointerMove={trackSpotlight}
-        >
-          <h4 className="flex items-center gap-2 text-[13px] font-semibold">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: col.color }} />
-            {col.label}
-            <span className="ml-auto text-dim tnum">{col.cards.length}</span>
-          </h4>
-          {col.cards.map((a) => (
-            <AppCard key={a.job_id || `${a.company}-${a.title}`} app={a} />
-          ))}
-        </section>
-      ))}
-    </div>
+    <section aria-label="All applications" className="flex flex-col gap-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-sm font-semibold">All applications</h3>
+        <span className="text-xs text-mute tnum">{apps.length}</span>
+      </div>
+      <div className="flex flex-col gap-2.5">
+        {sorted.map((a) => (
+          <AppCard key={a.job_id || `${a.company}-${a.title}`} app={a} />
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -173,7 +162,7 @@ export function Applications({
         <ActivityFeed apps={apps} onOpen={onOpen} />
       </Card>
 
-      <KanbanBoard apps={apps} />
+      <ApplicationList apps={apps} />
     </div>
   )
 }
