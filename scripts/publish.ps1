@@ -182,6 +182,19 @@ if (-not (Test-Path (Join-Path $DashDir ".git"))) {
     if ($LASTEXITCODE -ne 0) { throw "clone of $Repo ($Branch) failed (is a credential cached?)" }
 }
 
+# Sync the persistent clone to the remote head before rebuilding on top. Another
+# publisher (e.g. the cloud refresh Action) may have pushed to $Branch since our last
+# publish; without this our push would be a non-fast-forward and get rejected. gh-pages
+# is a disposable build artifact, so hard-resetting to origin is always safe.
+Push-Location $DashDir
+$eapSync = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+git fetch --quiet origin $Branch 2>&1 | ForEach-Object { Write-Host $_ }
+git checkout -q $Branch 2>&1 | ForEach-Object { Write-Host $_ }
+git reset --hard "origin/$Branch" 2>&1 | ForEach-Object { Write-Host $_ }
+$ErrorActionPreference = $eapSync
+Pop-Location
+
 # Replace the published files with the fresh build (hashed asset names change per
 # build). Encrypted applications are now baked into the SPA (Applications tab), so the
 # retired standalone applications.html is cleared from gh-pages on the next publish.
