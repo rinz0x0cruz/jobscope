@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Command } from 'cmdk'
 import { AnimatePresence, motion } from 'motion/react'
-import { ArrowRight, DownloadCloud, LayoutGrid, List, MailSearch, Search, Send, Star, SunMoon } from 'lucide-react'
+import { ArrowRight, DownloadCloud, KeyRound, LayoutGrid, List, MailSearch, Search, Send, Star, SunMoon } from 'lucide-react'
 import type { JobRow } from '@/lib/schema'
 import { TIER_COLOR } from '@/lib/schema'
 import type { TabValue } from '@/lib/urlState'
 import { useTheme } from '@/hooks/useTheme'
-import { pullLatestData, scanNewMail } from '@/lib/refresh'
+import { connectToken, disconnectToken, hasGitHubToken, pullLatestData, scanNewMail } from '@/lib/refresh'
 import { fuzzy, makeFuse } from '@/lib/search'
 
 /** Fired by the header command pill (in addition to ⌘K / "/") to open the palette. */
@@ -60,6 +60,7 @@ export function SearchPalette({ rows, onNavigate }: Props) {
       { id: 'go-good', label: 'Show Good matches', hint: 'tier', keywords: 'good tier matches', icon: <Star size={15} />, run: nav('Good') },
       { id: 'refresh-pull', label: 'Refresh \u2014 pull latest data', hint: 'reload', keywords: 'refresh reload update latest data sync pull fresh', icon: <DownloadCloud size={15} />, run: () => { setOpen(false); void pullLatestData() } },
       { id: 'refresh-scan', label: 'Scan new mail', hint: 'run', keywords: 'refresh scan mail inbox gmail run workflow action dispatch new', icon: <MailSearch size={15} />, run: () => { setOpen(false); void scanNewMail() } },
+      { id: 'gh-token', label: hasGitHubToken() ? 'Disconnect GitHub token' : 'Connect GitHub token (1-tap rescan)', keywords: 'github token connect disconnect pat 1-tap scan dispatch', icon: <KeyRound size={15} />, run: () => { setOpen(false); if (hasGitHubToken()) disconnectToken(); else connectToken() } },
       { id: 'toggle-theme', label: 'Toggle light / dark theme', keywords: 'theme dark light mode appearance', icon: <SunMoon size={15} />, run: () => { toggle(); setOpen(false) } },
     ]
   }, [onNavigate, toggle])

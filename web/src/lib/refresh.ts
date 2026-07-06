@@ -28,6 +28,33 @@ export function hasGitHubToken(): boolean {
   }
 }
 
+/** Prompt for and store a fine-grained PAT (client-only) for 1-tap rescans. */
+export function connectToken(): void {
+  const token = window.prompt(
+    'Paste a fine-grained GitHub token (Actions: Read and write on ' +
+      'rinz0x0cruz/jobscope) for 1-tap rescans.\n\n' +
+      'Stored only in this browser — sent to github.com and nowhere else.',
+  )
+  if (!token || !token.trim()) return
+  try {
+    localStorage.setItem(GH_TOKEN_KEY, token.trim())
+    toast.success('GitHub token connected', {
+      description: 'Refresh now dispatches the rescan directly.',
+    })
+  } catch {
+    toast.error('Could not save the token in this browser.')
+  }
+}
+
+export function disconnectToken(): void {
+  try {
+    localStorage.removeItem(GH_TOKEN_KEY)
+  } catch {
+    /* ignore */
+  }
+  toast('GitHub token removed')
+}
+
 function readToken(): string | null {
   try {
     return localStorage.getItem(GH_TOKEN_KEY)?.trim() || null

@@ -2,7 +2,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Command, Moon, Search, Sun } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
 import { COMMAND_EVENT } from '@/components/filters/SearchPalette'
-import { RefreshMenu } from '@/components/RefreshMenu'
+import { RefreshButton } from '@/components/RefreshButton'
 import { SignalLottie } from '@/components/SignalLottie'
 
 interface Props {
@@ -45,7 +45,7 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
         </kbd>
       </label>
 
-      <RefreshMenu updated={generated} />
+      <RefreshButton />
 
       <button
         type="button"
