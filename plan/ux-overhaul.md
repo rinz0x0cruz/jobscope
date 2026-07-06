@@ -214,3 +214,158 @@ Observations that the redesign can act on, each *inside* the §0 guardrails:
 > **Review ask:** does §3–§6 match how you see the dashboard, and is anything missing from the
 > inventory before I build the concepts? Any early lean between *evolve the cyber vibe* vs *go bolder*
 > will help me aim the 2–3 concepts.
+
+---
+---
+
+# Stage 2 — visual concepts + surface-by-surface overhaul plan
+
+> Direction (from review): **explore 2–3 distinct concepts to pick from**; preserve **PWA/offline** and
+> the **funnel Sankey**; everything else open, incl. **making the tree bigger or replacing it with a
+> better hero animation**. This stage proposes the look; **Stage 3 = implement the chosen concept**.
+
+## A. Inspiration digest (public sources + your own stack)
+
+- **Palette systems.** *Catppuccin* (19.4k★) — a warm **pastel** system, 4 flavors × 26 tokens, whose
+  stated philosophy is *"colorful > colorless, balance (not too dull/bright), harmony > dissonance"* —
+  a great model for a **balanced** (not garish) neon. *Nord* (6.8k★) — an **arctic, dimmed-pastel**,
+  minimal-flat system (calm, professional). *Radix Colors / Tailwind* — accessible stepped scales for
+  contrast-safe states.
+- **Dashboard patterns.** *Tremor* (Tailwind + Radix, 35+ dashboard components) — data-first cards,
+  KPIs, and charts with restrained chrome. The **bento-grid** trend (asymmetric, right-sized tiles).
+  *Linear / Vercel / Stripe* — calm-premium: deep neutral base, one accent, big legible numerals,
+  micro-motion. *Grafana*-style density for the data-heavy tabs.
+- **Offline-safe hero/motion.** Generative **gradient mesh**, **particle/constellation** networks,
+  **flow fields**, **dot-matrix** — all doable in local canvas/SVG (no CDN, honours the offline rule).
+- **Your own aesthetic (cohesion).** The sibling **exploitrank** console is dark, **warm-amber,
+  terminal/console, data-dense** (geo map + entity-linked "intel brief"). jobscope's current
+  warm-sunset-over-navy is already in that family — so a warm-on-dark concept keeps your projects
+  visually related, while a cool/premium concept deliberately sets jobscope apart.
+
+## B. The three concepts
+
+Each is a full token + motion system; all satisfy §0 guardrails (local fonts/assets, reduced-motion
+tiers, contrast-safe). Palettes below are concrete starting hexes (dark; each ships a light twin).
+
+### Concept A — **“Nightshift”** · *evolve the cyber vibe, done with discipline*
+A refined version of today: warm signature + one cool data hue on deep ink, glassy cards, **tamed**
+neon (edges & glows, not everywhere). Most cohesive with exploitrank.
+
+| Token | Value | Role |
+|---|---|---|
+| `--bg` / `--bg2` | `#060b14` / `#0a1220` | deep ink base |
+| `--card` / `--card-h` | `#0e1826` / `#132238` | glassy surface |
+| `--border` | `#1c2b42` → `#2d4667` | hairline / hover |
+| `--fg / --dim / --mute` | `#eaf2ff` / `#9fb2cc` / `#5f728c` | text ramp |
+| **`--hot`** (signature warm) | `#fb7185` coral → `#f59e0b` amber | primary accent / CTAs |
+| **`--cool`** (data) | `#22d3ee` cyan / `#2dd4bf` teal | charts, links, focus |
+| tiers | strong `#34d399` · good `#38bdf8` · stretch `#fbbf24` · skip `#64748b` | |
+
+- **Gradient/texture:** low-opacity aurora (cyan→violet→amber) confined to the hero; 1px card edge
+  in `--hot`/`--cool` on hover; faint grid retained but quieter.
+- **Hero animation:** **enlarge the tree into a real backdrop** *or* replace it with a **“signal
+  constellation”** — a local canvas particle field whose nodes connect into a shifting network
+  (nods to a job *network*). Bloom/parallax on scroll. (Tree stays as an option, just bigger + better-anchored.)
+- **Type:** self-hosted **Inter** (UI) + **JetBrains Mono** (numerals/labels).
+- **Motion:** energetic springs, glow-pulse on `interview`/`offer`, count-ups, shared-element card→drawer.
+- **Feels like:** a premium cyber HUD. **Best if** you love the current energy but want it intentional.
+
+### Concept B — **“Aurora Calm”** · *premium product dashboard (Linear / Vercel / Stripe)*
+A deliberate pivot to calm precision: neutral base, **one** accent, generous space, big numerals,
+micro-motion. Recruiter-shareable, timeless.
+
+| Token | Value | Role |
+|---|---|---|
+| `--bg` / `--bg2` | `#0a0a0c` / `#101014` | near-black neutral |
+| `--card` / `--card-h` | `#16161a` / `#1c1c22` | flat surface, hairline border `#26262c` |
+| `--fg / --dim / --mute` | `#f4f4f5` / `#a1a1aa` / `#71717a` | zinc text ramp |
+| **`--accent`** (single) | `#8b5cf6` violet *(or* `#f59e0b` amber *)* | the one hue; data uses its tints + grays |
+| tiers | strong `#10b981` · good `#3b82f6` · stretch `#f59e0b` · skip `#52525b` | muted, contrast-safe |
+
+- **Gradient/texture:** a single soft **aurora mesh** in the hero only; everything else flat with
+  crisp hairlines and real elevation shadows. No grid, no scanlines.
+- **Hero animation:** **retire the tree**; replace with a subtle **animated gradient-mesh** wash (very
+  slow) behind a large KPI headline. Motion is ambient, never demanding.
+- **Type:** self-hosted **Geist** / **Inter**; large tabular numerals; tight tracking.
+- **Motion:** 150–250 ms purposeful transitions, layout animations, restrained; decorative motion
+  minimal by default.
+- **Feels like:** a funded SaaS analytics product. **Best if** you want it to read as serious/pro.
+
+### Concept C — **“Mission Console”** · *editorial terminal / data-console (bold, distinctive)*
+Leans all the way into the console identity (cohesive with exploitrank but its own thing): mono-forward
+type, structured grid, the **Sankey as the hero**, a real **command bar**, terminal micro-motion.
+
+| Token | Value | Role |
+|---|---|---|
+| `--bg` / `--bg2` | `#0b0a08` / `#12100c` | warm ink |
+| `--card` | `#17140d` border `#2a2416` | panel |
+| `--fg / --dim / --mute` | `#f5efe0` / `#b9ad92` / `#6b6350` | warm paper text |
+| **`--amber`** (terminal) | `#fbbf24` → `#f59e0b` | primary; headings, section rules |
+| **`--signal`** (cool) | `#38bdf8` | links / entities (like exploitrank's brief) |
+| tiers | strong `#a3e635` · good `#38bdf8` · stretch `#fbbf24` · skip `#78716c` | |
+
+- **Gradient/texture:** subtle **scanline / dot-matrix** overlay; amber section rules; monospace labels;
+  data-ink maximised (Tufte-ish).
+- **Hero animation:** the **pipeline Sankey becomes the hero**, plus a local **flow-field / dot-matrix**
+  “signal” backdrop; the tree is reimagined as an **ASCII/tech-tree** motif or dropped.
+- **Type:** **JetBrains Mono** (labels/data) + a grotesk (**Space Grotesk**/**Inter**) for headings.
+- **Motion:** typewriter/section reveals, a live status ticker, scanline sweeps, terminal caret accents.
+- **Feels like:** a mission-control console for your job hunt. **Best if** you want maximum character.
+
+### Concept cheat-sheet
+| | A · Nightshift | B · Aurora Calm | C · Mission Console |
+|---|---|---|---|
+| Vibe | refined cyber | calm premium | editorial terminal |
+| Base | deep ink + warm/cool neon | near-black neutral | warm ink |
+| Accents | coral+amber / cyan | one hue (violet/amber) | amber + cool signal |
+| Density | medium-high | medium (airy) | high |
+| Hero | bigger tree / constellation | gradient mesh | Sankey + flow-field |
+| Risk | can still over-glow | may feel “safe” | mono can tire; needs finesse |
+| Cohesion w/ exploitrank | ★★★ | ★ | ★★★ |
+
+## C. Recommendation
+**Lead with Concept A (“Nightshift”)** — it honours what you already like, fixes the palette-naming
+drift, tames the neon into intentional accents, and delivers the “bigger/better hero” you asked for
+(constellation *or* enlarged tree), while staying cohesive with exploitrank. Keep **B** as the
+“go serious” pivot and **C** as the “go bold” option. A strong hybrid also exists: **A’s palette + C’s
+command bar + Sankey-forward Applications tab.**
+
+## D. Surface-by-surface overhaul (functionality preserved — concept-agnostic)
+
+Every current surface (§3) maps to a redesigned form; **no data/route/contract change** unless noted.
+
+| Surface | Overhaul | Functionality preserved |
+|---|---|---|
+| **Global shell** | Wider **responsive bento** rail (replaces the single `max-w-6xl`); unified card language (elevation, edge, spotlight, rails as tokens). | Same routes/tabs; layout only. |
+| **Hero / background** | New hero per concept (constellation / mesh / flow-field); tree enlarged-or-replaced; grid/aurora re-tuned; all local + reduced-motion tiered. | Decorative only; still `aria-hidden`, offline. |
+| **Header + search** | Promote search to a **command bar** (`/` or ⌘K) over the same Fuse.js index; clearer brand lockup. | Same search scope + URL sync. |
+| **Tabs** | Restyled segmented control with animated indicator; counts as pills. | Same 7 tabs + URL `tab`. |
+| **Overview** | Re-ordered hierarchy: **hero KPI strip → donut + funnel → targeting/top-companies → skill constellation → top-matches**; bento tiles. | Same panels + data. |
+| **KPIs** | Large tabular numerals, count-up, sparkline option (from existing data). | Same metrics. |
+| **Donut / bars** | Restyle inline SVG to the concept palette; draw-in; hover tooltips. | Same hand-drawn SVG, no chart lib. |
+| **Skill constellation** | Keep the graph; align node/edge styling + selection to the concept. | Same interaction/data. |
+| **Applications** ⭐ | Make it the emotional centrepiece: **Sankey restyled + enlarged**, kanban with the unified card, email-timeline as a refined vertical thread. | **Sankey kept** (restyle only); kanban/statuses unchanged. |
+| **Encrypted gate** | Restyle the unlock as a focused, on-brand moment (still WebCrypto in-browser). | Same E2E decrypt. |
+| **Job list / cards** | One card system: score meter, intel dots → legible chips, tier pill, taken-down state; spotlight + rails as tokens; virtualization kept. | Same fields, virtualization, grouping. |
+| **Detail drawer** | Section redesign (brief/comp/stock 52-wk/reddit/news/contacts/rationale/all-postings) as collapsible cards; keep right-slide + deep-link. | Same content + deep-link. |
+| **Controls / facets** | Facets as a compact popover/faceted combobox; active chips; “clear all”. | Same facet logic + counts. |
+| **Empty / redacted states** | Designed empty states (redacted funnel, zero-results, locked apps). | New affordance; no data change. |
+| **Light mode** | First-class light twin for the chosen concept. | Parity. |
+| **Motion** | One **motion spec** (durations/easings/stagger + reduced-motion tiers) replacing ad-hoc effects. | Same effects, coherent. |
+
+## E. Phased execution (ships incrementally; nothing regresses)
+1. **Tokens + type** — rename/replace `--neon-*`, add the concept palette + self-hosted fonts; light twin. *(Pure CSS; instant rollback.)*
+2. **Shell + hero** — bento rail, new background/hero (behind reduced-motion), command bar.
+3. **Per-tab** — Overview hierarchy → Applications (Sankey-forward) → list/cards → drawer.
+4. **Motion pass** — apply the single motion spec; delete ad-hoc effects.
+5. **Polish** — empty states, a11y audit, light-mode QA, perf check; local build + screenshot review at each step.
+
+Each phase is a small PR behind the existing build; the JSON contract + `tests/test_dashboard_json.py`
+stay green throughout.
+
+## F. Your pick
+1. **Which concept** — **A · Nightshift** (recommended), **B · Aurora Calm**, **C · Mission Console**, or a **hybrid**?
+2. **The hero** — for the chosen concept: **enlarge the sakura tree**, or go **generative** (constellation / gradient-mesh / flow-field)?
+3. **Accent**, if B — **violet** or **amber**?
+
+Say the word and Stage 3 starts at Phase 1 (tokens + type) in this worktree, with a local preview to eyeball before anything touches the live site.
