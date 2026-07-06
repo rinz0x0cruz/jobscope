@@ -126,6 +126,8 @@ def cmd_track(args, cfg):
 
 def cmd_inbox(args, cfg):
     from ..ingest import inbox
+    if getattr(args, "include_spam", False):
+        cfg.setdefault("inbox", {})["include_spam"] = True
     with _store(args, cfg) as store:
         return inbox.run(cfg, store, dry_run=args.dry_run, account=args.account,
                          since=args.since, backfill=args.backfill)
@@ -351,6 +353,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Scan mail since this date (default: incremental / lookback_days on first run)")
     sp.add_argument("--backfill", action="store_true",
                     help="Ignore the incremental marker and rescan lookback_days")
+    sp.add_argument("--include-spam", action="store_true",
+                    help="Also sweep the Gmail spam/junk folder this run (overrides inbox.include_spam)")
     sp.add_argument("--dry-run", action="store_true", help="Classify and print, but write nothing")
     sp.set_defaults(func=cmd_inbox)
 

@@ -98,7 +98,7 @@ jobs:
           if [ "${{ inputs.full_scan }}" = "true" ]; then
             python -m jobscope scan || echo "::warning::job-board scan failed (non-fatal)"
           fi
-          python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)"
+          python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)" --include-spam
           python -m jobscope match
 
       - name: Save encrypted DB back to the `data` branch
