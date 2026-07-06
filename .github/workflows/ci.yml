@@ -29,6 +29,26 @@ jobs:
       - name: Unit tests
         run: python -m pytest -q
 
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci
+      # Vitest only imports the pure lib/UI modules, not the gitignored baked
+      # dashboard.json, so the UX suite runs without emitting data first.
+      - name: UX tests (Vitest)
+        run: npm test
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:
