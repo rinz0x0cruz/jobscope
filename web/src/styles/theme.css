@@ -161,6 +161,43 @@ html.light {
   animation: jsAmbientDrift 9s ease-in-out infinite alternate;
 }
 
+/* Signal-constellation backdrop (replaces the sakura tree): a drifting particle
+   network rendered by SignalField.tsx, sitting with the ambient aurora behind the
+   content (z-0). Full-viewport + subtle so it reads as a live "job network". */
+.js-signal-field {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: .62;
+  mix-blend-mode: screen;
+}
+html.light .js-signal-field { opacity: .4; mix-blend-mode: multiply; }
+
+/* Faint console scanlines — a whisper of CRT texture (concept C), behind content. */
+.js-scanlines {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: .5;
+  background-image: repeating-linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--fg) 4%, transparent) 0 1px,
+    transparent 1px 4px
+  );
+}
+html.light .js-scanlines { opacity: .34; }
+
+/* Mono-forward numerals — the console identity made visible on KPI values. */
+.js-kpi-card > div:first-child {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+
 .js-cyber-tree {
   position: fixed;
   right: max(-260px, calc((100vw - 72rem) / 2 - 320px));

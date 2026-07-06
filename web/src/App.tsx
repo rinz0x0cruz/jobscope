@@ -26,7 +26,7 @@ import { Overview } from '@/components/overview/Overview'
 import { Applications } from '@/components/applications/Applications'
 import { UNLOCK_KEY, type UnlockedApps } from '@/components/applications/ApplicationsGate'
 import { JobDrawer } from '@/components/JobDrawer'
-import { CyberSakura } from '@/components/CyberSakura'
+import { SignalField } from '@/components/SignalField'
 import { Toaster } from 'sonner'
 
 export default function App() {
@@ -104,7 +104,8 @@ export default function App() {
   return (
     <div className="relative min-h-screen overflow-x-clip">
       <div className="js-ambient" aria-hidden="true" />
-      <CyberSakura />
+      <SignalField />
+      <div className="js-scanlines" aria-hidden="true" />
       <Header
         total={rows.length}
         shown={searched.length}
@@ -112,7 +113,7 @@ export default function App() {
         query={state.q}
         onQuery={(v) => set({ q: v }, { replace: true })}
       />
-      <main className="relative z-10 mx-auto flex max-w-6xl flex-col gap-4 px-6 py-6">
+      <main className="relative z-10 mx-auto flex max-w-7xl flex-col gap-4 px-6 py-6">
         <Kpis rows={rows} />
         <Tabs value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
         {state.tab === 'overview' ? (
