@@ -6,7 +6,7 @@ import { trackSpotlight } from '@/lib/spotlight'
 import type { CSSProperties } from 'react'
 import { signalColor, statusColor, statusLabel } from './constants'
 
-function TimelineRow({ e }: { e: ApplicationEvent }) {
+export function TimelineRow({ e }: { e: ApplicationEvent }) {
   return (
     <li className="flex flex-col gap-1 text-[11.5px]">
       <div className="flex items-center gap-2">

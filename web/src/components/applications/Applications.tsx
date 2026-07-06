@@ -3,7 +3,7 @@ import { useReducedMotion } from 'motion/react'
 import type { Application, EncBlob } from '@/lib/schema'
 import { trackSpotlight } from '@/lib/spotlight'
 import { CountUp } from '@/components/overview/CountUp'
-import { AppCard } from './AppCard'
+import { ApplicationsSection } from './views'
 import { ActivityFeed } from './ActivityFeed'
 import { ApplicationsGate, type UnlockedApps } from './ApplicationsGate'
 import { PipelineFlow } from './PipelineFlow'
@@ -60,29 +60,7 @@ function StatusFunnel({ apps }: { apps: Application[] }) {
   )
 }
 
-function ApplicationList({ apps }: { apps: Application[] }) {
-  const sorted = useMemo(
-    () =>
-      [...apps].sort((a, b) =>
-        (b.updated || b.applied_at || '').localeCompare(a.updated || a.applied_at || ''),
-      ),
-    [apps],
-  )
-
-  return (
-    <section aria-label="All applications" className="flex flex-col gap-3">
-      <div className="flex items-baseline justify-between gap-2">
-        <h3 className="text-sm font-semibold">All applications</h3>
-        <span className="text-xs text-mute tnum">{apps.length}</span>
-      </div>
-      <div className="flex flex-col gap-2.5">
-        {sorted.map((a) => (
-          <AppCard key={a.job_id || `${a.company}-${a.title}`} app={a} />
-        ))}
-      </div>
-    </section>
-  )
-}
+// The applications board (List / Compact / Table / Grouped views + switcher) lives in ./views.tsx.
 
 export function Applications({
   apps,
@@ -162,7 +140,7 @@ export function Applications({
         <ActivityFeed apps={apps} onOpen={onOpen} />
       </Card>
 
-      <ApplicationList apps={apps} />
+      <ApplicationsSection apps={apps} onOpen={onOpen} />
     </div>
   )
 }
