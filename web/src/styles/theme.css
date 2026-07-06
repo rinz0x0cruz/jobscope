@@ -20,28 +20,50 @@
   --color-stretch: var(--stretch);
   --color-skip: var(--skip);
 
+  --color-hot: var(--hot);
+  --color-cool: var(--cool);
+  --color-signal: var(--signal);
+
   --radius-card: var(--radius);
 
   --font-sans: var(--font);
   --font-mono: var(--mono);
+  --font-display: var(--font-display);
 }
 
-/* Dark (default) — ported verbatim from render.py's _TEMPLATE. */
+/* Dark (default) — "Nightshift Console" (concept A × C): a deep-ink base with a
+   warm terminal signature (amber / coral) balanced by a cool cyber + data hue
+   (cyan / teal / sky), mono-forward type. Legacy --neon-* keep their NAMES but
+   are retuned to the COOL half of the duotone, so the decorative layers (tree,
+   logo, gradient cards, skill graph) read cyber again while accents stay warm. */
 :root {
-  --bg: #07111f; --bg2: #0a1628; --card: #0d1728; --card-h: #121f33;
-  --border: #1b2c45; --border-h: #2d4667; --fg: #eef6ff; --dim: #a9bbd2; --mute: #687b92;
-  --accent: #fb923c; --accent-dim: rgba(251, 146, 60, .18);
-  --neon-cyan: #ff6f5e; --neon-blue: #fb923c; --neon-violet: #fb7185; --neon-emerald: #2dd4bf; --neon-amber: #fbbf24;
-  --strong: #4ade80; --good: #38bdf8; --stretch: #fbbf24; --skip: #71717a;
-  --radius: 14px; --shadow: 0 10px 30px -12px rgba(0, 0, 0, .6);
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
-  --mono: "SF Mono", ui-monospace, "Cascadia Code", "Segoe UI Mono", Menlo, Consolas, monospace;
+  --bg: #060b14; --bg2: #0a1220; --card: #0e1826; --card-h: #132238;
+  --border: #1c2b42; --border-h: #2d4667; --fg: #eaf2ff; --dim: #9fb2cc; --mute: #5f728c;
+
+  /* warm terminal signature — accents, CTAs, status warmth */
+  --accent: #f59e0b; --accent-dim: rgba(245, 158, 11, .16);
+  --hot: #fb7185;
+  /* cool cyber + data — charts, links/entities (concept C's "signal"), focus */
+  --cool: #22d3ee; --signal: #38bdf8; --teal: #2dd4bf;
+
+  /* legacy neon vars, retuned to the cool half of the duotone */
+  --neon-cyan: #22d3ee; --neon-blue: #38bdf8; --neon-violet: #a78bfa; --neon-emerald: #2dd4bf; --neon-amber: #fbbf24;
+
+  --strong: #34d399; --good: #38bdf8; --stretch: #fbbf24; --skip: #64748b;
+  --radius: 14px; --shadow: 0 10px 30px -12px rgba(0, 0, 0, .62);
+  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code", "Segoe UI Mono", Menlo, Consolas, monospace;
+  --font-display: "Space Grotesk", Inter, var(--font);
 }
 
 html.light {
-  --bg: #fafafa; --bg2: #f4f4f5; --card: #ffffff; --card-h: #fbfbfd;
-  --border: #e7e7ea; --border-h: #d9d9de; --fg: #18181b; --dim: #52525b; --mute: #8a8a93;
-  --accent: #c2410c; --accent-dim: rgba(194, 65, 12, .10); --shadow: 0 8px 24px -14px rgba(0, 0, 0, .25);
+  --bg: #f7f8fa; --bg2: #eef1f5; --card: #ffffff; --card-h: #f7f9fc;
+  --border: #e3e7ee; --border-h: #cfd6e2; --fg: #0f172a; --dim: #47566b; --mute: #8493a8;
+  --accent: #d97706; --accent-dim: rgba(217, 119, 6, .12);
+  --hot: #e11d48; --cool: #0891b2; --signal: #0284c7; --teal: #0d9488;
+  --neon-cyan: #0891b2; --neon-blue: #0284c7; --neon-violet: #7c3aed; --neon-emerald: #0d9488;
+  --strong: #059669; --good: #0284c7; --stretch: #d97706; --skip: #64748b;
+  --shadow: 0 8px 24px -14px rgba(15, 23, 42, .22);
 }
 
 @layer base {
@@ -55,7 +77,7 @@ html.light {
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     background-image:
-      linear-gradient(115deg, color-mix(in srgb, var(--bg) 72%, var(--neon-blue) 28%), var(--bg) 28%, color-mix(in srgb, var(--bg) 78%, var(--neon-violet) 22%) 58%, color-mix(in srgb, var(--bg) 76%, var(--neon-cyan) 24%)),
+      linear-gradient(118deg, color-mix(in srgb, var(--bg) 74%, var(--signal) 26%), var(--bg) 30%, color-mix(in srgb, var(--bg) 82%, var(--accent) 18%) 60%, color-mix(in srgb, var(--bg) 78%, var(--cool) 22%)),
       repeating-linear-gradient(90deg, color-mix(in srgb, var(--fg) 5%, transparent) 0 1px, transparent 1px 86px),
       repeating-linear-gradient(0deg, color-mix(in srgb, var(--fg) 4%, transparent) 0 1px, transparent 1px 86px);
     background-size: 220% 220%, auto, auto;

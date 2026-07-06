@@ -369,3 +369,30 @@ stay green throughout.
 3. **Accent**, if B — **violet** or **amber**?
 
 Say the word and Stage 3 starts at Phase 1 (tokens + type) in this worktree, with a local preview to eyeball before anything touches the live site.
+
+---
+---
+
+# Stage 3 — build log
+
+**Chosen direction: A × C hybrid — “Nightshift Console.”** Concept A's deep-ink + tamed warm/cool
+neon palette, wearing Concept C's console identity (mono-forward type, a ⌘K command bar, scanline/
+dot-matrix texture, a Sankey-forward Applications tab). Guardrails from §0 hold throughout.
+
+Token spec (dark): base `--bg #060b14`/`--bg2 #0a1220`, cards `#0e1826`/`#132238`; **warm signature**
+`--accent #f59e0b` (amber) + `--hot #fb7185` (coral); **cool data** `--cool #22d3ee` / `--signal #38bdf8`
+/ `--teal #2dd4bf`; legacy `--neon-*` retuned to the cool half; tiers strong `#34d399` · good `#38bdf8`
+· stretch `#fbbf24` · skip `#64748b`. Type: Inter (UI) + JetBrains Mono (data/labels) + Space Grotesk
+(display), self-hosted in Phase 1b.
+
+### Phase status
+- **Phase 1 — tokens + type — ✅ done (preview).** Retuned `:root` + `html.light` to the Nightshift
+  Console duotone, mono-forward type tokens, warm/cool ambient. Pure CSS (`web/src/styles/theme.css`);
+  cascades via the existing `@theme inline` vars — no component edits, instant rollback. Previewed as
+  an un-redacted local build.
+- **Phase 1b — self-host fonts** (Inter / JetBrains Mono / Space Grotesk via `@fontsource`, bundled
+  for offline) — next.
+- **Phase 2 — shell + hero + command bar** (bento rail, generative hero decision [enlarge tree vs
+  constellation/flow-field], ⌘K command bar, scanline texture) — pending.
+- **Phase 3 — per-tab** (Overview hierarchy → Applications Sankey-forward → list/cards → drawer).
+- **Phase 4 — motion spec.** · **Phase 5 — polish** (empty states, a11y, light-mode QA, perf).
