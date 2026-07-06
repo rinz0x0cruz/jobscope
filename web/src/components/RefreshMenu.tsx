@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Check, ChevronDown, DownloadCloud, KeyRound, MailSearch, RefreshCw, Unplug } from 'lucide-react'
-import { GH_TOKEN_KEY, hasGitHubToken, pullLatestData, scanNewMail } from '@/lib/refresh'
+import { GH_TOKEN_KEY, hasGitHubToken, pullLatestData, scanCooldownRemaining, scanNewMail } from '@/lib/refresh'
 
 interface Props {
   /** Pre-formatted "generated" timestamp shown in the popover footer. */
   updated: string
+}
+
+const mmss = (ms: number) => {
+  const s = Math.ceil(ms / 1000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
 /** Header control to refresh the dashboard: a primary button pulls the freshest
@@ -15,7 +20,16 @@ export function RefreshMenu({ updated }: Props) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [connected, setConnected] = useState(hasGitHubToken)
+  const [cooldown, setCooldown] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const tick = () => setCooldown(scanCooldownRemaining())
+    tick()
+    const t = window.setInterval(tick, 1000)
+    return () => window.clearInterval(t)
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -108,7 +122,8 @@ export function RefreshMenu({ updated }: Props) {
               <button
                 type="button"
                 onClick={scan}
-                className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left transition hover:bg-card-h"
+                disabled={cooldown > 0}
+                className="flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left transition hover:bg-card-h disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
               >
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] border border-border text-accent">
                   <MailSearch size={16} />
@@ -116,7 +131,11 @@ export function RefreshMenu({ updated }: Props) {
                 <span className="min-w-0 flex-1">
                   <span className="block text-[13px] font-semibold text-fg">Scan new mail</span>
                   <span className="block text-[11px] text-mute">
-                    {connected ? 'Runs the mailbox scan (~2–3 min)' : 'Opens GitHub to run the scan'}
+                    {cooldown > 0
+                      ? `On cooldown — ${mmss(cooldown)}`
+                      : connected
+                        ? 'Runs the mailbox scan (~2–3 min)'
+                        : 'Opens GitHub to run the scan'}
                   </span>
                 </span>
               </button>
