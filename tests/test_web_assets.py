@@ -24,17 +24,20 @@ def test_web_dashboard_animation_assets_are_wired() -> None:
     app = _read("web/src/App.tsx")
     header = _read("web/src/components/Header.tsx")
     lottie = _read("web/src/components/SignalLottie.tsx")
-    tree = _read("web/src/components/CyberSakura.tsx")
+    hero = _read("web/src/components/HeroBackdrop.tsx")
     overview = _read("web/src/components/overview/Overview.tsx")
     skill_graph = _read("web/src/components/overview/SkillConstellation.tsx")
     spotlight = _read("web/src/lib/spotlight.ts")
     css = _read("web/src/styles/theme.css")
 
-    assert "<CyberSakura />" in app
+    # The hero backdrop is a swappable generative canvas (it replaced the retired
+    # sakura tree), layered under the console scanlines.
+    assert "<HeroBackdrop" in app and "js-scanlines" in app
     assert "<SignalLottie" in header
     assert "useLottie" in lottie and "jobscope signal" in lottie
     assert "js-signal-glyph" in lottie
-    assert "js-cyber-tree" in tree and "js-sakura-leaf" in tree
+    assert "HERO_VARIANTS" in hero and "getContext" in hero
+    assert "prefers-reduced-motion" in hero
     assert "<SkillConstellation" in overview
     assert "js-skill-graph" in skill_graph and "js-skill-node" in skill_graph
     assert "role=\"button\"" in skill_graph and "onSelect" in skill_graph
@@ -45,13 +48,14 @@ def test_web_dashboard_animation_assets_are_wired() -> None:
         ".js-ambient",
         ".js-logo-mark",
         ".js-neon-title",
-        ".js-cyber-tree",
-        ".js-sakura-leaf",
+        ".js-signal-field",
+        ".js-hero-aurora",
+        ".js-scanlines",
         ".js-spotlight-card",
         ".js-status-card",
         ".js-skill-graph",
         ".js-skill-node",
-        "@keyframes jsLeafFall",
+        "@keyframes jsAuroraA",
     ):
         assert marker in css
 
