@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 
-export type HeroVariant = 'constellation' | 'flowfield' | 'dotgrid' | 'aurora'
-export const HERO_VARIANTS: HeroVariant[] = ['constellation', 'flowfield', 'dotgrid', 'aurora']
+export type HeroVariant = 'constellation' | 'flowfield' | 'dotgrid' | 'aurora' | 'radar' | 'grid'
+export const HERO_VARIANTS: HeroVariant[] = ['constellation', 'flowfield', 'dotgrid', 'aurora', 'radar', 'grid']
 
 /**
  * Swappable generative hero backdrop (all local canvas/CSS → offline-safe, and
@@ -12,6 +12,8 @@ export const HERO_VARIANTS: HeroVariant[] = ['constellation', 'flowfield', 'dotg
  *  - flowfield     : particles advected by a noise field (flowing streams)
  *  - dotgrid       : a dot matrix rippling from a roaming pulse (terminal/console)
  *  - aurora        : slow blurred gradient blobs (calm / premium)
+ *  - radar         : rotating sweep over rings with fading blips (intel console)
+ *  - grid          : receding perspective grid with an amber horizon (synthwave)
  */
 export function HeroBackdrop({ variant = 'constellation' }: { variant?: HeroVariant }) {
   const ref = useRef<HTMLCanvasElement>(null)
@@ -43,6 +45,7 @@ export function HeroBackdrop({ variant = 'constellation' }: { variant?: HeroVari
 
     type P = { x: number; y: number; vx: number; vy: number; c: string }
     let pts: P[] = []
+    let blips: { x: number; y: number; ang: number; life: number }[] = []
     const seed = () => {
       const density = variant === 'flowfield' ? 9000 : 14500
       const cap = variant === 'flowfield' ? 240 : 108
@@ -142,7 +145,113 @@ export function HeroBackdrop({ variant = 'constellation' }: { variant?: HeroVari
       ctx.globalAlpha = 1
     }
 
-    const draw = variant === 'flowfield' ? flowfield : variant === 'dotgrid' ? dotgrid : constellation
+    const radar = () => {
+      ctx.clearRect(0, 0, w, h)
+      t += 0.012
+      const cx = w * 0.5
+      const cy = h * 0.46
+      const R = Math.min(w, h) * 0.46
+      ctx.strokeStyle = cool
+      ctx.lineWidth = 1
+      for (let k = 1; k <= 4; k++) {
+        ctx.globalAlpha = 0.12
+        ctx.beginPath()
+        ctx.arc(cx, cy, (R * k) / 4, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+      ctx.globalAlpha = 0.08
+      ctx.beginPath()
+      ctx.moveTo(cx - R, cy)
+      ctx.lineTo(cx + R, cy)
+      ctx.moveTo(cx, cy - R)
+      ctx.lineTo(cx, cy + R)
+      ctx.stroke()
+      const ang = t % (Math.PI * 2)
+      ctx.save()
+      ctx.translate(cx, cy)
+      ctx.rotate(ang)
+      const g = ctx.createLinearGradient(0, 0, R, 0)
+      g.addColorStop(0, 'transparent')
+      g.addColorStop(1, signal)
+      ctx.globalAlpha = 0.22
+      ctx.fillStyle = g
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.arc(0, 0, R, -0.6, 0)
+      ctx.closePath()
+      ctx.fill()
+      ctx.globalAlpha = 0.55
+      ctx.strokeStyle = signal
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.lineTo(R, 0)
+      ctx.stroke()
+      ctx.restore()
+      if (Math.random() < 0.03 && blips.length < 16) {
+        const a = Math.random() * Math.PI * 2
+        const r = R * (0.12 + Math.random() * 0.82)
+        blips.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r, ang: a, life: 0 })
+      }
+      for (const b of blips) {
+        let d = (b.ang - ang) % (Math.PI * 2)
+        if (d < 0) d += Math.PI * 2
+        if (d < 0.14 || d > Math.PI * 2 - 0.14) b.life = 1
+        b.life *= 0.975
+        ctx.globalAlpha = Math.max(0, b.life) * 0.9
+        ctx.fillStyle = b.life > 0.6 ? hot : signal
+        ctx.beginPath()
+        ctx.arc(b.x, b.y, 2.6, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      blips = blips.filter((b) => b.life > 0.03)
+      ctx.globalAlpha = 1
+    }
+
+    const grid = () => {
+      ctx.clearRect(0, 0, w, h)
+      t += 0.6
+      const horizon = h * 0.42
+      const cx = w * 0.5
+      const depth = h - horizon
+      ctx.strokeStyle = cool
+      ctx.lineWidth = 1
+      const cols = 22
+      ctx.globalAlpha = 0.15
+      for (let i = 0; i <= cols; i++) {
+        const fx = i / cols - 0.5
+        ctx.beginPath()
+        ctx.moveTo(cx + fx * w * 0.1, horizon)
+        ctx.lineTo(cx + fx * w * 1.7, h)
+        ctx.stroke()
+      }
+      for (let k = 0; k < 26; k++) {
+        const p = ((k * 26 + t) % depth) / depth
+        const y = horizon + p * p * depth
+        ctx.globalAlpha = 0.05 + p * 0.22
+        ctx.beginPath()
+        ctx.moveTo(0, y)
+        ctx.lineTo(w, y)
+        ctx.stroke()
+      }
+      const hg = ctx.createLinearGradient(0, horizon - 34, 0, horizon + 2)
+      hg.addColorStop(0, 'transparent')
+      hg.addColorStop(1, hot)
+      ctx.globalAlpha = 0.45
+      ctx.fillStyle = hg
+      ctx.fillRect(0, horizon - 34, w, 36)
+      ctx.globalAlpha = 1
+    }
+
+    const draw =
+      variant === 'flowfield'
+        ? flowfield
+        : variant === 'dotgrid'
+          ? dotgrid
+          : variant === 'radar'
+            ? radar
+            : variant === 'grid'
+              ? grid
+              : constellation
     const loop = () => {
       draw()
       raf = requestAnimationFrame(loop)
