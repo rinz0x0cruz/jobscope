@@ -1,19 +1,33 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import type { JobRow, Overview as OverviewStats } from '@/lib/schema'
 import { funnelBars, tierSegments, topCompanies, topMatches } from '@/lib/overview'
+import { trackSpotlight } from '@/lib/spotlight'
 import { Donut } from './Donut'
 import { Bars } from './Bars'
 import { SkillConstellation } from './SkillConstellation'
 import { TopMatches } from './TopMatches'
 
-function Card({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
+function Card({
+  title,
+  subtitle,
+  children,
+  className = '',
+}: {
+  title: string
+  subtitle?: string
+  children: ReactNode
+  className?: string
+}) {
   return (
-    <section className="rounded-[14px] border border-border bg-card p-4">
+    <section
+      className={`js-gradient-card js-spotlight-card flex flex-col rounded-[14px] border border-border bg-card p-4 ${className}`}
+      onPointerMove={trackSpotlight}
+    >
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <h3 className="text-sm font-semibold">{title}</h3>
         {subtitle && <span className="text-xs text-mute">{subtitle}</span>}
       </div>
-      {children}
+      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
     </section>
   )
 }
@@ -58,26 +72,32 @@ export function Overview({ rows, stats, onOpen }: { rows: JobRow[]; stats: Overv
         </p>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card title="Fit distribution">
-          <Donut segs={segs} total={total} />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-6">
+        <Card title="Fit distribution" className="lg:col-span-2">
+          <div className="grid flex-1 place-items-center">
+            <Donut segs={segs} total={total} />
+          </div>
         </Card>
-        <Card title="Application pipeline">
+
+        <Card title="Application pipeline" className="lg:col-span-2">
           {funnel.length > 0 ? (
             <Bars items={funnel} color="var(--good)" />
           ) : (
-            <div className="grid min-h-28 place-items-center text-center text-[13px] text-mute">
+            <div className="grid min-h-28 flex-1 place-items-center text-center text-[13px] text-mute">
               No applications tracked yet — mark roles as applied to build your funnel.
             </div>
           )}
         </Card>
-      </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card title="Top companies">
+        <Card title="Top companies" className="lg:col-span-2">
           <Bars items={companies} />
         </Card>
-        <Card title="Skill gaps in your matches" subtitle="most in-demand">
+
+        <Card
+          title="Skill gaps in your matches"
+          subtitle="most in-demand"
+          className="lg:col-span-4 lg:row-span-2"
+        >
           {gaps.length > 0 ? (
             <>
               <SkillConstellation items={gaps} selected={selectedSkill} onSelect={setSelectedSkill} />
@@ -121,14 +141,18 @@ export function Overview({ rows, stats, onOpen }: { rows: JobRow[]; stats: Overv
               </div>
             </>
           ) : (
-            <div className="grid min-h-28 place-items-center text-[13px] text-mute">Not enough data.</div>
+            <div className="grid min-h-28 flex-1 place-items-center text-[13px] text-mute">Not enough data.</div>
           )}
         </Card>
-      </div>
 
-      <Card title="Top matches" subtitle="click a role to open">
-        <TopMatches rows={matches} onOpen={onOpen} />
-      </Card>
+        <Card
+          title="Top matches"
+          subtitle="click a role to open"
+          className="lg:col-span-2 lg:row-span-2"
+        >
+          <TopMatches rows={matches} onOpen={onOpen} />
+        </Card>
+      </div>
     </div>
   )
 }

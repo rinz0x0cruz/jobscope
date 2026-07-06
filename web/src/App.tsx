@@ -125,7 +125,7 @@ export default function App() {
         {state.tab === 'overview' ? (
           <Overview rows={rows} stats={overview} onOpen={openDrawer} />
         ) : state.tab === 'applications' ? (
-          <Applications apps={apps} encBlob={encryptedApplications} onUnlock={setUnlocked} />
+          <Applications apps={apps} encBlob={encryptedApplications} onUnlock={setUnlocked} onOpen={openDrawer} />
         ) : (
           <>
             <FacetBar
@@ -144,7 +144,7 @@ export default function App() {
           </>
         )}
       </main>
-      <SearchPalette rows={rows} />
+      <SearchPalette rows={rows} onNavigate={(t) => set({ tab: t })} />
       <JobDrawer job={openJob} allRows={rows} onOpen={openDrawer} onClose={closeDrawer} />
       <Toaster
         position="bottom-right"

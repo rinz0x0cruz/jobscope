@@ -4,18 +4,19 @@ import type { Application, EncBlob } from '@/lib/schema'
 import { trackSpotlight } from '@/lib/spotlight'
 import { CountUp } from '@/components/overview/CountUp'
 import { AppCard } from './AppCard'
+import { ActivityFeed } from './ActivityFeed'
 import { ApplicationsGate, type UnlockedApps } from './ApplicationsGate'
 import { PipelineFlow } from './PipelineFlow'
 import { pct, pipelineMetrics, presentStatuses, statusColor, statusCounts, statusLabel } from './constants'
 
-function Card({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
+function Card({ title, subtitle, children, className = '' }: { title: string; subtitle?: string; children: ReactNode; className?: string }) {
   return (
-    <section className="js-gradient-card js-spotlight-card rounded-[14px] border border-border bg-card p-4" onPointerMove={trackSpotlight}>
+    <section className={`js-gradient-card js-spotlight-card flex flex-col rounded-[14px] border border-border bg-card p-4 ${className}`} onPointerMove={trackSpotlight}>
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <h3 className="text-sm font-semibold">{title}</h3>
         {subtitle && <span className="text-xs text-mute">{subtitle}</span>}
       </div>
-      {children}
+      <div className="flex min-h-0 flex-1 flex-col justify-center">{children}</div>
     </section>
   )
 }
@@ -97,10 +98,12 @@ export function Applications({
   apps,
   encBlob,
   onUnlock,
+  onOpen,
 }: {
   apps: Application[]
   encBlob?: EncBlob | null
   onUnlock?: (data: UnlockedApps) => void
+  onOpen?: (id: string) => void
 }) {
   const summary = useMemo(() => {
     const p = pipelineMetrics(apps)
@@ -148,20 +151,24 @@ export function Applications({
         )}
       </p>
 
-      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-        <Card title="Application funnel" subtitle="by status">
-          <StatusFunnel apps={apps} />
-        </Card>
-        <Card title="Pipeline flow" subtitle="how far each application got">
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+        <Card title="Pipeline flow" subtitle="how far each application progressed">
           {pipelineMetrics(apps).submitted > 0 ? (
             <PipelineFlow apps={apps} />
           ) : (
-            <div className="grid min-h-28 place-items-center text-center text-[13px] text-mute">
+            <div className="grid min-h-28 flex-1 place-items-center text-center text-[13px] text-mute">
               Nothing submitted yet — the flow appears once roles reach the applied stage.
             </div>
           )}
         </Card>
+        <Card title="By status" subtitle="applications per stage">
+          <StatusFunnel apps={apps} />
+        </Card>
       </div>
+
+      <Card title="Recent activity" subtitle="latest email events across all applications">
+        <ActivityFeed apps={apps} onOpen={onOpen} />
+      </Card>
 
       <KanbanBoard apps={apps} />
     </div>

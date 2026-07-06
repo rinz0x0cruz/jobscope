@@ -1,6 +1,8 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Moon, Search, Sun } from 'lucide-react'
+import { Command, Moon, Search, Sun } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
+import { COMMAND_EVENT } from '@/components/filters/SearchPalette'
+import { RefreshMenu } from '@/components/RefreshMenu'
 import { SignalLottie } from '@/components/SignalLottie'
 
 interface Props {
@@ -42,6 +44,19 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
           /
         </kbd>
       </label>
+
+      <RefreshMenu updated={generated} />
+
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent(COMMAND_EVENT))}
+        aria-label="Open command bar"
+        className="group flex h-10 items-center gap-2 rounded-[12px] border border-border bg-card px-3 text-dim transition hover:border-border-h hover:text-fg"
+      >
+        <Command size={15} className="opacity-70 transition group-hover:opacity-100" />
+        <span className="hidden text-[12.5px] font-medium sm:inline">Command</span>
+        <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-mute">⌘K</kbd>
+      </button>
 
       <button
         type="button"
