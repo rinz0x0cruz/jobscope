@@ -176,6 +176,21 @@ html.light {
 }
 html.light .js-signal-field { opacity: .4; mix-blend-mode: multiply; }
 
+/* Aurora hero variant — slow blurred gradient blobs (calm / premium option). */
+.js-hero-aurora { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; opacity: .6; }
+.js-hero-aurora span {
+  position: absolute; width: 46vw; height: 46vw; border-radius: 50%;
+  filter: blur(72px); mix-blend-mode: screen; opacity: .5;
+}
+.js-hero-aurora span:nth-child(1) { background: var(--cool); left: -8%; top: -12%; animation: jsAuroraA 16s ease-in-out infinite alternate; }
+.js-hero-aurora span:nth-child(2) { background: var(--accent); right: -10%; top: 4%; animation: jsAuroraB 19s ease-in-out infinite alternate; }
+.js-hero-aurora span:nth-child(3) { background: var(--signal); left: 24%; bottom: -18%; animation: jsAuroraC 22s ease-in-out infinite alternate; }
+html.light .js-hero-aurora { opacity: .5; }
+html.light .js-hero-aurora span { mix-blend-mode: multiply; }
+@keyframes jsAuroraA { to { transform: translate(18vw, 12vh) scale(1.2); } }
+@keyframes jsAuroraB { to { transform: translate(-16vw, 10vh) scale(1.15); } }
+@keyframes jsAuroraC { to { transform: translate(10vw, -14vh) scale(1.25); } }
+
 /* Faint console scanlines — a whisper of CRT texture (concept C), behind content. */
 .js-scanlines {
   position: fixed;

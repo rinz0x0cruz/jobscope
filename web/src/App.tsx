@@ -26,8 +26,14 @@ import { Overview } from '@/components/overview/Overview'
 import { Applications } from '@/components/applications/Applications'
 import { UNLOCK_KEY, type UnlockedApps } from '@/components/applications/ApplicationsGate'
 import { JobDrawer } from '@/components/JobDrawer'
-import { SignalField } from '@/components/SignalField'
+import { HeroBackdrop, HERO_VARIANTS, type HeroVariant } from '@/components/HeroBackdrop'
 import { Toaster } from 'sonner'
+
+// Preview switcher: pick the hero backdrop with `?hero=constellation|flowfield|dotgrid|aurora`.
+const heroParam = new URLSearchParams(window.location.search).get('hero') ?? ''
+const HERO: HeroVariant = (HERO_VARIANTS as string[]).includes(heroParam)
+  ? (heroParam as HeroVariant)
+  : 'constellation'
 
 export default function App() {
   const rows = dashboard.rows
@@ -104,7 +110,7 @@ export default function App() {
   return (
     <div className="relative min-h-screen overflow-x-clip">
       <div className="js-ambient" aria-hidden="true" />
-      <SignalField />
+      <HeroBackdrop variant={HERO} />
       <div className="js-scanlines" aria-hidden="true" />
       <Header
         total={rows.length}
