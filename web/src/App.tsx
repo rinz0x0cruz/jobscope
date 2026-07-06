@@ -33,7 +33,7 @@ import { Toaster } from 'sonner'
 const heroParam = new URLSearchParams(window.location.search).get('hero') ?? ''
 const HERO: HeroVariant = (HERO_VARIANTS as string[]).includes(heroParam)
   ? (heroParam as HeroVariant)
-  : 'constellation'
+  : 'grid'
 
 export default function App() {
   const rows = dashboard.rows

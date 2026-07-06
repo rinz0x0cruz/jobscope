@@ -392,7 +392,8 @@ Token spec (dark): base `--bg #060b14`/`--bg2 #0a1220`, cards `#0e1826`/`#132238
   an un-redacted local build.
 - **Phase 1b — self-host fonts** (Inter / JetBrains Mono / Space Grotesk via `@fontsource`, bundled
   for offline) — next.
-- **Phase 2 — shell + hero + command bar** (bento rail, generative hero decision [enlarge tree vs
-  constellation/flow-field], ⌘K command bar, scanline texture) — pending.
+- **Phase 2 — shell + hero + command bar.** ✅ tree replaced with a 6-variant generative hero switcher
+  (`?hero=` constellation/flowfield/dotgrid/aurora/radar/grid), scanline texture, mono numerals, wider
+  rail; **hero decided: `grid` (synthwave perspective, amber horizon).** Remaining: bento rail + ⌘K bar.
 - **Phase 3 — per-tab** (Overview hierarchy → Applications Sankey-forward → list/cards → drawer).
 - **Phase 4 — motion spec.** · **Phase 5 — polish** (empty states, a11y, light-mode QA, perf).
