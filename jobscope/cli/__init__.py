@@ -11,6 +11,7 @@ Usage:
     python -m jobscope apply <job_id> [--assist]   Open the application (human submits)
     python -m jobscope outreach <job_id> [--send]  Draft/send a recruiter outreach + resume
     python -m jobscope brief <job_id>              Blunt, risk-forward company brief
+    python -m jobscope atscheck [--job ID]         What an ATS extracts from your resume + warnings
     python -m jobscope gaps [--top N]              Skill-gap learning plan across your jobs
     python -m jobscope new                          New Strong/Good jobs since last review
     python -m jobscope dashboard [--public]        Emit the dashboard JSON payload
@@ -157,6 +158,13 @@ def cmd_brief(args, cfg):
     from ..apply import brief as _brief
     with _store(args, cfg) as store:
         return _brief.run(cfg, store, args.job_id)
+
+
+def cmd_atscheck(args, cfg):
+    from ..analyze import atscheck
+    with _store(args, cfg) as store:
+        return atscheck.run(cfg, store, resume_name=getattr(args, "resume", None),
+                            job_id=getattr(args, "job", None))
 
 
 def cmd_export(args, cfg):
@@ -382,6 +390,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("brief", help="Blunt, risk-forward company brief for a job")
     sp.add_argument("job_id")
     sp.set_defaults(func=cmd_brief)
+
+    sp = sub.add_parser("atscheck",
+                        help="Show what an ATS extracts from your resume + formatting warnings")
+    sp.add_argument("--resume", default=None, metavar="NAME",
+                    help="Which named base resume to check (default: your primary)")
+    sp.add_argument("--job", default=None, metavar="JOB_ID",
+                    help="Also show JD keyword coverage against this job")
+    sp.set_defaults(func=cmd_atscheck)
 
     sp = sub.add_parser("export", help="Export ranked jobs")
     sp.add_argument("--format", choices=["json", "csv"], default="json")
