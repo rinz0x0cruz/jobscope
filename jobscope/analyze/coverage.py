@@ -24,11 +24,6 @@ from jobscope.analyze.resume import SKILL_LEXICON as _LEXICON
 
 # A requirement bullet: "-", "*", "•", en-dash, or "1." / "2)" list markers.
 _BULLET = re.compile(r"^\s*(?:[-*\u2022\u2013\u25cf]|\d+[.)])\s+(.*\S)\s*$")
-# Headings that introduce a requirements / responsibilities block.
-_REQ_HEADING = re.compile(
-    r"(?i)\b(responsibilit|requirement|qualificat|what you'?ll|what you will|"
-    r"who you are|what we'?re looking|you have|you'?ll bring|you bring|"
-    r"minimum|preferred|nice to have|about you|your experience|skills)\b")
 # Perks / culture / boilerplate we never treat as a requirement.
 _BENEFIT = re.compile(
     r"(?i)\b(salary|compensation|benefit|insurance|401\(?k\)?|pto|paid time off|"
@@ -49,6 +44,13 @@ _ACTION = re.compile(
     r"(?i)^(build|design|develop|lead|own|drive|implement|create|manage|collaborat|"
     r"partner|respond|deliver|maintain|architect|operat|analyz|research|improv|"
     r"scal|support|work|contribut|define|establish|ensure|monitor|automat)\w*\b")
+# Marketing / mission / legal-footer prose that isn't a requirement, even near a heading.
+_MISSION = re.compile(
+    r"(?i)(our mission|21st century|world'?s (most|leading|largest|best)|cutting[- ]edge|"
+    r"founded in|we(?:'re| are) building|by bringing|most innovative|transform (the|how)|"
+    r"reimagine|revolutioniz|join us|about the (team|role|company)|who we are|"
+    r"applicable laws?|use of this (provider|service|site)|privacy (policy|notice)|"
+    r"background check|reasonable accommodation|e-verify)")
 
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9+.#/-]*")
 _STOP = frozenset("""
@@ -86,6 +88,17 @@ def _looks_like_perk(text: str) -> bool:
     return capitalized >= max(2, len(words) - 1)
 
 
+def _is_requirementish(sent: str) -> bool:
+    """A prose sentence that actually states a requirement -- an action verb, a
+    qualification signal, or a named skill -- and not mission/perk boilerplate."""
+    if _MISSION.search(sent) or _BENEFIT.search(sent) or _FORM_NOISE.search(sent) \
+            or _looks_like_perk(sent):
+        return False
+    low = sent.lower()
+    return bool(_ACTION.search(sent) or _QUAL.search(sent)
+                or any(_wb(s, low) for s in _LEXICON))
+
+
 def extract_requirements(job) -> list[dict]:
     """Pull discrete requirement lines from a JD (bullets first, then sentences).
 
@@ -100,18 +113,12 @@ def extract_requirements(job) -> list[dict]:
         if m:
             bullets.append(m.group(1).strip())
 
-    # No bullet structure? Fall back to sentences that read like requirements.
+    # No bullet structure? Fall back to sentences that actually state a requirement.
     if len(bullets) < 3:
-        near_heading = False
         for raw in desc.splitlines():
-            line = raw.strip()
-            if not line:
-                continue
-            if _REQ_HEADING.search(line) and len(line) < 80:
-                near_heading = True
-            for sent in re.split(r"(?<=[.!?])\s+", line):
+            for sent in re.split(r"(?<=[.!?])\s+", raw.strip()):
                 sent = sent.strip(" -*\u2022")
-                if (near_heading or _QUAL.search(sent)) and 12 <= len(sent) <= 240:
+                if 12 <= len(sent) <= 240 and _is_requirementish(sent):
                     bullets.append(sent)
 
     out, seen = [], set()

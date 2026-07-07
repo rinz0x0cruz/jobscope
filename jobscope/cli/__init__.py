@@ -16,6 +16,7 @@ Usage:
     python -m jobscope gaps [--top N]              Skill-gap learning plan across your jobs
     python -m jobscope new                          New Strong/Good jobs since last review
     python -m jobscope referrals [--job ID]        Referral paths across your pipeline + outreach draft
+    python -m jobscope interview <job_id>          Interview-prep sheet (fit, topics, STAR, brief, notes)
     python -m jobscope dashboard [--public]        Emit the dashboard JSON payload
     python -m jobscope serve [--port 8799 --open]  Serve the dashboard locally
     python -m jobscope track [--set job_id=status] Funnel + follow-up reminders
@@ -155,6 +156,13 @@ def cmd_referrals(args, cfg):
     with _store(args, cfg) as store:
         return referrals.run(cfg, store, job_id=getattr(args, "job", None),
                              discover=getattr(args, "discover", False), top=args.top)
+
+
+def cmd_interview(args, cfg):
+    from ..apply import interview
+    with _store(args, cfg) as store:
+        return interview.run(cfg, store, args.job_id, note=getattr(args, "note", None),
+                             resume_name=getattr(args, "resume", None))
 
 
 def cmd_gaps(args, cfg):
@@ -406,6 +414,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Fetch fresh leads for that company if none are stored (network)")
     sp.add_argument("--top", type=int, default=25, help="Max companies in the pipeline digest")
     sp.set_defaults(func=cmd_referrals)
+
+    sp = sub.add_parser("interview",
+                        help="Interview-prep sheet for a job (fit, topics, STAR bank, brief, contacts, notes)")
+    sp.add_argument("job_id")
+    sp.add_argument("--note", default=None, metavar="TEXT",
+                    help="Append a date-stamped note to this application")
+    sp.add_argument("--resume", default=None, metavar="NAME",
+                    help="Which named base resume to prep against (default: the one that scored the job)")
+    sp.set_defaults(func=cmd_interview)
 
     sp = sub.add_parser("gaps", help="Skill-gap learning plan across your matched jobs")
     sp.add_argument("--top", type=int, default=15)
