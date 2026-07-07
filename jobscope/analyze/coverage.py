@@ -20,6 +20,7 @@ import json
 import re
 
 from jobscope.core.model import Resume
+from jobscope.analyze.resume import SKILL_LEXICON as _LEXICON
 
 # A requirement bullet: "-", "*", "•", en-dash, or "1." / "2)" list markers.
 _BULLET = re.compile(r"^\s*(?:[-*\u2022\u2013\u25cf]|\d+[.)])\s+(.*\S)\s*$")
@@ -28,11 +29,17 @@ _REQ_HEADING = re.compile(
     r"(?i)\b(responsibilit|requirement|qualificat|what you'?ll|what you will|"
     r"who you are|what we'?re looking|you have|you'?ll bring|you bring|"
     r"minimum|preferred|nice to have|about you|your experience|skills)\b")
-# Perks / boilerplate we never treat as a requirement.
+# Perks / culture / boilerplate we never treat as a requirement.
 _BENEFIT = re.compile(
     r"(?i)\b(salary|compensation|benefit|insurance|401\(?k\)?|pto|paid time off|"
     r"equity|perks?|vacation|holiday|wellness|stipend|reimburse|relocation|"
-    r"equal opportunity|eeo|diversity|we offer|our mission|about us)\b")
+    r"equal opportunity|eeo|diversity|inclusion|we offer|our mission|about us|"
+    r"award[- ]winning|transportation|work[- ]life|flexible work|work environment|"
+    r"career growth|growth opportunit|team member experience|fast[- ]paced)\b")
+# Application-form instructions that slip in as bullets but aren't requirements.
+_FORM_NOISE = re.compile(
+    r"(?i)\b(upload (your )?(resume|cv)|apply (now|today|here)|to apply|how to apply|"
+    r"click here|submit your|please submit|fill out|attach your)\b")
 # Qualification vs responsibility flavour (for display only).
 _QUAL = re.compile(
     r"(?i)(\byears?\b|experience|degree|bachelor|master|phd|proficien|familiar|"
@@ -60,6 +67,23 @@ def _wb(term: str, text: str) -> bool:
 
 def _content_tokens(text: str) -> set[str]:
     return {t for t in _TOKEN.findall(text.lower()) if len(t) > 2 and t not in _STOP}
+
+
+def _looks_like_perk(text: str) -> bool:
+    """A short Title-Cased noun phrase with no action/qualification signal and no
+    known skill -- a perk / culture blurb ('Rapid Growth Opportunities'), not a
+    requirement. The skill-lexicon guard keeps real bullets like 'AWS, Azure, GCP'.
+    """
+    words = re.findall(r"[A-Za-z][A-Za-z'\-]*", text)
+    if not words or len(words) > 5:
+        return False
+    if _ACTION.search(text.strip()) or _QUAL.search(text):
+        return False
+    low = text.lower()
+    if any(_wb(s, low) for s in _LEXICON):
+        return False
+    capitalized = sum(1 for w in words if w[0].isupper())
+    return capitalized >= max(2, len(words) - 1)
 
 
 def extract_requirements(job) -> list[dict]:
@@ -92,11 +116,11 @@ def extract_requirements(job) -> list[dict]:
 
     out, seen = [], set()
     for text in bullets:
-        text = re.sub(r"\\([-.()/&'\"])", r"\1", text)   # undo Markdown escaping (sign\-offs)
+        text = re.sub(r"\\([^\w\s])", r"\1", text)       # undo Markdown escaping (sign\-offs, 8\+)
         text = re.sub(r"\s+", " ", text).strip(" .;:")
         if not (12 <= len(text) <= 240):
             continue
-        if _BENEFIT.search(text):
+        if _BENEFIT.search(text) or _FORM_NOISE.search(text) or _looks_like_perk(text):
             continue
         key = text.lower()
         if key in seen:

@@ -55,6 +55,33 @@ def test_extract_requirements_and_skips_benefits():
     assert not any("salary" in t.lower() or "paid time off" in t.lower() for t in texts)
 
 
+def test_filters_perks_keeps_skill_bullets_and_unescapes():
+    jd = r"""Responsibilities:
+- Build secure services in Python on AWS
+
+Requirements:
+- Experience with Azure, AWS, GCP
+- 8\+ years of security experience
+
+Perks & Culture:
+- Global Award-Winning Culture
+- Flexible Work Environment
+- Rapid Growth Opportunities
+- Company Sponsored Two-Way Transportation
+- Exponential Career Growth
+
+How to apply:
+- Upload your resume to apply now
+"""
+    texts = [r["text"] for r in coverage.extract_requirements(_job(jd))]
+    for perk in ("Culture", "Work Environment", "Growth Opportunities",
+                 "Transportation", "Career Growth"):
+        assert not any(perk in t for t in texts), f"perk leaked: {perk}"
+    assert not any("upload" in t.lower() for t in texts)     # form-noise dropped
+    assert any("Azure, AWS, GCP" in t for t in texts)        # lexicon-protected, kept
+    assert any(t.startswith("8+ years") for t in texts)      # Markdown escape undone
+
+
 def test_deterministic_assess_covered_partial_missing():
     reqs = coverage.extract_requirements(_job())
     res = coverage._assess_deterministic(_resume(), reqs)
