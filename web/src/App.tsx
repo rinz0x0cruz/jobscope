@@ -32,9 +32,16 @@ import { Toaster } from 'sonner'
 
 // Preview switcher: pick the hero backdrop with `?hero=constellation|flowfield|dotgrid|aurora`.
 const heroParam = new URLSearchParams(window.location.search).get('hero') ?? ''
+// Touch / small screens default to the CSS aurora: the canvas variants re-rasterise
+// a fixed backdrop during a pinch-zoom (which glitches on phones), while the blurred
+// aurora scales smoothly with the page. An explicit `?hero=` always wins.
+const prefersCalmHero =
+  window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth < 640
 const HERO: HeroVariant = (HERO_VARIANTS as string[]).includes(heroParam)
   ? (heroParam as HeroVariant)
-  : 'grid'
+  : prefersCalmHero
+    ? 'aurora'
+    : 'grid'
 
 export default function App() {
   const { state, set } = useSearchState()
