@@ -58,14 +58,39 @@ export function HeroBackdrop({ variant = 'constellation' }: { variant?: HeroVari
         c: Math.random() < 0.13 ? hot : Math.random() < 0.5 ? cool : signal,
       }))
     }
-    const resize = () => {
+    let lastW = 0
+    let lastH = 0
+    let resizeTimer = 0
+    const applySize = () => {
+      // Freeze rebuilds during a pinch-zoom: the browser scales this fixed canvas
+      // with the page, so re-rasterising mid-gesture is exactly what glitches on
+      // mobile. While zoomed in (visual viewport scale > 1) we leave it be.
+      const vv = window.visualViewport
+      if (vv && vv.scale > 1.01) return
       const r = canvas.getBoundingClientRect()
-      w = r.width
-      h = r.height
+      const nw = Math.round(r.width)
+      const nh = Math.round(r.height)
+      const firstRun = lastW === 0
+      // Ignore height-only nudges (the mobile URL bar showing/hiding on scroll) so
+      // the field never reseeds while scrolling; only a real width change rebuilds.
+      if (!firstRun && Math.abs(nw - lastW) < 2) return
+      const sx = firstRun || lastW === 0 ? 1 : nw / lastW
+      const sy = firstRun || lastH === 0 ? 1 : nh / lastH
+      lastW = nw
+      lastH = nh
+      w = nw
+      h = nh
       canvas.width = Math.round(w * dpr)
       canvas.height = Math.round(h * dpr)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      seed()
+      if (firstRun) seed()
+      // Keep the existing field and just rescale it into the new width, so a
+      // rotate/resize slides rather than snapping to a fresh random layout.
+      else for (const p of pts) { p.x *= sx; p.y *= sy }
+    }
+    const onResize = () => {
+      window.clearTimeout(resizeTimer)
+      resizeTimer = window.setTimeout(applySize, 160)
     }
 
     const constellation = () => {
@@ -256,8 +281,9 @@ export function HeroBackdrop({ variant = 'constellation' }: { variant?: HeroVari
       draw()
       raf = requestAnimationFrame(loop)
     }
-    resize()
-    window.addEventListener('resize', resize)
+    applySize()
+    window.addEventListener('resize', onResize)
+    window.visualViewport?.addEventListener('resize', onResize)
     const obs = new MutationObserver(() => readColors())
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
 
@@ -266,7 +292,9 @@ export function HeroBackdrop({ variant = 'constellation' }: { variant?: HeroVari
 
     return () => {
       cancelAnimationFrame(raf)
-      window.removeEventListener('resize', resize)
+      window.clearTimeout(resizeTimer)
+      window.removeEventListener('resize', onResize)
+      window.visualViewport?.removeEventListener('resize', onResize)
       obs.disconnect()
     }
   }, [variant])
