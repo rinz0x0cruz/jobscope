@@ -219,6 +219,8 @@ class Application:
     company: str = ""
     title: str = ""
     source: str = ""                                         # "" = manual/prep; "inbox" = discovered from email
+    outreach_at: str = ""                                    # when a recruiter outreach was sent
+    outreach_to: str = ""                                    # the address the outreach went to
 
 
 @dataclass

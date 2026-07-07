@@ -129,6 +129,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "package_dir": "data/applications",
         "auto_prep_top": 3,
         "followup_days": 7,
+        # Opt-in recruiter outreach (`jobscope outreach <job_id>`). Preview-only by
+        # default; sending needs enabled + email.* configured + --send, is deduped
+        # per company with a cooldown, and never mass-mails or guesses addresses.
+        "outreach": {
+            "enabled": False,
+            "discover": True,
+            "role_inboxes": ["careers", "jobs", "recruiting", "talent", "hr"],
+            "cooldown_days": 14,
+            "do_not_contact": [],
+        },
     },
     "output": {
         "db_path": "data/jobscope.db",

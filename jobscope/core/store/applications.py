@@ -14,20 +14,24 @@ class ApplicationsMixin:
         self.conn.execute(
             """
             INSERT INTO applications (job_id, status, package_dir, resume_path,
-                cover_path, applied_at, notes, updated, company, title, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cover_path, applied_at, notes, updated, company, title, source,
+                outreach_at, outreach_to)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_id) DO UPDATE SET
                 status=excluded.status, package_dir=excluded.package_dir,
                 resume_path=excluded.resume_path, cover_path=excluded.cover_path,
                 applied_at=excluded.applied_at, notes=excluded.notes, updated=excluded.updated,
                 company=COALESCE(NULLIF(excluded.company, ''), applications.company),
                 title=COALESCE(NULLIF(excluded.title, ''), applications.title),
-                source=COALESCE(NULLIF(excluded.source, ''), applications.source)
+                source=COALESCE(NULLIF(excluded.source, ''), applications.source),
+                outreach_at=COALESCE(NULLIF(excluded.outreach_at, ''), applications.outreach_at),
+                outreach_to=COALESCE(NULLIF(excluded.outreach_to, ''), applications.outreach_to)
             """,
             (app.job_id, app.status, app.package_dir, app.resume_path,
              app.cover_path, app.applied_at, app.notes, now_iso(),
              getattr(app, "company", ""), getattr(app, "title", ""),
-             getattr(app, "source", "")),
+             getattr(app, "source", ""), getattr(app, "outreach_at", ""),
+             getattr(app, "outreach_to", "")),
         )
         self.conn.commit()
 
@@ -35,6 +39,29 @@ class ApplicationsMixin:
         row = self.conn.execute(
             "SELECT * FROM applications WHERE job_id = ?", (job_id_,)).fetchone()
         return dict(row) if row else None
+
+    def mark_outreach(self, job_id_: str, to_addr: str, when: str = "") -> None:
+        """Record a recruiter outreach for this job without disturbing its status."""
+        ts = when or now_iso()
+        self.conn.execute(
+            "INSERT INTO applications (job_id, status, outreach_at, outreach_to, updated) "
+            "VALUES (?, 'new', ?, ?, ?) "
+            "ON CONFLICT(job_id) DO UPDATE SET outreach_at=excluded.outreach_at, "
+            "outreach_to=excluded.outreach_to, updated=excluded.updated",
+            (job_id_, ts, to_addr, now_iso()))
+        self.conn.commit()
+
+    def last_company_outreach(self, company: str) -> Optional[str]:
+        """Most recent outreach_at across this company's applications (or None)."""
+        if not company:
+            return None
+        row = self.conn.execute(
+            "SELECT MAX(a.outreach_at) AS last FROM applications a "
+            "LEFT JOIN jobs j ON j.id = a.job_id "
+            "WHERE COALESCE(NULLIF(j.company, ''), a.company) = ? "
+            "AND a.outreach_at IS NOT NULL AND a.outreach_at <> ''",
+            (company,)).fetchone()
+        return row["last"] if row and row["last"] else None
 
     def applications(self) -> list[dict[str, Any]]:
         # Prefer the scraped job's company/title; fall back to the values parsed
