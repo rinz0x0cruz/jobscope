@@ -82,6 +82,17 @@ How to apply:
     assert any(t.startswith("8+ years") for t in texts)      # Markdown escape undone
 
 
+def test_prose_jd_fallback_skips_mission_and_legal():
+    jd = ("Anduril is building the future of defense. By bringing the expertise of the "
+          "21st century's most innovative company, we transform how the military operates. "
+          "You will design secure cloud architecture and lead incident response daily. "
+          "Use of this provider helps ensure compliance with applicable laws.")
+    texts = " || ".join(r["text"] for r in coverage.extract_requirements(_job(jd))).lower()
+    assert "incident response" in texts                      # the one real requirement kept
+    assert "21st century" not in texts and "by bringing" not in texts
+    assert "applicable laws" not in texts
+
+
 def test_deterministic_assess_covered_partial_missing():
     reqs = coverage.extract_requirements(_job())
     res = coverage._assess_deterministic(_resume(), reqs)

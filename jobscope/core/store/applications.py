@@ -40,6 +40,19 @@ class ApplicationsMixin:
             "SELECT * FROM applications WHERE job_id = ?", (job_id_,)).fetchone()
         return dict(row) if row else None
 
+    def append_note(self, job_id_: str, text: str) -> None:
+        """Append a date-stamped note to an application (creating the row if needed),
+        without disturbing its status or other fields."""
+        stamped = f"[{now_iso()[:10]}] {text.strip()}"
+        self.conn.execute(
+            "INSERT INTO applications (job_id, status, notes, updated) "
+            "VALUES (?, 'new', ?, ?) "
+            "ON CONFLICT(job_id) DO UPDATE SET "
+            "notes = TRIM(COALESCE(applications.notes, '') || char(10) || excluded.notes), "
+            "updated = excluded.updated",
+            (job_id_, stamped, now_iso()))
+        self.conn.commit()
+
     def mark_outreach(self, job_id_: str, to_addr: str, when: str = "") -> None:
         """Record a recruiter outreach for this job without disturbing its status."""
         ts = when or now_iso()
