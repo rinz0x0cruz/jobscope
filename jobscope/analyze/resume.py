@@ -68,6 +68,12 @@ def import_resume(path: str, store, cfg: dict, name: str = "default") -> int:
           f"| ~{resume.years_experience:g}y exp")
     if not resume.skills:
         print("  note: no skills detected -- add a '## Skills' section for best matching")
+    # Seed an editable, résumé-derived search profile the first time (drives `scan`);
+    # never clobbers a profile you've already edited.
+    from . import profile as _profile
+    seeded = _profile.ensure_seeded(cfg, resume, name)
+    if seeded:
+        print(f"  seeded search profile -> {seeded}  (edit it, then `jobscope scan`)")
     return 0
 
 
