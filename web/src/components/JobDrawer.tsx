@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ExternalLink, Link2, X } from 'lucide-react'
+import { ExternalLink, Link2, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { JobRow } from '@/lib/schema'
 import { TIER_COLOR } from '@/lib/schema'
@@ -12,6 +12,100 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-mute">{title}</h3>
       {children}
     </section>
+  )
+}
+
+/** Wrap case-insensitive matches of `q` in a line with a subtle highlight. */
+function highlight(line: string, q: string): ReactNode {
+  if (!q) return line
+  const out: ReactNode[] = []
+  const lower = line.toLowerCase()
+  const needle = q.toLowerCase()
+  let i = 0
+  let k = 0
+  for (;;) {
+    const hit = lower.indexOf(needle, i)
+    if (hit < 0) {
+      out.push(line.slice(i))
+      break
+    }
+    if (hit > i) out.push(line.slice(i, hit))
+    out.push(
+      <mark key={k++} className="rounded bg-accent/30 px-0.5 text-fg">
+        {line.slice(hit, hit + q.length)}
+      </mark>,
+    )
+    i = hit + q.length
+  }
+  return out
+}
+
+/**
+ * Archived job-description snapshot (issue #30): collapsible, with an in-drawer
+ * search that filters to matching lines and highlights the hits. Only rendered
+ * when a description is present (stripped in the public build).
+ */
+export function JobDescription({ text }: { text: string }) {
+  const [q, setQ] = useState('')
+  const [expanded, setExpanded] = useState(false)
+  const query = q.trim()
+  const lines = useMemo(() => text.split(/\r?\n/), [text])
+  const matches = useMemo(
+    () => (query ? lines.filter((l) => l.toLowerCase().includes(query.toLowerCase())) : lines),
+    [lines, query],
+  )
+  const long = text.length > 900
+
+  return (
+    <Section title="Job description">
+      <div className="relative mb-2">
+        <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-mute" />
+        <input
+          value={q}
+          onChange={(ev) => setQ(ev.target.value)}
+          placeholder="Search this description…"
+          className="w-full rounded-lg border border-border bg-bg py-1.5 pl-7 pr-2 text-[12px] text-fg outline-none placeholder:text-mute focus:border-border-h"
+        />
+      </div>
+
+      {query ? (
+        matches.length ? (
+          <>
+            <div className="mb-1 text-[11px] text-mute">
+              {matches.length} matching line{matches.length === 1 ? '' : 's'}
+            </div>
+            <div className="space-y-1 text-[13px] leading-relaxed text-dim">
+              {matches.map((l, i) => (
+                <p key={i} className="whitespace-pre-wrap">
+                  {highlight(l, query)}
+                </p>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="text-[13px] text-mute">No matches in this description.</p>
+        )
+      ) : (
+        <>
+          <p
+            className={`whitespace-pre-wrap text-[13px] leading-relaxed text-dim ${
+              !expanded && long ? 'max-h-64 overflow-hidden' : ''
+            }`}
+          >
+            {text}
+          </p>
+          {long && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1.5 text-[12px] font-medium text-accent hover:underline"
+            >
+              {expanded ? 'Show less' : 'Show full description'}
+            </button>
+          )}
+        </>
+      )}
+    </Section>
   )
 }
 
@@ -90,6 +184,8 @@ function DrawerBody({
 
       {/* scrollable sections */}
       <div className="min-h-0 flex-1 overflow-auto">
+        {job.description && <JobDescription text={job.description} />}
+
         {job.brief && (
           <Section title="Company brief">
             <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-dim">{job.brief}</p>

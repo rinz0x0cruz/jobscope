@@ -18,6 +18,7 @@ def _seed(store):
         source="indeed", title="Senior Security Engineer", company="Acme",
         url="https://jobs.example/acme-sse", is_remote=True, remote_scope="global",
         score=82.0, tier="Strong", resume_base="research",
+        description="Responsibilities: threat modeling, IAM, and cloud security.",
         rationale="Strong overlap; ~1.7y experience (junior)").ensure_id())
 
 
@@ -42,7 +43,19 @@ def test_emit_json_shape():
         assert row["title"] == "Senior Security Engineer"
         # rationale persists via upsert; resume_base is assigned by `match`, not upsert
         assert row["rationale"]
+        # #30: the JD snapshot is archived for the local/unlocked drawer
+        assert "threat modeling" in row["description"]
         store.close()
+
+
+def test_jd_snapshot_cleans_html_and_trims():
+    from jobscope.deliver.render import _jd_snapshot
+    out = _jd_snapshot("<div><p>Hello &amp; welcome</p><ul><li>One</li><li>Two</li></ul></div>")
+    assert "<" not in out and ">" not in out
+    assert "Hello & welcome" in out
+    assert "One" in out and "Two" in out
+    long = _jd_snapshot("word " * 400, limit=100)
+    assert len(long) <= 101 and long.endswith("\u2026")
 
 
 def test_emit_json_public_is_redacted():
@@ -58,6 +71,8 @@ def test_emit_json_public_is_redacted():
         pub = json.load(open(path, encoding="utf-8"))
         row = pub["rows"][0]
         assert row["base"] == "" and row["rationale"] == "" and row["contacts"] == []
+        # #30: the archived JD snapshot is stripped from the public build
+        assert row["description"] == ""
         # public-safe info is kept
         assert row["title"] == "Senior Security Engineer" and row["company"] == "Acme"
         store.close()
@@ -88,7 +103,7 @@ _JOB_ROW = {
     "industry": (str, type(None)), "rationale": str, "blocked": bool,
     "posted": (str, type(None)), "first_seen": str, "status": str,
     "last_seen": str, "closed_at": str, "enrich": dict, "brief": str,
-    "contacts": list,
+    "description": str, "contacts": list,
 }
 
 _OVERVIEW = {
