@@ -66,3 +66,10 @@ class EnrichmentMixin:
     def contacts_for(self, company: str) -> list[dict[str, Any]]:
         rows = self.conn.execute("SELECT * FROM contacts WHERE company = ?", (company,))
         return [dict(r) for r in rows]
+
+    def companies_with_contacts(self) -> list[str]:
+        """Distinct company names that have at least one stored referral lead
+        (most-leads first) -- referral relationships outlast a single posting."""
+        rows = self.conn.execute(
+            "SELECT company, COUNT(*) n FROM contacts GROUP BY company ORDER BY n DESC")
+        return [r["company"] for r in rows if r["company"]]
