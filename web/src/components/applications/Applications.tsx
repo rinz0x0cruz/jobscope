@@ -3,11 +3,12 @@ import { useReducedMotion } from 'motion/react'
 import type { Application, EncBlob } from '@/lib/schema'
 import { trackSpotlight } from '@/lib/spotlight'
 import { CountUp } from '@/components/overview/CountUp'
-import { AppCard } from './AppCard'
+import { ApplicationsSection } from './views'
 import { ActivityFeed } from './ActivityFeed'
 import { ApplicationsGate, type UnlockedApps } from './ApplicationsGate'
 import { PipelineFlow } from './PipelineFlow'
-import { pct, pipelineMetrics, presentStatuses, statusColor, statusCounts, statusLabel } from './constants'
+import { PipelineHealth } from './PipelineHealth'
+import { pct, pipelineMetrics, statusCounts } from './constants'
 
 function Card({ title, subtitle, children, className = '' }: { title: string; subtitle?: string; children: ReactNode; className?: string }) {
   return (
@@ -59,40 +60,7 @@ function StatusFunnel({ apps }: { apps: Application[] }) {
   )
 }
 
-function KanbanBoard({ apps }: { apps: Application[] }) {
-  const columns = useMemo(() => {
-    return presentStatuses(apps).map((status) => ({
-      status,
-      label: statusLabel(status),
-      color: statusColor(status),
-      cards: apps
-        .filter((a) => (a.status || 'new') === status)
-        .sort((a, b) => (b.updated || '').localeCompare(a.updated || '')),
-    }))
-  }, [apps])
-
-  return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3.5">
-      {columns.map((col) => (
-        <section
-          key={col.status}
-          aria-label={`${col.label} (${col.cards.length})`}
-          className="js-gradient-column js-spotlight-card flex flex-col gap-2.5 self-start rounded-[14px] border border-border bg-bg2 p-3"
-          onPointerMove={trackSpotlight}
-        >
-          <h4 className="flex items-center gap-2 text-[13px] font-semibold">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: col.color }} />
-            {col.label}
-            <span className="ml-auto text-dim tnum">{col.cards.length}</span>
-          </h4>
-          {col.cards.map((a) => (
-            <AppCard key={a.job_id || `${a.company}-${a.title}`} app={a} />
-          ))}
-        </section>
-      ))}
-    </div>
-  )
-}
+// The applications board (List / Compact / Table / Grouped views + switcher) lives in ./views.tsx.
 
 export function Applications({
   apps,
@@ -151,6 +119,8 @@ export function Applications({
         )}
       </p>
 
+      <PipelineHealth apps={apps} onOpen={onOpen} />
+
       <div className="grid gap-4 md:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
         <Card title="Pipeline flow" subtitle="how far each application progressed">
           {pipelineMetrics(apps).submitted > 0 ? (
@@ -170,7 +140,7 @@ export function Applications({
         <ActivityFeed apps={apps} onOpen={onOpen} />
       </Card>
 
-      <KanbanBoard apps={apps} />
+      <ApplicationsSection apps={apps} onOpen={onOpen} />
     </div>
   )
 }

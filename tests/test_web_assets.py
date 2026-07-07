@@ -68,7 +68,10 @@ def test_react_cards_use_spotlight_and_status_accents() -> None:
 
     assert "onPointerMove={trackSpotlight}" in kpis
     assert "onPointerMove={trackSpotlight}" in job_card
-    assert applications.count("onPointerMove={trackSpotlight}") >= 2
+    # The view switcher moved the board's rows into AppCard; the Applications
+    # shell keeps its own spotlight Card wrapper, and each AppCard spotlights too.
+    assert "onPointerMove={trackSpotlight}" in applications
+    assert "onPointerMove={trackSpotlight}" in app_card
     assert "js-status-card" in app_card
     assert "js-status-rail" in app_card
     assert "--status-color" in app_card

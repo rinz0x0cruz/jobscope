@@ -4,9 +4,9 @@ import { ChevronDown, Mail } from 'lucide-react'
 import type { Application, ApplicationEvent } from '@/lib/schema'
 import { trackSpotlight } from '@/lib/spotlight'
 import type { CSSProperties } from 'react'
-import { signalColor, statusColor } from './constants'
+import { signalColor, statusColor, statusLabel } from './constants'
 
-function TimelineRow({ e }: { e: ApplicationEvent }) {
+export function TimelineRow({ e }: { e: ApplicationEvent }) {
   return (
     <li className="flex flex-col gap-1 text-[11.5px]">
       <div className="flex items-center gap-2">
@@ -50,8 +50,14 @@ export function AppCard({ app }: { app: Application }) {
       style={{ '--status-color': accent, '--spot-color': accent } as CSSProperties}
     >
       <span className="js-status-rail" aria-hidden="true" />
-      <div className="flex items-baseline gap-2">
+      <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-sm font-semibold">{app.company || '—'}</span>
+        <span
+          className="shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-semibold capitalize leading-none"
+          style={{ color: accent, background: `color-mix(in srgb, ${accent} 16%, transparent)` }}
+        >
+          {statusLabel(status)}
+        </span>
         {date && <time className="shrink-0 text-[11px] text-mute tnum">{date}</time>}
       </div>
       {app.title && <div className="mt-0.5 truncate text-[12.5px] text-dim">{app.title}</div>}

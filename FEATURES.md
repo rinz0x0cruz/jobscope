@@ -41,7 +41,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `dashboard [--public]` | Emits the dashboard JSON payload the web app consumes (`data/dashboard.json`; `--public` writes the **redacted** `data/dashboard.public.json` — per-job contacts/rationale/resume-base, the Overview funnel/targets, **and all applications** stripped). Used by the publish scripts to bake the site. |
 | `serve [--port 8799] [--open]` | Builds (if needed) + serves the **web SPA** on 127.0.0.1 with a localhost-only **Refresh & Publish** button (syncs Gmail -> rescore -> publish -> rebuild). |
 | `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
-| `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox. |
+| `inbox [--dry-run] [--backfill] [--since D] [--account E] [--include-spam]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox; `--include-spam` also sweeps the `[Gmail]/Spam` folder this run (overrides `inbox.include_spam`), catching a real application email Gmail misfiled as spam. |
 | `new` | Lists new Strong/Good jobs since your last review, then advances the review marker. |
 | `prune [--yes] [--dry-run]` | Deletes stored jobs outside your geographic scope (`search.home_country` + eligible remote). Previews by default; `--yes` deletes. |
 | `gaps [--top 15]` | Skill-gap learning plan: skills that recur in your matched jobs but are on none of your resumes, ranked by jobs unlocked. |
@@ -55,9 +55,20 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 
 - **Published React dashboard:** Vite/React/PWA build with static `dashboard.json` baked in. The public build
   is redacted: contacts, rationale, resume-base, search targets, funnel, and all applications are stripped.
-- **Flashy system skin:** animated aurora gradients, neon blue/cyan/violet/emerald card frames, a Lottie-powered
-  briefcase/scope logo, and a decorative cyber-sakura tree with occasional falling leaves. These are all local
-  code/assets — no CDN or runtime animation fetch.
+- **"Nightshift Console" skin:** a deep-ink palette with a warm amber/coral signature balanced by a cool
+  cyan/sky/teal data hue, mono-forward numerals, and console scanlines. A Lottie-powered briefcase/scope logo
+  sits in the header. All local code/assets — no CDN or runtime animation fetch.
+- **Generative hero backdrop:** a swappable animated canvas (`HeroBackdrop`, default `grid`) with six offline
+  variants — `constellation`, `flowfield`, `dotgrid`, `aurora`, `radar`, `grid` — chosen via `?hero=<variant>`.
+  Colours read from the theme vars so every variant follows the palette + light/dark toggle; reduced-motion draws
+  a single static frame.
+- **Command palette (⌘K):** a `cmdk`-powered palette (also opens on `/` and a header pill) jumps between views,
+  toggles the theme, fuzzy-searches every role, and runs refresh actions (pull latest / scan Gmail / connect a token).
+- **Header Refresh button:** rescans Gmail on demand — with a stored fine-grained token it POSTs `workflow_dispatch`
+  directly, otherwise it opens GitHub's Run-workflow page. Throttle-safe: a client cooldown plus a check for an
+  already-running scan means rapid taps never stack workflow runs; it then polls the run and offers to pull the fresh build.
+- **Bento Overview:** the Overview tab is a bento grid — a large **Fit distribution** donut (scaled to fill its card),
+  an application-pipeline panel, top companies, the skill-gap constellation, and a top-matches rail.
 - **Interaction polish:** KPI, role, and application cards use cursor-follow spotlight variables (`--spot-x`,
   `--spot-y`) and preserve keyboard focus rings. Application cards also get status-colored rails; `interview`
   and `offer` rails pulse gently to surface active outcomes.
@@ -75,6 +86,9 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   remains a standalone reference shell that `build-secure-apps.mjs` can still produce.
 - **Reduced motion:** CSS, Motion, and Lottie animation respects the global `prefers-reduced-motion` guard;
   decorative layers are `aria-hidden`/`pointer-events: none`.
+- **UX tests:** a Vitest + Testing-Library suite in `web/test/` covers the refresh flow (cooldown, token,
+  dispatch de-dupe, pull), the fit-distribution donut, filters, URL state, formatters, and the Refresh button.
+  It runs locally via `npm test` and in CI (the `web` job in `.github/workflows/ci.yml`) on every push.
 
 ---
 

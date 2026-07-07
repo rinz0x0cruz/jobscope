@@ -213,6 +213,28 @@ artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboar
 **Totals:** ~56 Python modules across 8 sub-packages (incl. the `store/` and `match/` sub-packages and
 9 enrich modules) ≈ **6,000 LOC** of Python.
 
+### web/ — React dashboard (SPA)
+
+The single dashboard is a Vite + React + TypeScript PWA in `web/` that consumes the baked `dashboard.json`
+(and, for a published build, an AES-encrypted `applications.encrypted.json` unlocked in-browser). It is served
+two ways: un-redacted via `jobscope serve` on localhost, and redacted to GitHub Pages by the publish scripts.
+
+- **Data flow:** `web/src/data/index.ts` imports the baked JSON → `App.tsx` holds URL/localStorage view state
+  (`hooks/useSearchState`) → `lib/filters.ts` (tab pool → facets → fuzzy search) → the Overview / list /
+  Applications surfaces. `lib/schema.ts` mirrors the Python contract (§10).
+- **Surfaces:** a bento **Overview** (`components/overview/*` — Fit-distribution `Donut`, `Bars`,
+  `SkillConstellation`, `TopMatches`), the ranked **list** (`JobList`/`JobCard`/`JobDrawer`), and an encrypted
+  **Applications** board (`components/applications/*` — kanban, per-app email `ActivityFeed`, and an inline-SVG
+  `PipelineFlow` Sankey) behind a passphrase `ApplicationsGate`.
+- **Chrome:** `Header` (logo + search + ⌘K command pill + Refresh button), a generative `HeroBackdrop`
+  (six `?hero=` variants, reduced-motion aware), and a `cmdk` command palette (`SearchPalette`).
+- **Refresh:** `lib/refresh.ts` drives the header Refresh button — pull-latest (service-worker update + reload)
+  and an on-demand Gmail rescan that POSTs `workflow_dispatch` when a fine-grained token is stored (else
+  deep-links to GitHub), throttle-safe via a client cooldown + run de-dupe.
+- **Tests:** a Vitest + Testing-Library suite in `web/test/` (kept outside `src/` so the production `tsc -b`
+  never compiles it) covers the lib modules + the Refresh button. Runs via `npm test` and the `web` job in
+  `.github/workflows/ci.yml`.
+
 ---
 
 ## 5. Coupling hotspots
@@ -224,7 +246,7 @@ Fan-in = how many modules import it; fan-out = how many it imports (internal onl
 | **core/store/** | 527 | ~11 | 1 | Every command persists through it. **Split done (P-D):** `base` + `jobs`/`enrichment`/`applications`/`mail`/`profile`/`meta` mixins behind a `Store` facade — same public API, one shared connection. |
 | **core/model.py** | 228 | ~12 | 0 | Highest fan-in but **pure** — the ideal shape. Leave as-is. |
 | **analyze/match/** | 670 | ~6 | 3 | Largest logic area. **Split done (P-E):** `seniority`/`experience`/`filters`/`scoring`/`routing`/`run` submodules, layered so leaves never import up; scores identical, all names re-exported. |
-| **deliver/render.py** | 852 | 2 | 2 | Big only because of the inline HTML template (~850 lines of `_TEMPLATE`); the emitter is small. Shrinks once the HTML page retires. |
+| **deliver/render.py** | 272 | 2 | 2 | Slim JSON emitter now that the inline HTML `_TEMPLATE` has retired (the React app in `web/` is the single dashboard). Healthy. |
 | **cli/__init__.py** | 195 | 0 | ~18 | Orchestrator (`build_parser` + `cmd_*` + `main`); wide fan-out but **lazy imports** keep startup light. Healthy. |
 | **core/config.py** | 200 | ~6 | 0 | Pure config layer, including AI/quorum defaults. Healthy. |
 | **enrich/__init__.py** | 78 | 2 | 8 | Coordinator that **iterates the source registry** (P-B done); sources self-register via `@source(...)`. Healthy. |
