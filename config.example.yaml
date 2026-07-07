@@ -160,6 +160,7 @@ apply:
   followup_days: 7                    # `track` nudges you to follow up on applications older than this
   outreach:                           # opt-in recruiter outreach: `jobscope outreach <job_id>`
     enabled: false                    # preview always works; sending stays off until you opt in (needs email.* + --send)
+    discover: true                    # fetch the employer's site to find/verify a careers/HR email (best-effort, no external API)
     role_inboxes: ["careers", "jobs", "recruiting", "talent", "hr"]  # tried in order, only on a CONFIRMED company domain
     cooldown_days: 14                 # don't re-contact the same company within N days
     do_not_contact: []                # company names / domains to always skip

@@ -134,6 +134,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # per company with a cooldown, and never mass-mails or guesses addresses.
         "outreach": {
             "enabled": False,
+            "discover": True,
             "role_inboxes": ["careers", "jobs", "recruiting", "talent", "hr"],
             "cooldown_days": 14,
             "do_not_contact": [],

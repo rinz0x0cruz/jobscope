@@ -21,6 +21,7 @@ def _seed(tmp, *, with_recruiter_mail=False, company_url="", do_not_contact=None
     cfg["email"]["from_addr"] = "jane@example.com"
     cfg["email"]["to_addr"] = "jane@example.com"
     cfg["apply"]["outreach"]["enabled"] = True
+    cfg["apply"]["outreach"]["discover"] = False  # offline by default; discovery tests opt in
     if do_not_contact is not None:
         cfg["apply"]["outreach"]["do_not_contact"] = do_not_contact
 
@@ -136,4 +137,44 @@ def test_cooldown_blocks_same_company(monkeypatch):
         store.mark_outreach(job2.id, "careers@acme.com", now_iso())
         rc = outreach.run(cfg, store, job.id, send=True)
         assert rc == 0 and sent == []
+        store.close()
+
+
+def test_filters_no_reply_ats_addresses():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg, store, job = _seed(tmp)  # discovery off; no company_url
+        # a no-reply ATS confirmation must NOT be treated as a recruiter contact
+        store.upsert_mail_event(MailEvent(
+            account="jane@example.com", message_id="<n1@wm>",
+            from_addr="noreply@candidates.workablemail.com", from_domain="candidates.workablemail.com",
+            subject="Application received", date="2026-07-01T10:00:00",
+            signal="confirmation", job_id=job.id).ensure_id())
+        assert outreach.resolve_target(cfg, store, job) is None
+        store.close()
+
+
+def test_discovers_published_email(monkeypatch):
+    def fake_get_text(url, **_k):
+        return '<a href="mailto:careers@acme.com">Careers</a>' if "acme.com" in url else None
+    monkeypatch.setattr("jobscope.core.httpx.get_text", fake_get_text)
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg, store, job = _seed(tmp, company_url="https://acme.com")
+        cfg["apply"]["outreach"]["discover"] = True
+        t = outreach.resolve_target(cfg, store, job)
+        assert t and t.source == "discovered" and t.confidence == "medium"
+        assert t.email.endswith("@acme.com") and t.domain == "acme.com"
+        store.close()
+
+
+def test_verified_name_guess_then_role_inbox(monkeypatch):
+    def fake_get_text(url, **_k):
+        # only the company homepage resolves + names the company; no emails anywhere
+        return "<h1>Acme</h1> enterprise widgets" if url in ("https://acme.com", "https://www.acme.com") else None
+    monkeypatch.setattr("jobscope.core.httpx.get_text", fake_get_text)
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg, store, job = _seed(tmp)  # no company_url -> must verify a name guess
+        cfg["apply"]["outreach"]["discover"] = True
+        t = outreach.resolve_target(cfg, store, job)
+        assert t and t.source == "role_inbox" and t.domain == "acme.com"
+        assert t.email == "careers@acme.com" and t.confidence == "low"
         store.close()
