@@ -9,6 +9,7 @@ Usage:
     python -m jobscope tailor <job_id>             Tailor resume + cover letter
     python -m jobscope prep <job_id>               Build a review-ready application package
     python -m jobscope apply <job_id> [--assist]   Open the application (human submits)
+    python -m jobscope outreach <job_id> [--send]  Draft/send a recruiter outreach + resume
     python -m jobscope brief <job_id>              Blunt, risk-forward company brief
     python -m jobscope gaps [--top N]              Skill-gap learning plan across your jobs
     python -m jobscope new                          New Strong/Good jobs since last review
@@ -86,6 +87,13 @@ def cmd_prep(args, cfg):
     from ..apply import apply
     with _store(args, cfg) as store:
         return apply.prep(cfg, store, args.job_id)
+
+
+def cmd_outreach(args, cfg):
+    from ..apply import outreach
+    with _store(args, cfg) as store:
+        return outreach.run(cfg, store, args.job_id, to=getattr(args, "to", None),
+                            send=getattr(args, "send", False), force=getattr(args, "force", False))
 
 
 def cmd_apply(args, cfg):
@@ -317,6 +325,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--assist", action="store_true",
                     help="Assisted fill of a PUBLIC ATS form; stops before submit")
     sp.set_defaults(func=cmd_apply)
+
+    sp = sub.add_parser("outreach", help="Draft (and optionally send) a recruiter outreach email + resume")
+    sp.add_argument("job_id")
+    sp.add_argument("--to", default=None, help="Send to this exact address (skips discovery)")
+    sp.add_argument("--send", action="store_true", help="Actually send via SMTP + record (default: preview only)")
+    sp.add_argument("--force", action="store_true", help="Override cooldown / dedup / low-confidence guards")
+    sp.set_defaults(func=cmd_outreach)
 
     sp = sub.add_parser("dashboard", help="Emit the dashboard JSON payload the web app consumes")
     sp.add_argument("--public", action="store_true",

@@ -76,6 +76,21 @@ machine — except the redacted dashboard you explicitly publish.
   sent anywhere; decryption and the swap to un-redacted data happen client-side. The plaintext un-redacted
   payload never leaves your machine.
 
+## Recruiter outreach (opt-in, not a mailer)
+
+`jobscope outreach <job_id>` can email a recruiter your résumé, but it is built to be a considered,
+one-at-a-time action — never a bulk mailer:
+
+- **Preview by default.** It renders the recipient + email + attachment and sends nothing unless you
+  pass `--send`; sending also requires `apply.outreach.enabled: true` and a configured `email.*` SMTP.
+- **No fabricated addresses.** The recipient is only ever a real address a recruiter emailed you from,
+  or a conventional role inbox (`careers@`, `jobs@`, …) on a **confirmed** company domain (the employer's
+  own site, or a domain that emailed you). It never guesses an address from a company name.
+- **Deduped + cooldown + opt-out.** One outreach per company (recorded on the application), a
+  configurable `cooldown_days`, and a `do_not_contact` list are all honored before anything sends.
+- **Your identity, your account.** Mail is sent from your own SMTP account (honest sender), so normal
+  anti-spam / CAN-SPAM / GDPR expectations apply — keep it relevant and low-volume.
+
 ## Hardening checklist
 
 1. `pip install "jobscope[secure]"` and move secrets into the keychain (`jobscope secrets import-env`),

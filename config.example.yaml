@@ -158,6 +158,11 @@ apply:
   package_dir: "data/applications"
   auto_prep_top: 3                    # in `pipeline`, auto-build packages for the top N Strong/Good jobs
   followup_days: 7                    # `track` nudges you to follow up on applications older than this
+  outreach:                           # opt-in recruiter outreach: `jobscope outreach <job_id>`
+    enabled: false                    # preview always works; sending stays off until you opt in (needs email.* + --send)
+    role_inboxes: ["careers", "jobs", "recruiting", "talent", "hr"]  # tried in order, only on a CONFIRMED company domain
+    cooldown_days: 14                 # don't re-contact the same company within N days
+    do_not_contact: []                # company names / domains to always skip
 
 output:
   db_path: "data/jobscope.db"

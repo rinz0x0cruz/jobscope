@@ -80,7 +80,9 @@ CREATE TABLE IF NOT EXISTS applications (
     updated TEXT,
     company TEXT,
     title TEXT,
-    source TEXT
+    source TEXT,
+    outreach_at TEXT,
+    outreach_to TEXT
 );
 CREATE TABLE IF NOT EXISTS profile (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -186,7 +188,7 @@ class _StoreBase:
         if "brief_json" not in enr:
             self.conn.execute("ALTER TABLE enrichment ADD COLUMN brief_json TEXT")
         appc = {r["name"] for r in self.conn.execute("PRAGMA table_info(applications)")}
-        for col in ("company", "title", "source"):
+        for col in ("company", "title", "source", "outreach_at", "outreach_to"):
             if col not in appc:
                 self.conn.execute(f"ALTER TABLE applications ADD COLUMN {col} TEXT")
         self.conn.commit()
