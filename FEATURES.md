@@ -68,6 +68,10 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Header Refresh button:** rescans Gmail on demand — with a stored fine-grained token it POSTs `workflow_dispatch`
   directly, otherwise it opens GitHub's Run-workflow page. Throttle-safe: a client cooldown plus a check for an
   already-running scan means rapid taps never stack workflow runs; it then polls the run and offers to pull the fresh build.
+- **Email recruiter (local `serve`):** the job drawer gains an *Email recruiter* panel when opened under
+  `jobscope serve` — it resolves a contact, shows the tailored draft (editable To/Subject/Body), notes the résumé
+  it will attach, and sends via the same guardrails as the CLI. Backed by a loopback, CSRF-guarded `/api/outreach`;
+  hidden on the public static site (no backend to reach).
 - **Bento Overview:** the Overview tab is a bento grid — a large **Fit distribution** donut (scaled to fill its card),
   an application-pipeline panel, top companies, the skill-gap constellation, and a top-matches rail.
 - **Interaction polish:** KPI, role, and application cards use cursor-follow spotlight variables (`--spot-x`,

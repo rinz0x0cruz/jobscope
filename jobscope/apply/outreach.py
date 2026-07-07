@@ -108,7 +108,7 @@ def _verify_domain(cand: str, company: str) -> bool:
     if len(token) < 3:
         return False
     for u in (f"https://{cand}", f"https://www.{cand}"):
-        html = httpx.get_text(u, timeout=8)
+        html = httpx.get_text(u, timeout=6)
         if html and token in re.sub(r"[^a-z0-9]", "", html.lower()):
             return True
     return False
@@ -158,18 +158,25 @@ def _rank_hr(emails: list[str]) -> list[str]:
 
 
 def discover_emails(job, domain: str, *, fetch: bool) -> list[str]:
-    """Fetch the company site + posting and return published HR-ish emails (best-effort)."""
+    """Fetch the company site + posting and return published HR-ish emails (best-effort).
+
+    Contact/careers pages first, short timeouts, and stop at the first page that
+    yields an address -- so the dashboard preview stays responsive.
+    """
     if not (fetch and domain):
         return []
-    urls = [f"https://{domain}", f"https://{domain}/careers", f"https://{domain}/contact",
-            f"https://{domain}/contact-us", f"https://{domain}/jobs", f"https://{domain}/about"]
+    urls = [f"https://{domain}/contact", f"https://{domain}/contact-us",
+            f"https://{domain}", f"https://{domain}/careers", f"https://{domain}/about"]
     if job.url and _domain_of_url(job.url):  # only fetch the posting if it's on a real employer host
         urls.append(job.url)
     found: list[str] = []
-    for u in urls[:7]:
-        html = httpx.get_text(u)
+    for u in urls:
+        html = httpx.get_text(u, timeout=6)
         if html:
-            found += _emails_on_domain(html, domain)
+            hits = _emails_on_domain(html, domain)
+            if hits:
+                found += hits
+                break
     return _rank_hr(found)
 
 
@@ -350,3 +357,67 @@ def run(cfg: dict, store, job_id: str, *, to: Optional[str] = None,
     store.mark_outreach(job.id, target.email, now_iso())
     print(f"  outreach recorded: {job.company or job.title} -> {target.email}")
     return 0
+
+
+# --- structured API (used by the local `serve` dashboard, no printing) -------
+def api_preview(cfg: dict, store, job_id: str, *, to: Optional[str] = None) -> dict:
+    """Resolve a contact + draft for the drawer's Email-recruiter panel."""
+    job = store.get_job(job_id)
+    if job is None:
+        return {"ok": False, "error": "job not found"}
+    resume = store.get_named_resume(job.resume_base) if job.resume_base else store.get_resume()
+    if resume is None:
+        return {"ok": False, "error": "no résumé imported — run `resume import` first"}
+    target = resolve_target(cfg, store, job, override=to)
+    if target is None:
+        return {"ok": False, "error": "no contact found — enter an address to use", "needs_address": True,
+                "company": job.company, "title": job.title}
+    subject, body = build_draft(cfg, store, resume, job, target)
+    resume_path = resume.source_path if resume.source_path and os.path.exists(resume.source_path) else ""
+    oc = (cfg.get("apply", {}).get("outreach", {}) or {})
+    app = store.get_application(job.id) or {}
+    return {
+        "ok": True, "to": target.email, "source": target.source, "confidence": target.confidence,
+        "note": target.note, "subject": subject, "body": body,
+        "resume": os.path.basename(resume_path) if resume_path else "",
+        "company": job.company, "title": job.title,
+        "already_at": app.get("outreach_at") or "",
+        "blocked": bool(_optout_hit(oc, job, target)),
+        "sendable": bool(oc.get("enabled")) and bool(cfg.get("email", {}).get("enabled")),
+    }
+
+
+def api_send(cfg: dict, store, job_id: str, *, to: str, subject: str, body: str,
+             force: bool = False) -> dict:
+    """Send a reviewed outreach from the dashboard, applying the same guardrails."""
+    oc = (cfg.get("apply", {}).get("outreach", {}) or {})
+    if not oc.get("enabled") and not force:
+        return {"ok": False, "error": "sending is off — set apply.outreach.enabled: true"}
+    if not cfg.get("email", {}).get("enabled"):
+        return {"ok": False, "error": "email is not configured (email.*)"}
+    to = (to or "").strip()
+    if "@" not in to or _is_automated(to):
+        return {"ok": False, "error": "enter a valid, non-automated recipient address"}
+    job = store.get_job(job_id)
+    company = job.company if job else ""
+    blocked = {b.lower().strip() for b in (oc.get("do_not_contact") or []) if b}
+    if (company and company.lower().strip() in blocked) or to.split("@")[-1].lower() in blocked:
+        return {"ok": False, "error": f"{company or to} is on your do-not-contact list"}
+    app = store.get_application(job_id) or {}
+    if app.get("outreach_at") and not force:
+        return {"ok": False, "error": f"already reached out on {app['outreach_at']}"}
+    if job and _cooldown_hit(store, job, int(oc.get("cooldown_days", 14))) and not force:
+        return {"ok": False, "error": f"cooldown — {company} was contacted recently"}
+
+    resume = None
+    if job:
+        resume = store.get_named_resume(job.resume_base) if job.resume_base else store.get_resume()
+    resume_path = (resume.source_path if resume and resume.source_path
+                   and os.path.exists(resume.source_path) else "")
+    from jobscope.deliver import email as _email
+    ok = _email.send(cfg, subject or "", body or "", to=to,
+                     attachments=[resume_path] if resume_path else None)
+    if not ok:
+        return {"ok": False, "error": "SMTP send failed (check email.* + app password)"}
+    store.mark_outreach(job_id, to, now_iso())
+    return {"ok": True, "sent": True, "to": to}

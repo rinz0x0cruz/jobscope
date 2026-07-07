@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import type { JobRow } from '@/lib/schema'
 import { TIER_COLOR } from '@/lib/schema'
 import { compLabel } from '@/lib/format'
+import { RecruiterOutreach } from '@/components/RecruiterOutreach'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -184,6 +185,7 @@ function DrawerBody({
 
       {/* scrollable sections */}
       <div className="min-h-0 flex-1 overflow-auto">
+        <RecruiterOutreach jobId={job.id} />
         {job.description && <JobDescription text={job.description} />}
 
         {job.brief && (
