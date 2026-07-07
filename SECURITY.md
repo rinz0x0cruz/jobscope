@@ -65,11 +65,16 @@ machine — except the redacted dashboard you explicitly publish.
 ## Publication (the public dashboard is redacted)
 
 - `jobscope dashboard --public` / `--emit-json --public` produces a **redacted** payload that strips:
-  referral contacts, score rationale, résumé-variant labels, the application funnel, your search
-  targets, and **all applications**. Only public-safe job info + fit scores remain.
+  referral contacts, score rationale, résumé-variant labels, archived job descriptions, the application
+  funnel, your search targets, and **all applications**. Only public-safe job info + fit scores remain.
 - The `scripts/publish.*` scripts always emit with `--public`, so an unredacted build cannot reach
   `gh-pages`. Two tests lock this in: `test_public_build_data_redacts_all_pii` and
   `test_public_json_has_no_pii_markers` (`tests/test_dashboard_json.py`).
+- **Whole-site unlock (opt-in, `-Encrypted`):** the *full* un-redacted dashboard is additionally published
+  as a single **AES-256-GCM** blob (PBKDF2-SHA256, 210k iterations) in a separate, lazily-fetched
+  `site.enc.json`. It is useless without your passphrase, which is entered **only in the browser** and never
+  sent anywhere; decryption and the swap to un-redacted data happen client-side. The plaintext un-redacted
+  payload never leaves your machine.
 
 ## Hardening checklist
 

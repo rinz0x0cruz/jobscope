@@ -216,16 +216,20 @@ artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboar
 ### web/ — React dashboard (SPA)
 
 The single dashboard is a Vite + React + TypeScript PWA in `web/` that consumes the baked `dashboard.json`
-(and, for a published build, an AES-encrypted `applications.encrypted.json` unlocked in-browser). It is served
-two ways: un-redacted via `jobscope serve` on localhost, and redacted to GitHub Pages by the publish scripts.
+(and, for a published build, a lazily-fetched AES-encrypted whole-site blob unlocked in-browser). It is served
+two ways: un-redacted via `jobscope serve` on localhost, and redacted to GitHub Pages by the publish scripts —
+where a passphrase swaps the redacted data for the full un-redacted payload at runtime.
 
 - **Data flow:** `web/src/data/index.ts` imports the baked JSON → `App.tsx` holds URL/localStorage view state
   (`hooks/useSearchState`) → `lib/filters.ts` (tab pool → facets → fuzzy search) → the Overview / list /
   Applications surfaces. `lib/schema.ts` mirrors the Python contract (§10).
 - **Surfaces:** a bento **Overview** (`components/overview/*` — Fit-distribution `Donut`, `Bars`,
-  `SkillConstellation`, `TopMatches`), the ranked **list** (`JobList`/`JobCard`/`JobDrawer`), and an encrypted
-  **Applications** board (`components/applications/*` — kanban, per-app email `ActivityFeed`, and an inline-SVG
-  `PipelineFlow` Sankey) behind a passphrase `ApplicationsGate`.
+  `SkillConstellation`, `TopMatches`), the ranked **list** (`JobList`/`JobCard`/`JobDrawer` with an archived
+  job-description snapshot), and an **Applications** board (`components/applications/*` — List/Compact/Table/Grouped
+  view switcher, Pipeline health, per-app email `ActivityFeed`, and an inline-SVG `PipelineFlow` Sankey).
+- **Whole-site unlock:** `lib/unlock.ts` fetches (lazily) + AES-GCM-decrypts the encrypted blob; a header
+  `UnlockControl` / `UnlockForm` (and the Applications `ApplicationsGate`) take the passphrase and swap the full
+  un-redacted payload into `App` state (cached in sessionStorage for the tab).
 - **Chrome:** `Header` (logo + search + ⌘K command pill + Refresh button), a generative `HeroBackdrop`
   (six `?hero=` variants, reduced-motion aware), and a `cmdk` command palette (`SearchPalette`).
 - **Refresh:** `lib/refresh.ts` drives the header Refresh button — pull-latest (service-worker update + reload)

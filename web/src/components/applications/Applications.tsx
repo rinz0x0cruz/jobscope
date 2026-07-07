@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useReducedMotion } from 'motion/react'
-import type { Application, EncBlob } from '@/lib/schema'
+import type { Application, DashboardData, EncRef } from '@/lib/schema'
 import { trackSpotlight } from '@/lib/spotlight'
 import { CountUp } from '@/components/overview/CountUp'
 import { ApplicationsSection } from './views'
 import { ActivityFeed } from './ActivityFeed'
-import { ApplicationsGate, type UnlockedApps } from './ApplicationsGate'
+import { ApplicationsGate } from './ApplicationsGate'
 import { PipelineFlow } from './PipelineFlow'
 import { PipelineHealth } from './PipelineHealth'
 import { pct, pipelineMetrics, statusCounts } from './constants'
@@ -69,8 +69,8 @@ export function Applications({
   onOpen,
 }: {
   apps: Application[]
-  encBlob?: EncBlob | null
-  onUnlock?: (data: UnlockedApps) => void
+  encBlob?: EncRef | null
+  onUnlock?: (data: DashboardData) => void
   onOpen?: (id: string) => void
 }) {
   const summary = useMemo(() => {

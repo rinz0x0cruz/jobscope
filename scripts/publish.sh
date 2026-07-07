@@ -63,16 +63,17 @@ PUBLIC_JSON="$REPO_ROOT/data/dashboard.public.json"
 [ -f "$PUBLIC_JSON" ] || { echo "expected payload not found: $PUBLIC_JSON" >&2; exit 1; }
 cp "$PUBLIC_JSON" "$REPO_ROOT/web/src/data/dashboard.json"
 
-# 1b. Optional: bake an end-to-end encrypted applications blob into the SPA so the
-#     Applications tab can decrypt it in-browser (AES-256-GCM, passphrase-gated). Must
-#     run BEFORE the build so Vite bakes web/src/data/applications.encrypted.json into
-#     the bundle. Clear a stale blob first so a plain redacted publish can't ship one.
-#     The un-redacted data never leaves the machine in the clear -- only the encrypted
-#     blob is published.
-ENC_BLOB_JSON="$REPO_ROOT/web/src/data/applications.encrypted.json"
-rm -f "$ENC_BLOB_JSON"
+# 1b. Optional: encrypt the FULL un-redacted dashboard for the whole-site unlock.
+#     The heavy ciphertext ships as a separate lazily-fetched file (dist/site.enc.json);
+#     only a tiny pointer is baked into the bundle (before the build), so the public
+#     redacted build stays lean. Clear stale artifacts first so a plain redacted publish
+#     can't ship one. The un-redacted data never leaves the machine in the clear -- only
+#     the AES-256-GCM ciphertext (useless without the passphrase) is published.
+ENC_MARKER="$REPO_ROOT/web/src/data/applications.encrypted.json"  # baked pointer
+SITE_BLOB="$REPO_ROOT/data/site.enc.json"                          # heavy ciphertext (gitignored)
+rm -f "$ENC_MARKER" "$SITE_BLOB"
 if [ -n "${ENCRYPTED:-}" ]; then
-    echo "==> Emitting un-redacted data + encrypting applications for the SPA"
+    echo "==> Emitting un-redacted data + encrypting the full dashboard for the SPA"
     "$PY" -m jobscope dashboard --emit-json   # -> data/dashboard.json (has applications; gitignored)
     FULL_JSON="$REPO_ROOT/data/dashboard.json"
     [ -f "$FULL_JSON" ] || { echo "expected payload not found: $FULL_JSON" >&2; exit 1; }
@@ -80,10 +81,12 @@ if [ -n "${ENCRYPTED:-}" ]; then
     if [ -z "$PASS" ]; then
         read -r -s -p "Passphrase to encrypt your applications (8+ chars): " PASS; echo
     fi
-    # "-" skips the retired standalone page; write only the JSON blob the SPA imports.
-    printf '%s' "$PASS" | node "$REPO_ROOT/scripts/build-secure-apps.mjs" "$FULL_JSON" "$REPO_ROOT/scripts/apps-template.html" "-" "$ENC_BLOB_JSON"
+    # "-" skips the retired standalone page; write the heavy ciphertext blob the SPA fetches lazily.
+    printf '%s' "$PASS" | node "$REPO_ROOT/scripts/build-secure-apps.mjs" "$FULL_JSON" "$REPO_ROOT/scripts/apps-template.html" "-" "$SITE_BLOB"
     unset PASS
-    echo "==> Encrypted applications baked in -> unlock in the Applications tab"
+    # Bake only a tiny pointer to the lazily-fetched blob (keeps the public bundle lean).
+    printf '%s' '{"v":1,"url":"site.enc.json"}' > "$ENC_MARKER"
+    echo "==> Encrypted full dashboard -> unlock with the header lock button"
 fi
 
 # 2. Build the web dashboard (Vite/React) with the redacted data (and, if --encrypted,
@@ -93,6 +96,13 @@ echo "==> Building web dashboard (npm run build)"
 
 DIST="$REPO_ROOT/web/dist"
 [ -f "$DIST/index.html" ] || { echo "expected build output not found: $DIST/index.html" >&2; exit 1; }
+
+# Ship the heavy encrypted blob as a separate file next to the SPA (fetched lazily
+# on unlock), so the public bundle never carries the un-redacted ciphertext.
+if [ -n "${ENCRYPTED:-}" ] && [ -f "$SITE_BLOB" ]; then
+    cp "$SITE_BLOB" "$DIST/site.enc.json"
+    echo "==> Bundled encrypted blob -> $DIST/site.enc.json (lazy-fetched on unlock)"
+fi
 
 # Publish gate: only the designated publisher (the machine that ran
 # register-publish-task.ps1, which wrote .publish-primary) pushes, to avoid double

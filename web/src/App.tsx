@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { dashboard, encryptedApplications } from '@/data'
+import { dashboard, encryptedSite } from '@/data'
 import type { FacetKey, TabValue } from '@/lib/urlState'
 import { FACET_KEYS } from '@/lib/urlState'
 import type { FacetOption } from '@/lib/filters'
@@ -24,7 +24,8 @@ import { SearchPalette } from '@/components/filters/SearchPalette'
 import { JobList } from '@/components/JobList'
 import { Overview } from '@/components/overview/Overview'
 import { Applications } from '@/components/applications/Applications'
-import { UNLOCK_KEY, type UnlockedApps } from '@/components/applications/ApplicationsGate'
+import { readCachedUnlock, clearUnlock } from '@/lib/unlock'
+import type { DashboardData } from '@/lib/schema'
 import { JobDrawer } from '@/components/JobDrawer'
 import { HeroBackdrop, HERO_VARIANTS, type HeroVariant } from '@/components/HeroBackdrop'
 import { Toaster } from 'sonner'
@@ -36,25 +37,21 @@ const HERO: HeroVariant = (HERO_VARIANTS as string[]).includes(heroParam)
   : 'grid'
 
 export default function App() {
-  const rows = dashboard.rows
   const { state, set } = useSearchState()
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
-  // Apps come baked in for a local/un-redacted build; for a public build they
-  // arrive encrypted and are unlocked (and cached in sessionStorage) at runtime.
-  // Unlocking also restores the overview application funnel (redacted publicly).
-  const [unlocked, setUnlocked] = useState<UnlockedApps | null>(() => {
-    try {
-      const s = sessionStorage.getItem(UNLOCK_KEY)
-      return s ? (JSON.parse(s) as UnlockedApps) : null
-    } catch {
-      return null
-    }
-  })
-  const apps = unlocked?.apps ?? dashboard.applications ?? []
-  const overview =
-    unlocked && Object.keys(unlocked.funnel).length > 0
-      ? { ...dashboard.overview, funnel: unlocked.funnel }
-      : dashboard.overview
+  // A redacted public build unlocks to the full un-redacted payload at runtime:
+  // passphrase-gated, decrypted in-browser (lib/unlock), cached in sessionStorage
+  // for the tab. Unlocking swaps in the un-redacted rows (JDs, rationale,
+  // contacts), applications, and overview funnel wholesale.
+  const [unlocked, setUnlocked] = useState<DashboardData | null>(() => readCachedUnlock())
+  const relock = () => {
+    clearUnlock()
+    setUnlocked(null)
+  }
+  const data = unlocked ?? dashboard
+  const rows = data.rows
+  const apps = data.applications ?? []
+  const overview = data.overview
 
   const tabCounts = useMemo(() => {
     const base = tabPool(rows, 'all', state.hideClosed)
@@ -115,9 +112,13 @@ export default function App() {
       <Header
         total={rows.length}
         shown={searched.length}
-        generated={fmtGenerated(dashboard.generated)}
+        generated={fmtGenerated(data.generated)}
         query={state.q}
         onQuery={(v) => set({ q: v }, { replace: true })}
+        encBlob={encryptedSite}
+        unlocked={!!unlocked}
+        onUnlock={setUnlocked}
+        onLock={relock}
       />
       <main className="relative z-10 mx-auto flex max-w-7xl flex-col gap-4 px-6 py-6">
         <Kpis rows={rows} />
@@ -125,7 +126,7 @@ export default function App() {
         {state.tab === 'overview' ? (
           <Overview rows={rows} stats={overview} onOpen={openDrawer} />
         ) : state.tab === 'applications' ? (
-          <Applications apps={apps} encBlob={encryptedApplications} onUnlock={setUnlocked} onOpen={openDrawer} />
+          <Applications apps={apps} encBlob={encryptedSite} onUnlock={setUnlocked} onOpen={openDrawer} />
         ) : (
           <>
             <FacetBar

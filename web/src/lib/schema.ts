@@ -92,9 +92,9 @@ export interface Overview {
   targets: string[]
 }
 
-// Encrypted applications blob (scripts/build-secure-apps.mjs): AES-256-GCM over
-// {generated, funnel, applications}, decrypted in-browser with the passphrase.
-// Present only in an encrypted build; imported optionally by web/src/data.
+// Encrypted whole-site blob (scripts/build-secure-apps.mjs): AES-256-GCM over the
+// full un-redacted dashboard payload, decrypted in-browser with the passphrase.
+// Present only in a published (`publish.ps1 -Encrypted`) build.
 export interface EncBlob {
   v: number
   kdf: string
@@ -103,6 +103,16 @@ export interface EncBlob {
   iv: string
   ct: string
 }
+
+// Published builds ship the heavy ciphertext as a separate file and bake only a
+// tiny pointer, so the initial bundle stays lean (the blob is fetched on unlock).
+// The baked marker is either this pointer or an inline EncBlob.
+export interface EncPointer {
+  v: number
+  url: string
+}
+
+export type EncRef = EncBlob | EncPointer
 
 // One row of an application's email timeline (render.py: _application_records,
 // the `timeline[]` items). Every key is always emitted (Python defaults to '').
