@@ -12,6 +12,7 @@ Usage:
     python -m jobscope outreach <job_id> [--send]  Draft/send a recruiter outreach + resume
     python -m jobscope brief <job_id>              Blunt, risk-forward company brief
     python -m jobscope atscheck [--job ID]         What an ATS extracts from your resume + warnings
+    python -m jobscope coverage <job_id>           Per-requirement JD coverage (responsibilities)
     python -m jobscope gaps [--top N]              Skill-gap learning plan across your jobs
     python -m jobscope new                          New Strong/Good jobs since last review
     python -m jobscope dashboard [--public]        Emit the dashboard JSON payload
@@ -165,6 +166,12 @@ def cmd_atscheck(args, cfg):
     with _store(args, cfg) as store:
         return atscheck.run(cfg, store, resume_name=getattr(args, "resume", None),
                             job_id=getattr(args, "job", None))
+
+
+def cmd_coverage(args, cfg):
+    from ..analyze import coverage
+    with _store(args, cfg) as store:
+        return coverage.run(cfg, store, args.job_id, resume_name=getattr(args, "resume", None))
 
 
 def cmd_export(args, cfg):
@@ -398,6 +405,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--job", default=None, metavar="JOB_ID",
                     help="Also show JD keyword coverage against this job")
     sp.set_defaults(func=cmd_atscheck)
+
+    sp = sub.add_parser("coverage",
+                        help="Per-requirement JD coverage report (responsibilities, not just keywords)")
+    sp.add_argument("job_id")
+    sp.add_argument("--resume", default=None, metavar="NAME",
+                    help="Which named base resume to assess (default: the one that scored this job)")
+    sp.set_defaults(func=cmd_coverage)
 
     sp = sub.add_parser("export", help="Export ranked jobs")
     sp.add_argument("--format", choices=["json", "csv"], default="json")
