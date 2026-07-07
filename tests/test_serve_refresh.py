@@ -18,6 +18,7 @@ import pytest
 
 from jobscope.analyze import match as match_mod
 from jobscope.core.config import load_config
+from jobscope.core.model import Job, Resume
 from jobscope.core.store import Store
 from jobscope.deliver import serve
 from jobscope.ingest import inbox as inbox_mod
@@ -174,6 +175,38 @@ def test_serves_spa_and_injects_widget(monkeypatch):
             assert 'id="root"' in html          # the SPA shell is served
             assert "jsRefreshFab" in html        # the Refresh widget is injected
             assert "/api/refresh" in html
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_api_outreach_preview_and_csrf():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        cfg["apply"]["outreach"]["discover"] = False  # offline: resolve from company_url only
+        with Store(cfg["output"]["db_path"]) as store:
+            store.save_resume(Resume(full_name="Jane Doe", email="jane@example.com",
+                                     skills=["python", "aws"], seniority="senior",
+                                     years_experience=6.0), "default")
+            job = Job(source="indeed", title="Security Engineer", company="Acme",
+                      company_url="https://acme.com", description="python aws").ensure_id()
+            store.upsert_job(job)
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        try:
+            # CSRF: a POST without the per-run token is rejected
+            code, _ = _req("POST", base + "/api/outreach",
+                           headers={"Content-Type": "application/json"},
+                           data=json.dumps({"job_id": job.id}))
+            assert code == 403
+            # with the token: a structured preview (role inbox on the confirmed domain)
+            code, res = _req("POST", base + "/api/outreach",
+                             headers={"Content-Type": "application/json", "X-Refresh-Token": token},
+                             data=json.dumps({"job_id": job.id}))
+            assert code == 200 and res["ok"] is True
+            assert res["to"] == "careers@acme.com" and res["source"] == "role_inbox"
+            assert "Security Engineer" in res["subject"] and "attached" in res["body"].lower()
         finally:
             httpd.shutdown()
             httpd.server_close()

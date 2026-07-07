@@ -180,6 +180,34 @@ def _build_server(cfg: dict, port: int):
                     return False
             return self.headers.get("X-Refresh-Token") == token
 
+        def _outreach(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except ValueError:
+                data = {}
+            job_id = str(data.get("job_id") or "").strip()
+            if not job_id:
+                self._send_json(400, {"ok": False, "error": "job_id required"})
+                return
+            try:
+                from jobscope.apply import outreach
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    if data.get("send"):
+                        res = outreach.api_send(
+                            cfg, store, job_id, to=str(data.get("to") or ""),
+                            subject=str(data.get("subject") or ""),
+                            body=str(data.get("body") or ""), force=bool(data.get("force")))
+                    else:
+                        res = outreach.api_preview(cfg, store, job_id, to=(data.get("to") or None))
+                self._send_json(200, res)
+            except Exception as exc:  # noqa: BLE001 - surface to the UI
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
         # -- routes -------------------------------------------------------
         def do_GET(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0].split("#", 1)[0]
@@ -201,6 +229,9 @@ def _build_server(cfg: dict, port: int):
 
         def do_POST(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0]
+            if route == "/api/outreach":
+                self._outreach()
+                return
             if route != "/api/refresh":
                 self.send_error(404)
                 return
