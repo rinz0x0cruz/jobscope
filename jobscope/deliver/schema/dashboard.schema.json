@@ -27,7 +27,7 @@
         "source", "score", "tier", "base", "salary", "size", "funding",
         "country", "place", "industry", "rationale", "blocked", "posted",
         "first_seen", "status", "last_seen", "closed_at", "enrich", "brief",
-        "contacts"
+        "description", "contacts"
       ],
       "properties": {
         "id": {"type": "string"},
@@ -56,6 +56,7 @@
         "closed_at": {"type": "string"},
         "enrich": {"$ref": "#/definitions/EnrichSummary"},
         "brief": {"type": "string"},
+        "description": {"type": "string", "description": "Trimmed JD snapshot (issue #30); \"\" in the public build."},
         "contacts": {"type": "array", "items": {"$ref": "#/definitions/Contact"}}
       }
     },

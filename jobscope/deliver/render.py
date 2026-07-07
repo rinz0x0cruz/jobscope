@@ -6,6 +6,7 @@ Applications board) from the stored jobs and enrichment, and writes it to
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -54,15 +55,17 @@ def emit_json(cfg: dict, store, public: bool = False) -> str:
 def _redact_public(rows: list[dict], overview: dict) -> None:
     """Strip private fields in place for a publicly-hosted (GitHub Pages) dashboard.
 
-    Removes third-party referral contacts, score rationale, and resume-variant
-    labels from every job, plus the application funnel and search terms from the
-    overview -- leaving only public job info and fit scores. The ``blocked`` flag
-    is already computed in ``_job_record``, so clearing ``rationale`` here is safe.
+    Removes third-party referral contacts, score rationale, resume-variant
+    labels, and the archived job-description snapshot from every job, plus the
+    application funnel and search terms from the overview -- leaving only public
+    job info and fit scores. The ``blocked`` flag is already computed in
+    ``_job_record``, so clearing ``rationale`` here is safe.
     """
     for r in rows:
         r["contacts"] = []
         r["rationale"] = ""
         r["base"] = ""
+        r["description"] = ""
     overview["funnel"] = {}
     overview["targets"] = []
 
@@ -193,6 +196,28 @@ def _place_of(job) -> str:
     return first
 
 
+def _jd_snapshot(text: str, limit: int = 6000) -> str:
+    """Trimmed, HTML-cleaned job-description snapshot for the drawer archive (issue #30).
+
+    The full JD is stored in ``jobs.description`` (sometimes with ATS HTML markup);
+    we convert it to readable text and surface a length-bounded copy so a role stays
+    viewable after the original listing is taken down. Stripped for the public build.
+    """
+    s = text or ""
+    # HTML -> text: keep block breaks as newlines, bullet <li>, drop other tags, unescape.
+    s = re.sub(r"(?i)<br\s*/?>", "\n", s)
+    s = re.sub(r"(?i)<li[^>]*>", "\u2022 ", s)
+    s = re.sub(r"(?i)</(p|div|li|ul|ol|h[1-6]|tr|section)>", "\n", s)
+    s = re.sub(r"<[^>]+>", "", s)
+    s = html.unescape(s)
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s).strip()
+    if len(s) <= limit:
+        return s
+    cut = s.rfind(" ", 0, limit)
+    return s[: cut if cut > limit - 200 else limit].rstrip() + "\u2026"
+
+
 def _job_record(job, enr: dict, store) -> dict[str, Any]:
     salary = _fmt_salary(job)
     contacts = store.contacts_for(job.company) if job.company else []
@@ -224,6 +249,7 @@ def _job_record(job, enr: dict, store) -> dict[str, Any]:
         "closed_at": job.closed_at or "",
         "enrich": _enrich_summary(enr),
         "brief": ((enr or {}).get("brief") or {}).get("text", "") if enr else "",
+        "description": _jd_snapshot(job.description),
         "contacts": [{"name": c.get("name"), "title": c.get("title"),
                       "url": c.get("profile_url") or c.get("search_url")} for c in contacts],
     }

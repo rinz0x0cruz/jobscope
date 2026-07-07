@@ -81,6 +81,7 @@ export interface JobRow {
   closed_at: string
   enrich: EnrichSummary
   brief: string
+  description: string
   contacts: Contact[]
 }
 
