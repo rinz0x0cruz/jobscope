@@ -15,6 +15,7 @@ Usage:
     python -m jobscope coverage <job_id>           Per-requirement JD coverage (responsibilities)
     python -m jobscope gaps [--top N]              Skill-gap learning plan across your jobs
     python -m jobscope new                          New Strong/Good jobs since last review
+    python -m jobscope referrals [--job ID]        Referral paths across your pipeline + outreach draft
     python -m jobscope dashboard [--public]        Emit the dashboard JSON payload
     python -m jobscope serve [--port 8799 --open]  Serve the dashboard locally
     python -m jobscope track [--set job_id=status] Funnel + follow-up reminders
@@ -147,6 +148,13 @@ def cmd_new(args, cfg):
     from ..apply import track
     with _store(args, cfg) as store:
         return track.run_new(store)
+
+
+def cmd_referrals(args, cfg):
+    from ..apply import referrals
+    with _store(args, cfg) as store:
+        return referrals.run(cfg, store, job_id=getattr(args, "job", None),
+                             discover=getattr(args, "discover", False), top=args.top)
 
 
 def cmd_gaps(args, cfg):
@@ -389,6 +397,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_inbox)
 
     sub.add_parser("new", help="Show new Strong/Good jobs since your last review").set_defaults(func=cmd_new)
+
+    sp = sub.add_parser("referrals",
+                        help="Surface referral paths (contacts) across your pipeline + outreach draft")
+    sp.add_argument("--job", default=None, metavar="JOB_ID",
+                    help="Referral paths for one job's company (the moment-of-applying view)")
+    sp.add_argument("--discover", action="store_true",
+                    help="Fetch fresh leads for that company if none are stored (network)")
+    sp.add_argument("--top", type=int, default=25, help="Max companies in the pipeline digest")
+    sp.set_defaults(func=cmd_referrals)
 
     sp = sub.add_parser("gaps", help="Skill-gap learning plan across your matched jobs")
     sp.add_argument("--top", type=int, default=15)
