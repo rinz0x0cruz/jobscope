@@ -100,10 +100,11 @@ Copy-Item $PublicJson (Join-Path $RepoRoot "web\src\data\dashboard.json") -Force
 #     into the bundle. Always clear a stale blob first, so a plain redacted publish can
 #     never ship one. The un-redacted data never leaves your machine in the clear --
 #     only the encrypted blob is published -- so it is safe to host publicly.
-$EncBlobJson = Join-Path $RepoRoot "web\src\data\applications.encrypted.json"
-Remove-Item $EncBlobJson -Force -ErrorAction SilentlyContinue
+$EncMarker = Join-Path $RepoRoot "web\src\data\applications.encrypted.json"  # baked pointer
+$SiteBlob  = Join-Path $RepoRoot "data\site.enc.json"                        # heavy ciphertext (gitignored)
+Remove-Item $EncMarker, $SiteBlob -Force -ErrorAction SilentlyContinue
 if ($Encrypted) {
-    Write-Host "==> Emitting un-redacted data + encrypting applications for the SPA"
+    Write-Host "==> Emitting un-redacted data + encrypting the full dashboard for the SPA"
     & $Py -m jobscope dashboard --emit-json   # -> data\dashboard.json (has applications; gitignored, local only)
     if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json failed (exit $LASTEXITCODE)" }
     $FullJson = Join-Path $RepoRoot "data\dashboard.json"
@@ -124,17 +125,20 @@ if ($Encrypted) {
         $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
     }
     try {
-        # "-" skips the retired standalone page; write only the JSON blob the SPA imports.
+        # "-" skips the retired standalone page; write the heavy ciphertext blob
+        # that the SPA fetches lazily on unlock.
         # 2>&1 so Node's status line doesn't trip PS 5.1's stop-on-native-stderr; the
         # real exit code is still checked below.
-        $plain | node (Join-Path $RepoRoot "scripts\build-secure-apps.mjs") $FullJson (Join-Path $RepoRoot "scripts\apps-template.html") "-" $EncBlobJson 2>&1 | ForEach-Object { Write-Host "  $_" }
-        if ($LASTEXITCODE -ne 0) { throw "encrypting applications blob failed (exit $LASTEXITCODE)" }
+        $plain | node (Join-Path $RepoRoot "scripts\build-secure-apps.mjs") $FullJson (Join-Path $RepoRoot "scripts\apps-template.html") "-" $SiteBlob 2>&1 | ForEach-Object { Write-Host "  $_" }
+        if ($LASTEXITCODE -ne 0) { throw "encrypting the dashboard blob failed (exit $LASTEXITCODE)" }
     }
     finally {
         if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
         Remove-Variable plain -ErrorAction SilentlyContinue
     }
-    Write-Host "==> Encrypted applications baked in -> unlock in the Applications tab"
+    # Bake only a tiny pointer to the lazily-fetched blob (keeps the public bundle lean).
+    Set-Content -Path $EncMarker -Value '{"v":1,"url":"site.enc.json"}' -Encoding utf8 -NoNewline
+    Write-Host "==> Encrypted full dashboard -> unlock with the header lock button"
 }
 
 # 2. Build the web dashboard (Vite/React) with the redacted data (and, if -Encrypted,
@@ -158,6 +162,13 @@ finally { Pop-Location }
 
 $Dist = Join-Path $RepoRoot "web\dist"
 if (-not (Test-Path (Join-Path $Dist "index.html"))) { throw "expected build output not found: $Dist\index.html" }
+
+# Ship the heavy encrypted blob as a separate file next to the SPA (fetched lazily
+# on unlock), so the public bundle never carries the un-redacted ciphertext.
+if ($Encrypted -and (Test-Path $SiteBlob)) {
+    Copy-Item $SiteBlob (Join-Path $Dist "site.enc.json") -Force
+    Write-Host "==> Bundled encrypted blob -> $Dist\site.enc.json (lazy-fetched on unlock)"
+}
 
 # Publish gate: only the designated publisher (the machine that ran
 # register-publish-task.ps1, which wrote .publish-primary) pushes, to avoid double

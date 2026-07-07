@@ -3,7 +3,9 @@ import { Command, Moon, Search, Sun } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
 import { COMMAND_EVENT } from '@/components/filters/SearchPalette'
 import { RefreshButton } from '@/components/RefreshButton'
+import { UnlockControl } from '@/components/UnlockControl'
 import { SignalLottie } from '@/components/SignalLottie'
+import type { DashboardData, EncRef } from '@/lib/schema'
 
 interface Props {
   total: number
@@ -11,9 +13,13 @@ interface Props {
   generated: string
   query: string
   onQuery: (v: string) => void
+  encBlob: EncRef | null
+  unlocked: boolean
+  onUnlock: (data: DashboardData) => void
+  onLock: () => void
 }
 
-export function Header({ total, shown, generated, query, onQuery }: Props) {
+export function Header({ total, shown, generated, query, onQuery, encBlob, unlocked, onUnlock, onLock }: Props) {
   const { theme, toggle } = useTheme()
   const reduce = useReducedMotion()
   return (
@@ -45,6 +51,9 @@ export function Header({ total, shown, generated, query, onQuery }: Props) {
         </kbd>
       </label>
 
+      {encBlob && (
+        <UnlockControl encBlob={encBlob} unlocked={unlocked} onUnlock={onUnlock} onLock={onLock} />
+      )}
       <RefreshButton />
 
       <button
