@@ -54,6 +54,16 @@
   --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code", "Segoe UI Mono", Menlo, Consolas, monospace;
   --font-display: "Space Grotesk", Inter, var(--font);
+
+  /* Design-system foundation (Stage 3 P0): elevation ramp + semantic aliases +
+     motion tokens. Aliases resolve at use-time, so html.light re-themes them for free. */
+  --surface-0: var(--bg); --surface-1: var(--bg2); --surface-2: var(--card); --surface-3: var(--card-h);
+  --edge: var(--border); --edge-strong: var(--border-h);
+  --text-1: var(--fg); --text-2: var(--dim); --text-3: var(--mute);
+  --brand: var(--accent); --entity: var(--signal);
+  --positive: var(--strong); --warning: var(--stretch); --danger: var(--hot); --focus: var(--accent);
+  --dur-fast: 120ms; --dur-base: 200ms; --dur-slow: 320ms;
+  --ease-standard: cubic-bezier(.2, 0, 0, 1); --ease-entrance: cubic-bezier(0, 0, 0, 1); --ease-exit: cubic-bezier(.4, 0, 1, 1);
 }
 
 html.light {
@@ -105,7 +115,7 @@ html.light {
      only applies to focusables lacking a Tailwind radius utility (utilities
      layer wins over base, so rounded-full pills etc. keep their shape). */
   :focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus);
     outline-offset: 2px;
     border-radius: 6px;
   }
@@ -121,20 +131,6 @@ html.light {
 @keyframes jsOverlayOut { from { opacity: 1; } to { opacity: 0; } }
 @keyframes jsDrawerIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @keyframes jsDrawerOut { from { transform: translateX(0); } to { transform: translateX(100%); } }
-@keyframes jsGradientSweep { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
-@keyframes jsSpin { to { transform: rotate(360deg); } }
-@keyframes jsTreeTrace { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
-@keyframes jsLeafFall {
-  0% { transform: translate3d(0, 0, 0) rotate(0deg) scale(var(--leaf-scale)); opacity: 0; }
-  8% { opacity: .92; }
-  74% { opacity: .72; }
-  100% { transform: translate3d(var(--leaf-drift), 245px, 0) rotate(260deg) scale(calc(var(--leaf-scale) * .82)); opacity: 0; }
-}
-@keyframes jsHeaderSweep {
-  0%, 58%, 100% { transform: translateX(-120%); opacity: 0; }
-  70% { opacity: 1; }
-  92% { transform: translateX(120%); opacity: 0; }
-}
 
 .js-overlay[data-state="open"] { animation: jsOverlayIn 0.2s ease-out; }
 .js-overlay[data-state="closed"] { animation: jsOverlayOut 0.18s ease-in forwards; }
@@ -177,122 +173,14 @@ html.light .js-hero-aurora span { mix-blend-mode: multiply; }
   letter-spacing: -.02em;
 }
 
-.js-cyber-tree {
-  position: fixed;
-  right: max(-260px, calc((100vw - 72rem) / 2 - 320px));
-  top: 82px;
-  z-index: 1;
-  width: clamp(180px, 22vw, 315px);
-  height: min(68vh, 510px);
-  overflow: hidden;
-  pointer-events: none;
-  opacity: .46;
-  mix-blend-mode: screen;
-  border-radius: 28px;
-}
-.js-cyber-tree-svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  filter: drop-shadow(0 0 20px color-mix(in srgb, var(--neon-cyan) 38%, transparent));
-}
-.js-tree-trunk,
-.js-tree-branch,
-.js-tree-halo {
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  pathLength: 1;
-}
-.js-tree-halo {
-  stroke: color-mix(in srgb, var(--neon-violet) 42%, transparent);
-  stroke-width: 18;
-  opacity: .2;
-}
-.js-tree-trunk {
-  stroke: url(#treeTrunk);
-  stroke-width: 8;
-  stroke-dasharray: 1;
-  animation: jsTreeTrace 2.8s ease-out both;
-}
-.js-tree-branch {
-  stroke: url(#treeTrunk);
-  stroke-width: 5;
-  stroke-dasharray: 1;
-  animation: jsTreeTrace 3.2s ease-out both;
-}
-.js-tree-canopy circle {
-  fill: url(#treeLeaf);
-  opacity: .88;
-}
-.js-tree-rings ellipse {
-  fill: none;
-  stroke: color-mix(in srgb, var(--neon-cyan) 44%, transparent);
-  stroke-width: 2;
-  stroke-dasharray: 10 10;
-}
-.js-sakura-leaves {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-}
-.js-sakura-leaf {
-  position: absolute;
-  left: var(--leaf-x);
-  top: var(--leaf-y);
-  width: 18px;
-  height: 18px;
-  opacity: 0;
-  transform-origin: 50% 10%;
-  animation: jsLeafFall var(--leaf-duration) ease-in-out var(--leaf-delay) infinite;
-}
-.js-sakura-leaf svg {
-  width: 100%;
-  height: 100%;
-  filter: drop-shadow(0 0 8px color-mix(in srgb, #ffb7f5 55%, transparent));
-}
-.js-sakura-leaf path {
-  fill: url(#treeLeaf);
-  stroke: color-mix(in srgb, white 42%, transparent);
-  stroke-width: 1.2;
-}
-
-html.light .js-cyber-tree {
-  opacity: .16;
-  mix-blend-mode: multiply;
-}
-html.light .js-cyber-tree-svg {
-  filter: none;
-}
-
 .js-header-gradient { position: sticky; }
-.js-header-gradient::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(105deg, transparent 0%, color-mix(in srgb, var(--accent) 11%, transparent) 46%, transparent 72%);
-  transform: translateX(-120%);
-  animation: jsHeaderSweep 8s ease-in-out infinite;
-}
 
 .js-logo-mark {
   position: relative;
   overflow: hidden;
   border-radius: 15px;
   background: linear-gradient(135deg, var(--neon-cyan), var(--neon-blue), var(--neon-violet), var(--neon-emerald));
-  background-size: 320% 320%;
   box-shadow: 0 0 0 1px color-mix(in srgb, #fff 26%, transparent), 0 14px 34px -13px var(--accent), 0 0 36px -14px var(--neon-cyan);
-  animation: jsGradientSweep 3.5s ease-in-out infinite alternate;
-}
-.js-logo-mark::before {
-  content: "";
-  position: absolute;
-  inset: -44%;
-  background: conic-gradient(from 0deg, transparent, rgba(255,255,255,.55), transparent, rgba(255,255,255,.22), transparent);
-  animation: jsSpin 4.5s linear infinite;
 }
 .js-logo-mark > div { position: relative; z-index: 1; }
 .js-logo-mark svg { filter: drop-shadow(0 1px 8px rgba(0, 0, 0, .42)); }
@@ -318,12 +206,10 @@ html.light .js-cyber-tree-svg {
 
 .js-neon-title {
   background: linear-gradient(90deg, #fff, var(--neon-cyan), var(--neon-emerald), #fff);
-  background-size: 220% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   text-shadow: 0 0 22px color-mix(in srgb, var(--neon-cyan) 38%, transparent);
-  animation: jsGradientSweep 4.2s ease-in-out infinite alternate;
 }
 
 .js-hot-button {
@@ -341,18 +227,7 @@ html.light .js-cyber-tree-svg {
   background:
     linear-gradient(color-mix(in srgb, var(--card) 84%, #000 16%), color-mix(in srgb, var(--card) 94%, var(--neon-blue) 6%)) padding-box,
     linear-gradient(128deg, var(--neon-cyan), var(--neon-blue), var(--neon-violet), var(--neon-emerald)) border-box;
-  background-size: 100% 100%, 280% 280%;
   box-shadow: 0 0 42px -30px var(--accent), 0 16px 36px -32px #000;
-  animation: jsGradientSweep 6.5s ease-in-out infinite alternate;
-}
-.js-gradient-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(115deg, transparent 0%, color-mix(in srgb, var(--neon-cyan) 14%, transparent) 32%, color-mix(in srgb, var(--neon-violet) 12%, transparent) 52%, transparent 72%);
-  transform: translateX(-120%);
-  animation: jsHeaderSweep 5.8s ease-in-out infinite;
 }
 .js-gradient-card > * { position: relative; z-index: 1; }
 
@@ -405,9 +280,7 @@ html.light .js-cyber-tree-svg {
     linear-gradient(color-mix(in srgb, var(--bg2) 92%, #000 8%), color-mix(in srgb, var(--bg2) 83%, var(--neon-blue) 17%)) padding-box,
     linear-gradient(140deg, var(--neon-cyan), var(--neon-blue), var(--neon-violet), var(--neon-emerald)) border-box;
   border-color: transparent;
-  background-size: 100% 100%, 260% 260%;
   box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent), 0 0 36px -30px var(--accent);
-  animation: jsGradientSweep 7.5s ease-in-out infinite alternate;
 }
 
 .js-skill-graph {
