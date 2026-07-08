@@ -30,10 +30,10 @@ structure the codebase has settled into. Keep it current (see
 jobscope/
   jobscope/          Python package (the CLI + all logic)
     core/            Foundation: model, config, store/ (pkg), companies, httpx, ai
-    ingest/          Acquire jobs & signals: scrape, ats, inbox, mailrules
-    analyze/         Deterministic core: match/ (pkg), classify, resume, insights
+    ingest/          Acquire jobs & signals: scrape, ats, inbox, mailrules, reconcile
+    analyze/         Deterministic core: match/ (pkg), classify, resume, profile, atscheck, coverage, insights
     enrich/          Best-effort intel (one module per source) + registry
-    apply/           Tailor & submit: apply, tailor, track, brief
+    apply/           Tailor & submit: apply, tailor, outreach, interview, referrals, track, brief
     deliver/         Dashboards & exports: render, exporter, serve, pdf, email, schema/
     cli/             build_parser + cmd_* + main (+ pipeline, scaffold, selftest)
     __main__.py      Thin shim → cli.main (console-script + `python -m jobscope`)
@@ -67,11 +67,15 @@ flowchart TB
         ats
         inbox
         mailrules
+        reconcile
     end
     subgraph ANALYZE["analyze"]
         match
         classify
         resume
+        profile
+        atscheck
+        coverage
         insights
     end
     subgraph ENRICH["enrich (package)"]
@@ -87,6 +91,9 @@ flowchart TB
     subgraph APPLY["apply"]
         apply
         tailor
+        outreach
+        interview
+        referrals
         track
         brief
     end
@@ -144,8 +151,9 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 |--------|-----|----------------|------------------|-------------|
 | [scrape.py](jobscope/ingest/scrape.py) | 153 | JobSpy + ATS boards → `Job` upserts (per-term isolation) | model, store | `run()`, `_row_to_job()` |
 | [ats.py](jobscope/ingest/ats.py) | 213 | Direct Greenhouse/Lever/Ashby board fetch | httpx, model, store | `fetch_company()`, `run()` |
-| [inbox.py](jobscope/ingest/inbox.py) | 289 | Gmail IMAP sync (read-only, incremental) → weighted classify (+ optional quorum tie-break on ambiguous labels) → `mail_events` → advance funnel | ats, config, model, store, mailrules, (ai lazy) | `run()` |
-| [mailrules.py](jobscope/ingest/mailrules.py) | 444 | Deterministic **weighted-keyword** email classification (signal scoring + ambiguity flag) + company/role parsing (pure, no I/O) | — | `classify_signal()`, `score_signals()`, `classify_scored()`, `is_job_related()`, `parse_company_role()`, `signal_to_status()`, `advance_status()`, `normalize_company()` |
+| [inbox.py](jobscope/ingest/inbox.py) | 402 | Gmail IMAP sync (read-only, incremental) → weighted classify (+ optional quorum tie-break) → `mail_events`; drops transactional/OTP mail; `--reclassify` offline repair; recomputes the funnel after each sync | ats, config, model, store, mailrules, reconcile, (ai lazy) | `run()` |
+| [mailrules.py](jobscope/ingest/mailrules.py) | 643 | Deterministic **weighted-keyword** email classification (smart-quote-normalized scoring + ambiguity flag) + transactional/OTP detection + company/role parsing (pure, no I/O) | — | `classify_signal()`, `classify_scored()`, `is_job_related()`, `is_transactional()`, `parse_company_role()`, `signal_to_status()`, `advance_status()`, `normalize_company()` |
+| [reconcile.py](jobscope/ingest/reconcile.py) | 170 | Rebuild the funnel from the mail timeline — instance-split (reapply / concurrent roles) + conservative reclassify (drop OTP, downgrade false interview/assessment) | model, store, mailrules | `recompute()`, `reclassify()`, `split_instances()` |
 
 ### analyze — the deterministic core
 
@@ -153,7 +161,10 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 |--------|-----|----------------|------------------|-------------|
 | [match/](jobscope/analyze/match/) | 670 | **Package** — transparent fit scoring, tiers, filters, resume routing; split into `seniority`/`experience`/`filters`/`scoring`/`routing`/`run` submodules (all public + private names re-exported) | model, resume, (companies lazy) | `score_job()`, `apply_filters()`, `select_base()`, `run()`, `SENIORITY_RANK` |
 | [classify.py](jobscope/analyze/classify.py) | 61 | Optional AI/quorum seniority + discipline tie-breaker, routed through the classify strategy | ai, match, model | `classify_seniority()` |
-| [resume.py](jobscope/analyze/resume.py) | 339 | Parse Markdown/JSON-Resume/PDF/text → `Resume` + skills | match, model | `import_resume()`, `parse_resume()`, `SKILL_LEXICON` |
+| [resume.py](jobscope/analyze/resume.py) | 345 | Parse Markdown/JSON-Resume/PDF/text → `Resume` + skills; seeds the search profile on first import | match, model, (profile lazy) | `import_resume()`, `parse_resume()`, `SKILL_LEXICON` |
+| [profile.py](jobscope/analyze/profile.py) | 201 | Résumé-derived editable **search profile** (`data/profile.yaml`) that drives `scan` | model, resume | `build_profile()`, `load()`, `ensure_seeded()`, `apply_to_search()`, `run()` |
+| [atscheck.py](jobscope/analyze/atscheck.py) | 217 | Deterministic **ATS parse check** — extracted fields + friendliness score + formatting warnings (+ optional JD keyword coverage) | model, (tailor lazy) | `ats_report()`, `coverage()`, `run()` |
+| [coverage.py](jobscope/analyze/coverage.py) | 324 | Per-requirement JD↔résumé coverage (deterministic + optional AI); requirement extraction (perk/mission filtered) | model, resume, (tailor/ai lazy) | `coverage_report()`, `extract_requirements()`, `run()` |
 | [insights.py](jobscope/analyze/insights.py) | 47 | Skill-gap analysis across matched jobs | resume, store | `skill_gap()`, `run()` |
 
 ### enrich — best-effort public intel (`enrich/` package)
@@ -176,6 +187,9 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 |--------|-----|----------------|------------------|-------------|
 | [apply.py](jobscope/apply/apply.py) | 246 | Prep package + human-in-loop ATS autofill (Playwright); optional generative strategy for filled answers | ai, email, tailor, model, store | `prep()`, `apply()` |
 | [tailor.py](jobscope/apply/tailor.py) | 198 | Per-job resume + cover tailoring (deterministic + AI/quorum rewrite grounded with full JD/news context) | ai, pdf, model, resume, store | `run()`, `analyze()` |
+| [outreach.py](jobscope/apply/outreach.py) | 423 | Resolve a recruiter/HR contact (site-verified) + draft a tailored résumé email; preview/send guardrails; structured `/api/outreach` helpers | ai, email, tailor, model, store, httpx | `run()`, `api_preview()`, `api_send()`, `discover_emails()` |
+| [interview.py](jobscope/apply/interview.py) | 112 | Interview-prep sheet (fit + JD topics + STAR + brief + referrals + notes); `--note` append | model, coverage, referrals, (tailor lazy) | `prep_sheet()`, `run()` |
+| [referrals.py](jobscope/apply/referrals.py) | 136 | Network-activation digest + per-job referral view (leads + copy-ready draft) | store, (enrich.contacts lazy) | `pipeline_referrals()`, `paths_for()`, `run()` |
 | [track.py](jobscope/apply/track.py) | 114 | Application funnel, status, follow-up reminders | model, store | `run()`, `run_new()` |
 | [brief.py](jobscope/apply/brief.py) | 21 | Thin CLI wrapper → `enrich.brief.build()` | enrich.brief | `run()` |
 
@@ -186,7 +200,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | [render.py](jobscope/deliver/render.py) | 272 | The JSON data contract for the React app — per-job records, overview, and the **Applications** board data (pipeline + kanban + email timelines) | companies, store | `build_data()`, `emit_json()`, `_job_record()`, `_application_records()`, `_overview_data()` |
 | [pdf.py](jobscope/deliver/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
 | [email.py](jobscope/deliver/email.py) | 36 | SMTP summaries (optional) | config | `send()` |
-| [serve.py](jobscope/deliver/serve.py) | ~380 | Serves the built SPA (`web/dist`) on 127.0.0.1 + a localhost-only Refresh/publish API (injects the Refresh widget) | render, store | `run()`, `perform_refresh()` |
+| [serve.py](jobscope/deliver/serve.py) | ~430 | Serves the built SPA (`web/dist`) on 127.0.0.1 + a localhost-only, CSRF-guarded API: Refresh/publish (injects the Refresh widget), `/api/token`, and `/api/outreach` (recruiter preview/send) | render, store, (apply.outreach lazy) | `run()`, `perform_refresh()` |
 | [exporter.py](jobscope/deliver/exporter.py) | 22 | Export ranked jobs to JSON/CSV | — | `run()` |
 
 Plus [schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) — the JSON-Schema
@@ -203,15 +217,15 @@ artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboar
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [cli/__init__.py](jobscope/cli/__init__.py) | 195 | argparse dispatch for 18 subcommands — `build_parser` + all `cmd_*` + `main` (lazy per-command imports) | ~all (lazy) | `main()`, `build_parser()` |
+| [cli/__init__.py](jobscope/cli/__init__.py) | 519 | argparse dispatch for 28 subcommands — `build_parser` + all `cmd_*` + `main` (lazy per-command imports; `--db` is authoritative for the run) | ~all (lazy) | `main()`, `build_parser()` |
 | [pipeline.py](jobscope/cli/pipeline.py) | 46 | One-shot `scan → match → enrich → prep → digest` | apply, email, enrich, match, scrape | `run()` |
 | [selftest.py](jobscope/cli/selftest.py) | 233 | Offline self-tests (validate the full stack, no network), including quorum strategy defaults | model, config, store, match, mailrules, ats, inbox, ai | `run()` |
 | [scaffold.py](jobscope/cli/scaffold.py) | 50 | `init`: scaffold config + data dir (non-destructive) | config | `run()` |
 | [__main__.py](jobscope/__main__.py) | 9 | Thin entry-point shim at the package root (`from .cli import main`) | cli | `main` (re-exported) |
 | [__init__.py](jobscope/__init__.py) | 6 | Package marker, `__version__` | — | `__version__` |
 
-**Totals:** ~56 Python modules across 8 sub-packages (incl. the `store/` and `match/` sub-packages and
-9 enrich modules) ≈ **6,000 LOC** of Python.
+**Totals:** ~62 Python modules across 8 sub-packages (incl. the `store/` and `match/` sub-packages and
+9 enrich modules) ≈ **7,300 LOC** of Python.
 
 ### web/ — React dashboard (SPA)
 
@@ -225,13 +239,16 @@ where a passphrase swaps the redacted data for the full un-redacted payload at r
   Applications surfaces. `lib/schema.ts` mirrors the Python contract (§10).
 - **Surfaces:** a bento **Overview** (`components/overview/*` — Fit-distribution `Donut`, `Bars`,
   `SkillConstellation`, `TopMatches`), the ranked **list** (`JobList`/`JobCard`/`JobDrawer` with an archived
-  job-description snapshot), and an **Applications** board (`components/applications/*` — List/Compact/Table/Grouped
+  job-description snapshot and, under local `serve`, an *Email recruiter* panel `RecruiterOutreach` →
+  `/api/outreach`), and an **Applications** board (`components/applications/*` — List/Compact/Table/Grouped
   view switcher, Pipeline health, per-app email `ActivityFeed`, and an inline-SVG `PipelineFlow` Sankey).
 - **Whole-site unlock:** `lib/unlock.ts` fetches (lazily) + AES-GCM-decrypts the encrypted blob; a header
   `UnlockControl` / `UnlockForm` (and the Applications `ApplicationsGate`) take the passphrase and swap the full
   un-redacted payload into `App` state (cached in sessionStorage for the tab).
 - **Chrome:** `Header` (logo + search + ⌘K command pill + Refresh button), a generative `HeroBackdrop`
-  (six `?hero=` variants, reduced-motion aware), and a `cmdk` command palette (`SearchPalette`).
+  (six `?hero=` variants, reduced-motion aware; touch / small screens default to the CSS `aurora`, and the canvas
+  variants freeze + rescale under a pinch-zoom so the backdrop never glitches on mobile), and a `cmdk` command
+  palette (`SearchPalette`).
 - **Refresh:** `lib/refresh.ts` drives the header Refresh button — pull-latest (service-worker update + reload)
   and an on-demand Gmail rescan that POSTs `workflow_dispatch` when a fine-grained token is stored (else
   deep-links to GitHub), throttle-safe via a client cooldown + run de-dupe.
@@ -251,7 +268,7 @@ Fan-in = how many modules import it; fan-out = how many it imports (internal onl
 | **core/model.py** | 228 | ~12 | 0 | Highest fan-in but **pure** — the ideal shape. Leave as-is. |
 | **analyze/match/** | 670 | ~6 | 3 | Largest logic area. **Split done (P-E):** `seniority`/`experience`/`filters`/`scoring`/`routing`/`run` submodules, layered so leaves never import up; scores identical, all names re-exported. |
 | **deliver/render.py** | 272 | 2 | 2 | Slim JSON emitter now that the inline HTML `_TEMPLATE` has retired (the React app in `web/` is the single dashboard). Healthy. |
-| **cli/__init__.py** | 195 | 0 | ~18 | Orchestrator (`build_parser` + `cmd_*` + `main`); wide fan-out but **lazy imports** keep startup light. Healthy. |
+| **cli/__init__.py** | 519 | 0 | ~28 | Orchestrator (`build_parser` + `cmd_*` + `main`); wide fan-out but **lazy imports** keep startup light. Healthy. |
 | **core/config.py** | 200 | ~6 | 0 | Pure config layer, including AI/quorum defaults. Healthy. |
 | **enrich/__init__.py** | 78 | 2 | 8 | Coordinator that **iterates the source registry** (P-B done); sources self-register via `@source(...)`. Healthy. |
 | **core/ai.py** | 105 | ~4 | 1 | Optional layer; all callers have deterministic fallbacks. Quorum-only `strategy`/`history`/`context` arguments are additive and ignored by the single-model fallback. Healthy. |
@@ -268,9 +285,10 @@ parser with subparsers; each subcommand does `set_defaults(func=cmd_<name>)`, an
 `args.func(args, cfg)` inside a `Store` context manager. **Feature modules are imported lazily inside
 each `cmd_*`** so the base CLI stays offline-friendly.
 
-18 subcommands: `init`, `resume import`, `scan`, `match`, `pipeline`, `enrich`, `tailor`,
-`prep`, `apply`, `dashboard`, `serve`, `track`, `inbox`, `new`, `gaps`, `brief`, `export`,
-`selftest`.
+28 subcommands: `init`, `resume import`, `profile`, `scan`, `match`, `pipeline`, `enrich`,
+`tailor`, `prep`, `apply`, `outreach`, `dashboard`, `serve`, `refresh`, `track`, `inbox`,
+`new`, `referrals`, `interview`, `gaps`, `brief`, `atscheck`, `coverage`, `export`,
+`purge`, `prune`, `secrets`, `selftest`.
 
 ### Pipeline (`pipeline.run`)
 
