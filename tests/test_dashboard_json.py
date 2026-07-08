@@ -48,6 +48,28 @@ def test_emit_json_shape():
         store.close()
 
 
+def test_build_data_hides_skip_by_default():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = load_config(None)
+        cfg["output"]["db_path"] = os.path.join(tmp, "s.db")
+        store = Store(cfg["output"]["db_path"])
+        store.upsert_job(Job(source="indeed", title="Security Engineer", company="Acme",
+                             url="u-keep", is_remote=True, score=80.0, tier="Strong").ensure_id())
+        store.upsert_job(Job(source="indeed", title="Software Engineer", company="Beta",
+                             url="u-skip", is_remote=True, score=10.0, tier="Skip",
+                             rationale="\u26d4 off-target title (no required keyword)").ensure_id())
+        # default: Skip-tier roles are hidden from the published payload
+        data = render.build_data(cfg, store)
+        assert data["total"] == 1
+        assert [r["title"] for r in data["rows"]] == ["Security Engineer"]
+        # opt-in: output.include_skip publishes them anyway
+        cfg["output"]["include_skip"] = True
+        data2 = render.build_data(cfg, store)
+        assert data2["total"] == 2
+        assert {"Security Engineer", "Software Engineer"} <= {r["title"] for r in data2["rows"]}
+        store.close()
+
+
 def test_jd_snapshot_cleans_html_and_trims():
     from jobscope.deliver.render import _jd_snapshot
     out = _jd_snapshot("<div><p>Hello &amp; welcome</p><ul><li>One</li><li>Two</li></ul></div>")

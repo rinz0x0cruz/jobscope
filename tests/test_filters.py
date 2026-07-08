@@ -51,6 +51,17 @@ def test_apply_filters_age():
     assert match.apply_filters(_job(date_posted=""), f) is None            # unknown -> keep
 
 
+def test_apply_filters_require_title_keywords():
+    # allow-list: a title matching NONE of the required keywords is forced to Skip
+    f = _mcfg(require_title_keywords=["security", "appsec"])["filters"]
+    assert "off-target" in (match.apply_filters(_job(title="Software Engineer"), f) or "")
+    assert match.apply_filters(_job(title="Application Security Engineer"), f) is None   # matches "security"
+    assert match.apply_filters(_job(title="AppSec Engineer"), f) is None                 # matches "appsec"
+    # empty list (default) => filter is inert / backwards compatible
+    assert match.apply_filters(_job(title="Software Engineer"),
+                               _mcfg(require_title_keywords=[])["filters"]) is None
+
+
 def test_match_run_forces_skip_on_filter():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _mcfg(exclude_clearance=True)

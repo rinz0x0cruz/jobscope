@@ -69,6 +69,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "block_companies": [],
         "block_keywords": [],
         "block_title_keywords": [],
+        "require_title_keywords": [],  # allow-list: if set, a title matching none is filtered to Skip
         "max_age_days": 0,
         "max_years_experience": 0,
     },
@@ -142,6 +143,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "output": {
         "db_path": "data/jobscope.db",
+        "include_skip": False,  # publish Skip-tier (off-target/too-senior) roles to the dashboard? default: hide them
     },
     # Local dashboard server (`jobscope serve`). The served page shows a
     # localhost-only "Refresh & Publish" button that syncs the Gmail inbox
