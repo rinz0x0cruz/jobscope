@@ -5,6 +5,8 @@ import { toast } from 'sonner'
 import type { JobRow } from '@/lib/schema'
 import { TIER_COLOR } from '@/lib/schema'
 import { compLabel } from '@/lib/format'
+import { scoreToGrade } from '@/lib/gamification'
+import { useScoreFormat } from '@/hooks/useScoreFormat'
 import { RecruiterOutreach } from '@/components/RecruiterOutreach'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -127,6 +129,7 @@ function DrawerBody({
   const e = job.enrich
   const stock = e.stock
   const comp = compLabel(job)
+  const { format } = useScoreFormat()
   const others = allRows.filter((r) => r.company === job.company && r.id !== job.id).slice(0, 8)
 
   const copyLink = async () => {
@@ -143,7 +146,7 @@ function DrawerBody({
       {/* header */}
       <div className="flex items-start gap-3 px-5 py-4">
         <span className="mt-0.5 text-2xl font-semibold tnum" style={{ color: TIER_COLOR[job.tier] }}>
-          {Math.round(job.score)}
+          {format === 'grade' ? scoreToGrade(job.score) : Math.round(job.score)}
         </span>
         <div className="min-w-0 flex-1">
           <Dialog.Title className="text-[15px] font-semibold leading-snug">{job.title}</Dialog.Title>

@@ -5,6 +5,8 @@ import type { JobRow } from '@/lib/schema'
 import { TIER_COLOR } from '@/lib/schema'
 import { compLabel, daysAgo, stockChange, stockLabel } from '@/lib/format'
 import { trackSpotlight } from '@/lib/spotlight'
+import { scoreToGrade } from '@/lib/gamification'
+import { useScoreFormat } from '@/hooks/useScoreFormat'
 
 function Pill({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -20,6 +22,7 @@ function Pill({ children, className = '' }: { children: ReactNode; className?: s
 
 export function JobCard({ row, onOpen }: { row: JobRow; onOpen: (id: string) => void }) {
   const reduce = useReducedMotion()
+  const { format } = useScoreFormat()
   const tierColor = TIER_COLOR[row.tier]
   const comp = compLabel(row)
   const stock = stockLabel(row)
@@ -48,7 +51,7 @@ export function JobCard({ row, onOpen }: { row: JobRow; onOpen: (id: string) => 
       <div className="flex items-start gap-3">
         <div className="flex w-11 shrink-0 flex-col items-center pt-0.5">
           <span className="text-lg font-semibold tnum" style={{ color: tierColor }}>
-            {Math.round(row.score)}
+            {format === 'grade' ? scoreToGrade(row.score) : Math.round(row.score)}
           </span>
           <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-border">
             <div

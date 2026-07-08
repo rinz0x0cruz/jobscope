@@ -1,6 +1,9 @@
-import { useMemo, type ReactElement } from 'react'
+import { useMemo, useRef, type ReactElement } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
+import { Download } from 'lucide-react'
+import { toast } from 'sonner'
 import type { Application } from '@/lib/schema'
+import { downloadSvg } from '@/lib/exportSvg'
 import { pipelineMetrics } from './constants'
 
 // Column node colors — theme tokens, plus a semantic red for rejections.
@@ -65,6 +68,7 @@ function label(x: number, y: number, anchor: 'start' | 'middle' | 'end', text: s
  */
 export function PipelineFlow({ apps }: { apps: Application[] }) {
   const reduce = useReducedMotion()
+  const svgRef = useRef<SVGSVGElement>(null)
   const els = useMemo(() => {
     const p = pipelineMetrics(apps)
     if (p.submitted < 1) return null
@@ -146,18 +150,37 @@ export function PipelineFlow({ apps }: { apps: Application[] }) {
 
   if (!els) return null
 
+  const onExport = () => {
+    if (!svgRef.current) return
+    downloadSvg(svgRef.current, 'jobscope-pipeline.svg')
+    toast.success('Exported pipeline.svg')
+  }
+
   return (
-    <motion.svg
-      initial={reduce ? false : { opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.4 }}
-      viewBox={`0 0 ${els.W} ${els.H}`}
-      preserveAspectRatio="xMidYMid meet"
-      role="img"
-      aria-label="Application pipeline flow — how far each application progressed"
-      className="mx-auto block h-auto w-full max-w-[820px]"
-    >
-      {els.content}
-    </motion.svg>
+    <figure className="relative m-0">
+      <button
+        type="button"
+        onClick={onExport}
+        aria-label="Export pipeline as SVG"
+        title="Download this pipeline flow as an SVG"
+        className="absolute right-1 top-1 z-10 flex items-center gap-1 rounded-lg border border-border bg-card/80 px-2 py-1 text-[11px] font-medium text-dim backdrop-blur transition hover:border-border-h hover:text-fg"
+      >
+        <Download size={13} />
+        <span className="hidden sm:inline">SVG</span>
+      </button>
+      <motion.svg
+        ref={svgRef}
+        initial={reduce ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.4 }}
+        viewBox={`0 0 ${els.W} ${els.H}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label="Application pipeline flow — how far each application progressed"
+        className="mx-auto block h-auto w-full max-w-[820px]"
+      >
+        {els.content}
+      </motion.svg>
+    </figure>
   )
 }
