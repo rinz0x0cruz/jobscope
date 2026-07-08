@@ -96,3 +96,10 @@ class ApplicationsMixin:
         cur = self.conn.execute("DELETE FROM applications")
         self.conn.commit()
         return cur.rowcount
+
+    def delete_application(self, job_id_: str) -> int:
+        """Delete a single application row (used when recompute rebuilds the
+        instance rows for a company). Returns the number of rows removed."""
+        cur = self.conn.execute("DELETE FROM applications WHERE job_id = ?", (job_id_,))
+        self.conn.commit()
+        return cur.rowcount

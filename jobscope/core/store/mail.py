@@ -39,6 +39,28 @@ class MailMixin:
             rows = self.conn.execute("SELECT * FROM mail_events ORDER BY date, first_seen")
         return [dict(r) for r in rows]
 
+    def update_mail_event(self, event_id: str, *, signal: Optional[str] = None,
+                          job_id: Optional[str] = None) -> None:
+        """Patch a stored event's classified signal and/or linked job_id in place
+        (the event id is stable, derived from account|message_id)."""
+        sets: list[str] = []
+        params: list[Any] = []
+        if signal is not None:
+            sets.append("signal = ?")
+            params.append(signal)
+        if job_id is not None:
+            sets.append("job_id = ?")
+            params.append(job_id)
+        if not sets:
+            return
+        params.append(event_id)
+        self.conn.execute(f"UPDATE mail_events SET {', '.join(sets)} WHERE id = ?", params)
+        self.conn.commit()
+
+    def delete_mail_event(self, event_id: str) -> None:
+        self.conn.execute("DELETE FROM mail_events WHERE id = ?", (event_id,))
+        self.conn.commit()
+
     def purge_mail_events(self, older_than_days: Optional[int] = None) -> int:
         """Delete stored email events -- the recruiter PII and body snippets. With
         ``older_than_days`` set, only events older than that cutoff are removed

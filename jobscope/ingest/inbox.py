@@ -39,7 +39,17 @@ _HEADER_FIELDS = "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFEREN
 
 
 def run(cfg: dict, store, *, dry_run: bool = False, account: Optional[str] = None,
-        since: Optional[str] = None, backfill: bool = False) -> int:
+        since: Optional[str] = None, backfill: bool = False,
+        reclassify: bool = False) -> int:
+    if reclassify:
+        # Offline repair: re-check stored events against the current rules and
+        # rebuild the funnel (instance-split), without touching Gmail.
+        from . import reconcile
+        stats = reconcile.reclassify(store)
+        print(f"  reclassified {stats['reclassified']} event(s), dropped "
+              f"{stats['dropped']} transactional, rebuilt {stats['instances']} "
+              f"application instance(s) across {stats['groups']} thread(s).")
+        return 0
     icfg = cfg.get("inbox", {}) or {}
     if not icfg.get("enabled"):
         print("  inbox is disabled. Set inbox.enabled: true and add accounts in config.yaml,")
@@ -56,6 +66,12 @@ def run(cfg: dict, store, *, dry_run: bool = False, account: Optional[str] = Non
     for acct in accounts:
         total_new += _sync_account(cfg, store, acct, dry_run=dry_run, since=since,
                                    backfill=backfill)
+
+    if not dry_run:
+        # Rebuild the funnel from the timeline so a rejection for one application
+        # never collapses a company that has other (or later) active applications.
+        from . import reconcile
+        reconcile.recompute(store)
 
     verb = "would ingest" if dry_run else "ingested"
     print(f"\n  inbox: {verb} {total_new} job-related email(s) across "
