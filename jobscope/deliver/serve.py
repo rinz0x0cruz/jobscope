@@ -322,6 +322,10 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
         step("match", "Scoring matches\u2026")
         from jobscope.analyze import match
         match.run(cfg, store)
+        # Email a digest of newly-matched roles (no-op unless email.enabled;
+        # email.send swallows SMTP errors, so this never aborts the refresh).
+        from jobscope.apply import track as _track
+        _track.send_digest(cfg, store)
         store.meta_set("refresh:last_date", today)
         store.log_run("refresh", 0, "ok")
         # Publish the redacted/encrypted PUBLIC site first (this rebuilds web/dist
