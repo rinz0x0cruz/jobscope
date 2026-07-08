@@ -330,6 +330,197 @@ drift, tames the neon into intentional accents, and delivers the “bigger/bette
 “go serious” pivot and **C** as the “go bold” option. A strong hybrid also exists: **A’s palette + C’s
 command bar + Sankey-forward Applications tab.**
 
+---
+---
+
+# Stage 3 — Execution & refinement plan (Concept A · "Nightshift, refined")
+
+> Direction locked (from review + owner): **Concept A** is chosen and **Phase 1 shipped** — the
+> Nightshift Console tokens (`dbfa6ad`) and the `grid` hero default (`4e634e4`) are on `main`. Owner's
+> Stage-3 brief: keep & **elevate the cyber vibe** but make it **cleaner / calmer / more whitespace**,
+> add **premium-SaaS polish** (Linear / Vercel / Stripe), stay **data-dense** where it earns it, lean
+> into **gamification** (Chances / streaks), and — explicitly — **"lose the moving grid and replace it
+> with a better one."** Guardrails: §0 above still bind (offline PWA, redaction, JSON contract, Sankey
+> kept, encrypted Applications, a11y floor) **plus** *zero feature regressions* and *no heavy new deps
+> (bundle ≤ current ~316 KB gz)*.
+
+This stage turns the chosen concept into a **phased, shippable execution plan**. It does not re-litigate
+Stage 1/2 — it builds on them.
+
+## S3.0 — The refinement thesis (what a re-audit of the *shipped* Phase 1 revealed)
+
+Concept A promised *"tamed neon — edges & glows, not everywhere."* The **implementation** hasn't yet
+delivered that discipline: at rest, with no user action, the dashboard currently animates **~7 ambient
+layers simultaneously**:
+
+1. `body` `jsBgDrift` (11 s gradient wash + 86 px grid) · 2. `.js-ambient` conic aurora (`jsAmbientDrift`
+9 s) · 3. `.js-scanlines` CRT texture · 4. `HeroBackdrop` canvas at 60 fps (default **`grid`**) ·
+5. `.js-cyber-tree` self-drawing tree **+ `jsLeafFall` falling leaves** · 6. `.js-header-gradient`
+sweep (`jsHeaderSweep` 8 s) · 7. per-card `.js-gradient-card` animated borders (`jsGradientSweep`
+6.5 s) **+** a `::before` sweep — plus the logo (`jsGradientSweep` + rotating conic) and title
+(`jsGradientSweep`).
+
+**This is the single thing standing between "today" and "premium/calm."** It's loud, it competes with
+the data, and it burns battery. So Stage 3's spine is one sentence:
+
+> **Deliver the discipline Concept A already promised: collapse ~7 always-on ambient layers to one,
+> move energy from *chrome* to *content + momentum*, and let hierarchy come from surface + type +
+> spacing instead of perpetual glow.**
+
+Everything below serves that thesis, inside the guardrails.
+
+## S3.1 — Design-system refinement (extends the shipped Nightshift tokens)
+
+Keep the Nightshift palette DNA (warm amber signal + cool cyan/sky data on deep ink). Add the missing
+*structure* around it. All in `web/src/styles/theme.css`.
+
+**Elevation ramp (replace animated gradient borders with real surfaces):**
+```
+--surface-0 = --bg      (page)        --surface-2 = --card   (card)
+--surface-1 = --bg2     (sunken)      --surface-3 = new      (popover/drawer, ~+6% lightness)
+--edge      = --border  (1px hairline, resting)
+--edge-strong = --border-h (hover/active)
+```
+Retire `.js-gradient-card` animated borders → `--surface-2` + `1px --edge` + soft `--shadow` (+ optional
+static 1px inset top-highlight). Keep `.js-spotlight-card` but hover-only, reduced intensity.
+
+**Semantic color aliases (stop components reaching for `--neon-*`):**
+```
+--text-1/2/3 = --fg/--dim/--mute        --brand   = --accent  (the one warm CTA)
+--entity     = --signal  (links/companies/data)   --positive/--warning/--danger = --strong/--stretch/--hot
+--focus      = --accent
+```
+Reduce hues-per-screen to: ink neutrals + one entity-cool + one brand-warm + tier colors. The
+violet/emerald neon quartet leaves with the animated borders. (This also fixes the Stage-1 §6.1
+"neon-holds-warm-values" naming drift by making role-named aliases the public API.)
+
+**Type scale + role assignment** (families already loaded — Inter / JetBrains Mono / Space Grotesk):
+`display 40/700 Grotesk` (one hero number = Chances) · `h1 20/700` · `h2 16/600` · `body 14/450` ·
+`label 12/500` · `micro 11/600 upper +0.08em`. **Rule: every number is JetBrains-Mono + tabular-nums**
+(scores, KPIs, funnel, salary, dates, IDs). This is the cheapest "analyst-grade" upgrade.
+
+**Motion tokens + doctrine:**
+```
+--dur-fast 120ms  --dur-base 200ms  --dur-slow 320ms
+--ease-standard cubic-bezier(.2,0,0,1)  --ease-entrance cubic-bezier(0,0,0,1)  --ease-exit cubic-bezier(.4,0,1,1)
+spring (interaction): stiffness 400–500 / damping 30–40  (standardize the existing usage)
+```
+Delete perpetual loops (`jsBgDrift`, `jsHeaderSweep`, card/logo/title `jsGradientSweep`, `jsLeafFall`).
+Keep motion for **state change** (filter add/remove, tab/segment switch, drawer, count-up on first
+paint, toast) and **one gated micro-delight** (streak week / first offer). Reduced-motion → instant +
+single static backdrop frame (fewer layers = less to suppress).
+
+**Density mode:** new `useDensity()` (`comfortable | compact`, localStorage — mirrors `useTheme` /
+`useScoreFormat`). Compact tightens card padding, row height, and drops one type step in lists/tables —
+serves "data-dense" without punishing casual use.
+
+## S3.2 — The backdrop (retire the moving grid — the owner's explicit ask)
+
+- **Delete** the `grid` variant (synthwave perspective) and, recommended, `radar`.
+- **New default = "Signal"**: one calm, low-intensity layer — a sparse slow constellation + a single
+  soft brand-tinted gradient wash at ~40–50 % of today's intensity, `mix-blend: screen`, **paused on
+  blur / hidden tab / reduced-motion**. Keeps the "live job-network" metaphor without the grid's motion.
+- **Collapse the ambient stack**: default page ships **backdrop only**. Move `.js-scanlines` +
+  `.js-ambient` to opt-in; **retire the cyber-sakura tree + falling leaves** (Stage 1 §4.4 flagged it as
+  under-sized/off-screen — recommend deletion, not enlargement). Net: **7 always-on layers → 1.**
+- Keep the `?hero=` override (`constellation`, `aurora`, new `signal`) and the mobile static/aurora +
+  pinch-zoom-freeze logic (`#46`). This is the highest-leverage calm + perf win in the plan.
+
+## S3.3 — Information architecture refinement
+
+7 tabs conflate *mode* and *filter*. Refine to **3 primary destinations + an in-context tier segment**:
+```
+Primary nav:  Overview · Jobs · Applications
+Inside Jobs:  [ All · Strong · Good · Stretch · Skip ]  segmented control (radiogroup)  + facets + search
+```
+- `tab` param still accepts `Strong|Good|…` (deep links unchanged) — the segmented control writes the
+  same param; **no `urlState.ts` schema change**, render-only.
+- Consolidate display toggles (**theme · density · score-format**) into one header **View** menu; keep
+  search + `⌘K` + Refresh + Unlock as the prominent actions. Promote `⌘K` as the primary accelerator.
+
+## S3.4 — Surface-by-surface execution (maps Stage-1 §3 → redesigned form)
+
+- **Global shell / Header** (`Header.tsx`, `App.tsx`): calm wordmark (drop title sweep), remove header
+  sweep + tree + ambient mounts, **View** menu, prominent search + `⌘K`. Consider the Lottie mark → crisp
+  static SVG (see S3.6 bundle note).
+- **Overview** (`overview/*`): re-sequence the 7 panels into a narrative — **hero row: Momentum/Chances
+  (large) + Fit donut**; then pipeline + top-companies; then skill-gaps full-width; then top-matches.
+  Calmer `Card` (static border, hover-only spotlight). Momentum is the emotional anchor (display numeral,
+  clean streak/velocity row, slim factor bars) — the gamification budget lives here.
+- **Jobs list/card/drawer** (`JobList.tsx`, `JobCard.tsx`, `JobDrawer.tsx`): scannable JobCard (solid
+  mono score/grade chip, 16/600 title, entity-cool company, 2–3 signal pills, quiet Apply); Strong-tier
+  *pulse* → static tier chip; subtle lift; **density-aware**. Keep virtualization + grouping. Drawer:
+  sticky header (score/tier/Apply/copy-link/prev-next) + clean accordion + better JD reading; keep JD
+  search + recruiter outreach.
+- **Applications** (`applications/*`): keep 4 views; **Table** becomes the data-dense showcase, **List**
+  the comfortable default. **Sankey (must-keep)**: recolor to entity-cool flows + one warm for offers +
+  `--danger` rejections + muted no-response, clearer labels, keep SVG export (#35). PipelineHealth →
+  follow-ups-due as the actionable hero.
+- **Filters / command** (`filters/*`): compact facet bar; mobile → single **Filters** popover w/ count;
+  keep the disabled **Resume** hint (#10) and `ActiveChips` layout motion. Expand **SearchPalette (⌘K)**
+  into a real command surface (navigate + act + fuzzy role search, grouped, recents).
+- **System states**: first-class **empty / loading / skeleton / error** states (new `Skeleton.tsx`),
+  per-tab empty states, keep the encrypted Applications gate.
+- **Mobile**: static backdrop, segmented nav row, condensed header (mark + search + `⌘K` + "···"),
+  single-column comfortable cards, sticky-first-column tables, hit targets ≥ 40 px.
+
+## S3.5 — Phased rollout (foundation-first; each phase independently green; no contract change)
+
+| Phase | Theme | Scope | Exit check |
+|------|-------|-------|-----------|
+| **P0 Foundation** | tokens & motion | elevation ramp, semantic aliases, type scale (mono numerals), motion tokens, `useDensity`; **delete the tree + collapse ambient to backdrop-only; retire `grid`; ship calm "Signal" default** | vitest + build green; visibly calmer; bundle ≤ current |
+| **P1 Chrome & IA** | header + nav | header reorg, **View** menu, 3-primary nav + tier **segment**, expanded `⌘K` | deep-links resolve tiers; keyboard; a11y |
+| **P2 Overview** | bento + Momentum hero | re-sequenced bento, calmer cards, Momentum hero, mono numerals | overview/render tests; screenshot |
+| **P3 Jobs** | list/card/drawer + density | JobCard redesign, group headers, drawer accordion + sticky header, density mode | JobCard/drawer tests; virtualization intact |
+| **P4 Applications** | board + Sankey/health | views refined, Sankey recolor, PipelineHealth clarity | applications tests; Sankey export works |
+| **P5 Polish** | states/a11y/perf | empty/loading/skeleton/error, contrast audit, motion polish, bundle trims (lazy-split Applications + drawer; optional Lottie→SVG) | full vitest + build; a11y checklist; bundle ≤ baseline |
+
+Per phase (mirrors `AGENTS.md`): branch → implement → `npm run test` + `tsc`/`vite build` +
+`pytest`/`selftest` (untouched, green) → `dashboard --emit-web` + preview screenshot → PR → merge.
+**Ship P0 alone first** so the calm is felt immediately and everything else layers onto a stable base.
+
+## S3.6 — Accessibility & performance deltas
+
+- **A11y:** contrast-audit the calmer palette (both themes) to AA/AAA; tier segment as `radiogroup` w/
+  arrow keys; keep Radix focus-trap + global reduced-motion switch; hit targets ≥ 40 px; re-check
+  `aria-label`s on the reorganized header/View menu.
+- **Perf:** removing 5–6 always-on animation layers is *prettier and faster* (less idle CPU/GPU/battery).
+  **No new deps** (G4); prefer subtraction — evaluate **Lottie → static SVG** mark and **code-splitting
+  Applications + JobDrawer** to trim the ~316 KB gz initial bundle. Re-measure each phase; DoD = **≤
+  baseline gzip**.
+
+## S3.7 — Risks · definition of done · open decisions
+
+**Risks:** scope creep → hard phase gating; regressions → keep full vitest + per-surface render tests +
+screenshot review; taste → P0 ships the calm foundation first for a go/no-go; contrast regressions →
+audit in P0 + P5; identity loss → keep the Nightshift duotone + one signature backdrop + mono-numeral
+console feel (restraint ≠ generic).
+
+**Definition of done:** reads calmer/premium (≤ 1 ambient layer at rest); bundle gzip ≤ current; **0
+feature regressions**; `pytest` + `selftest` + full `vitest` green; **JSON contract untouched**
+(`tests/test_dashboard_json.py` is the canary); all deep-links resolve; reduced-motion parity + AA
+contrast + full keyboard.
+
+**Open decisions (confirm before P0):** (1) tier tabs → segmented control *(rec: yes)*; (2) **retire the
+sakura tree entirely** *(rec: yes)*; (3) backdrop default = new calm **"Signal"** *(rec: yes)*; (4)
+Lottie → static SVG for bundle savings *(optional)*; (5) density default = comfortable + compact opt-in
+*(rec: yes)*.
+
+## Appendix S3 — file change-map (by phase)
+
+- **P0:** `web/src/styles/theme.css` (tokens, elevation, type, motion; delete tree/ambient/sweep
+  keyframes), `web/src/components/HeroBackdrop.tsx` (new `signal` default; drop `grid`/`radar`),
+  `web/src/App.tsx` (remove `.js-ambient` / `.js-scanlines` / `CyberSakura` mounts), delete
+  `web/src/components/CyberSakura.tsx`, new `web/src/hooks/useDensity.tsx`.
+- **P1:** `components/Header.tsx`, new `components/ViewMenu.tsx`, `components/Tabs.tsx` (→ primary nav),
+  new `components/TierSegment.tsx`, `components/filters/SearchPalette.tsx`.
+- **P2:** `components/overview/{Overview,Momentum,Donut,Bars}.tsx` + `Card` wrapper.
+- **P3:** `components/{JobCard,JobList,JobDrawer}.tsx` + density adoption.
+- **P4:** `components/applications/{Applications,views,AppCard,PipelineFlow,PipelineHealth}.tsx`.
+- **P5:** new `components/Skeleton.tsx` + empty/error states; `vite.config.ts` (lazy split); optional
+  `SignalLottie` → SVG. Tests: extend `web/test/*` per surface; `tests/test_dashboard_json.py` stays
+  untouched-and-green as the contract canary.
+
 ## D. Surface-by-surface overhaul (functionality preserved — concept-agnostic)
 
 Every current surface (§3) maps to a redesigned form; **no data/route/contract change** unless noted.
