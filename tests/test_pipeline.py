@@ -49,6 +49,7 @@ def test_pipeline_ranks_and_renders():
         assert ranked[-1].company == "ShopCo"        # sales role at the bottom
         assert ranked[0].score > ranked[-1].score
 
+        cfg["output"]["include_skip"] = True     # this test verifies full-set score ordering, incl. Skip-tier
         data = render.build_data(cfg, store)
         companies = [r["company"] for r in data["rows"]]
         assert "Senior Security Engineer" in [r["title"] for r in data["rows"]]

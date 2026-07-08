@@ -26,6 +26,11 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     redaction when ``public`` is set.
     """
     jobs = store.jobs(order_by_score=True)
+    # Skip-tier roles (off-target / too-senior / filtered) are hidden from the
+    # dashboard by default, so the pages show only actionable matches. Set
+    # output.include_skip: true to publish them anyway.
+    if not (cfg.get("output", {}) or {}).get("include_skip"):
+        jobs = [j for j in jobs if (j.tier or "Skip") != "Skip"]
     rows = [_job_record(j, store.get_enrichment(j.company) if j.company else {}, store)
             for j in jobs]
     overview = _overview_data(cfg, store)

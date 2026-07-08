@@ -32,6 +32,10 @@ def test_broader_experience_phrases():
     assert required_experience_years(_job("Security Engineer", "5 yrs exp")) == 5.0
     assert required_experience_years(_job("Security Engineer", "3 to 5 years")) == 3.0
     assert required_experience_years(_job("Security Engineer", "5 years' experience")) == 5.0
+    assert required_experience_years(_job("Security Engineer", "over 6 years of security work")) == 6.0
+    assert required_experience_years(_job("Security Engineer", "more than 5 years")) == 5.0
+    assert required_experience_years(_job("Security Engineer", "6 or more years")) == 6.0
+    assert required_experience_years(_job("Security Engineer", "8 plus years")) == 8.0
 
 
 def test_takes_highest_bar_across_title_and_text():

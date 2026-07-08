@@ -38,6 +38,10 @@ def required_experience_years(job: Job) -> Optional[float]:
         nums.append(int(m.group(1)))
     for m in re.finditer(r"(?<![\d-])(\d{1,2})\s*\+?\s*(?:years?|yrs?)\s+(?:required|minimum|min\b)", text):  # "5 years required"
         nums.append(int(m.group(1)))
+    for m in re.finditer(r"(?:over|more than)\s+(\d{1,2})\s*(?:years?|yrs?)", text):    # "over 5 years"
+        nums.append(int(m.group(1)))
+    for m in re.finditer(r"(?<![\d-])(\d{1,2})\s*(?:or more|plus)\s+(?:years?|yrs?)", text):  # "5 or more years"
+        nums.append(int(m.group(1)))
     explicit = max((n for n in nums if 1 <= n <= 25), default=None)
 
     rank = _job_seniority(job)

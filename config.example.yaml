@@ -87,6 +87,7 @@ filters:                              # jobs matching these are forced to Skip (
   block_companies: []                 # substring match on company (e.g. staffing agencies)
   block_keywords: []                  # substring match on title+description
   block_title_keywords: []            # substring match on title only
+  require_title_keywords: []          # allow-list: if set, a title matching NONE of these is forced to Skip (e.g. [security, appsec, detection])
   max_age_days: 0                     # 0 = off; else drop postings older than N days
   max_years_experience: 0             # 0 = off; else drop roles asking clearly more (Senior/Staff titles, "N+ years") than this cap
 
@@ -167,6 +168,7 @@ apply:
 
 output:
   db_path: "data/jobscope.db"
+  include_skip: false                 # false (default) hides Skip-tier (off-target/too-senior) roles from the dashboard; true publishes them
 
 # Local dashboard server (`jobscope serve`). The served page shows a
 # localhost-only "Refresh & Publish" button that syncs your Gmail inbox

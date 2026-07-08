@@ -90,6 +90,12 @@ def apply_filters(job: Job, fcfg: dict) -> Optional[str]:
     for kw in fcfg.get("block_keywords", []):
         if kw and kw.lower() in blob:
             return f"blocked keyword ({kw})"
+    # Allow-list on the title: when set, a posting whose title contains none of
+    # these keywords is off-target (e.g. a generic "Software Engineer" for a
+    # security search) and is filtered to Skip.
+    req_titles = [k.lower() for k in (fcfg.get("require_title_keywords") or []) if k]
+    if req_titles and not any(k in title for k in req_titles):
+        return "off-target title (no required keyword)"
     if fcfg.get("exclude_clearance"):
         cf = clearance_flags(job)
         if cf:
