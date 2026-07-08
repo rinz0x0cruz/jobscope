@@ -21,7 +21,7 @@ Usage:
     python -m jobscope dashboard [--public]        Emit the dashboard JSON payload
     python -m jobscope serve [--port 8799 --open]  Serve the dashboard locally
     python -m jobscope track [--set job_id=status] Funnel + follow-up reminders
-    python -m jobscope inbox [--dry-run]           Sync Gmail (IMAP) -> application funnel
+    python -m jobscope inbox [--dry-run|--reclassify]  Sync Gmail -> funnel (--reclassify: offline repair)
     python -m jobscope export [--format json|csv]  Export ranked jobs
     python -m jobscope purge [--mail --applications --older-than N]  Wipe stored email PII / apps
     python -m jobscope prune [--yes]               Drop stored jobs outside your India/remote scope
@@ -151,7 +151,8 @@ def cmd_inbox(args, cfg):
         cfg.setdefault("inbox", {})["include_spam"] = True
     with _store(args, cfg) as store:
         return inbox.run(cfg, store, dry_run=args.dry_run, account=args.account,
-                         since=args.since, backfill=args.backfill)
+                         since=args.since, backfill=args.backfill,
+                         reclassify=getattr(args, "reclassify", False))
 
 
 def cmd_new(args, cfg):
@@ -420,6 +421,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Ignore the incremental marker and rescan lookback_days")
     sp.add_argument("--include-spam", action="store_true",
                     help="Also sweep the Gmail spam/junk folder this run (overrides inbox.include_spam)")
+    sp.add_argument("--reclassify", action="store_true",
+                    help="Offline: re-check stored mail with the current rules + rebuild the funnel "
+                         "(instance-split; no Gmail sync)")
     sp.add_argument("--dry-run", action="store_true", help="Classify and print, but write nothing")
     sp.set_defaults(func=cmd_inbox)
 
