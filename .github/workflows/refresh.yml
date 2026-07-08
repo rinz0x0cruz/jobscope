@@ -94,6 +94,7 @@ jobs:
           PYTHONPATH: "."
           JOBSCOPE_GMAIL_APP_PW: ${{ secrets.JOBSCOPE_GMAIL_APP_PW }}
           JOBSCOPE_GMAIL_APP_PW_2: ${{ secrets.JOBSCOPE_GMAIL_APP_PW_2 }}
+          JOBSCOPE_SMTP_PASSWORD: ${{ secrets.JOBSCOPE_SMTP_PASSWORD }}
         run: |
           if [ "${{ inputs.full_scan }}" = "true" ]; then
             python -m jobscope scan || echo "::warning::job-board scan failed (non-fatal)"
@@ -101,6 +102,7 @@ jobs:
           python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)" --include-spam
           python -m jobscope inbox --reclassify
           python -m jobscope match
+          python -m jobscope new --email || echo "::warning::new-match digest failed (non-fatal)"
 
       - name: Save encrypted DB back to the `data` branch
         if: steps.guard.outputs.ready == 'true'
@@ -146,6 +148,9 @@ jobs:
 #      JOBSCOPE_APPS_PASSPHRASE  the same passphrase you unlock the Applications tab with
 #      JOBSCOPE_GMAIL_APP_PW     Gmail app-password for account 1
 #      JOBSCOPE_GMAIL_APP_PW_2   Gmail app-password for account 2 (omit if you have one account)
+#      JOBSCOPE_SMTP_PASSWORD    (optional) SMTP app-password used to email a digest of new
+#                                matches each refresh; only sends when your JOBSCOPE_CONFIG sets
+#                                email.enabled: true (otherwise the digest step is a no-op)
 #      JOBSCOPE_CONFIG           your full config.yaml as text, but with NO passwords in it
 #                                (accounts use password_env: JOBSCOPE_GMAIL_APP_PW / _2),
 #                                and set:  ai: { enabled: false },  output: { db_path: data/jobscope.db },

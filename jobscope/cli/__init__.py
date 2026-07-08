@@ -158,6 +158,11 @@ def cmd_inbox(args, cfg):
 def cmd_new(args, cfg):
     from ..apply import track
     with _store(args, cfg) as store:
+        if getattr(args, "email", False):
+            n = track.send_digest(cfg, store)
+            print(f"  emailed a digest of {n} new match(es)." if n
+                  else "  no digest sent (nothing new, or email disabled).")
+            return 0
         return track.run_new(store)
 
 
@@ -427,7 +432,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--dry-run", action="store_true", help="Classify and print, but write nothing")
     sp.set_defaults(func=cmd_inbox)
 
-    sub.add_parser("new", help="Show new Strong/Good jobs since your last review").set_defaults(func=cmd_new)
+    sp = sub.add_parser("new", help="Show new Strong/Good jobs since your last review")
+    sp.add_argument("--email", action="store_true",
+                    help="Email a digest of new matches (needs email.enabled) instead of printing")
+    sp.set_defaults(func=cmd_new)
 
     sp = sub.add_parser("referrals",
                         help="Surface referral paths (contacts) across your pipeline + outreach draft")

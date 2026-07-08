@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import html as _html
 from typing import Optional
 
 from jobscope.core.model import STATUSES, Application
@@ -87,6 +88,65 @@ def run_new(store) -> int:
     store.meta_set("last_review", now_iso())
     return 0
 
+
+def send_digest(cfg: dict, store) -> int:
+    """Email a digest of newly-matched Strong/Good roles since the last digest.
+
+    Deterministic and opt-in: a no-op unless ``email.enabled``. The very first
+    run only baselines the ``digest:last`` marker (so we never email the whole
+    backlog at once); every run after emails just the roles first seen since the
+    marker, then advances it once the send succeeds. A transient send failure
+    leaves the marker untouched, so the same roles are retried next run. Reuses
+    the ``email.*`` config, so it adds no new config keys. Returns the number of
+    roles sent (0 when disabled, first-run, or nothing new).
+    """
+    if not (cfg.get("email", {}) or {}).get("enabled"):
+        return 0
+    last = store.meta_get("digest:last")
+    if not last:
+        store.meta_set("digest:last", now_iso())   # baseline; skip the initial flood
+        return 0
+    fresh = [j for j in store.jobs(order_by_score=True)
+             if j.tier in ("Strong", "Good") and j.first_seen and j.first_seen > last][:25]
+    if not fresh:
+        return 0
+    from jobscope.deliver import email as _email
+    subject = f"jobscope: {len(fresh)} new match{'es' if len(fresh) != 1 else ''}"
+    text, html = _digest_body(fresh)
+    if _email.send(cfg, subject, text, html):
+        store.meta_set("digest:last", now_iso())
+    return len(fresh)
+
+
+def _digest_body(jobs: list) -> tuple[str, str]:
+    """Render the (plain-text, HTML) bodies for the new-match digest."""
+    lines, rows = [], []
+    for j in jobs:
+        company = j.company or "?"
+        title = j.title or "?"
+        loc = "Remote" if j.is_remote else (j.location or "")
+        lines.append(f"  [{j.tier}] {company} \u2014 {title} ({int(j.score)})"
+                     + (f"  {loc}" if loc else ""))
+        cell = _html.escape(title)
+        title_html = (f'<a href="{_html.escape(j.url, quote=True)}">{cell}</a>'
+                      if j.url else cell)
+        rows.append(
+            f"<tr><td>{_html.escape(j.tier or '')}</td>"
+            f"<td>{_html.escape(company)}</td>"
+            f"<td>{title_html}</td>"
+            f"<td align='right'>{int(j.score)}</td>"
+            f"<td>{_html.escape(loc)}</td></tr>"
+        )
+    text = "New Strong/Good matches:\n\n" + "\n".join(lines) + "\n"
+    html = (
+        "<p>New Strong/Good matches:</p>"
+        "<table cellpadding='6' style='border-collapse:collapse'>"
+        "<tr><th align='left'>Tier</th><th align='left'>Company</th>"
+        "<th align='left'>Role</th><th align='right'>Score</th>"
+        "<th align='left'>Location</th></tr>"
+        + "".join(rows) + "</table>"
+    )
+    return text, html
 
 
 def _set_status(store, expr: str) -> int:
