@@ -83,7 +83,6 @@ html.light {
     background-size: 220% 220%, auto, auto;
     background-attachment: fixed;
     min-height: 100vh;
-    animation: jsBgDrift 11s ease-in-out infinite alternate;
   }
   a { color: inherit; }
 
@@ -122,12 +121,6 @@ html.light {
 @keyframes jsOverlayOut { from { opacity: 1; } to { opacity: 0; } }
 @keyframes jsDrawerIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @keyframes jsDrawerOut { from { transform: translateX(0); } to { transform: translateX(100%); } }
-@keyframes jsBgDrift { from { background-position: 0% 30%, 0 0, 0 0; } to { background-position: 100% 70%, 44px 0, 0 44px; } }
-@keyframes jsAmbientDrift {
-  0% { transform: translate3d(-4%, -2%, 0) skewX(-10deg); opacity: .72; }
-  50% { transform: translate3d(5%, 3%, 0) skewX(8deg); opacity: .95; }
-  100% { transform: translate3d(-1%, 6%, 0) skewX(-6deg); opacity: .78; }
-}
 @keyframes jsGradientSweep { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
 @keyframes jsSpin { to { transform: rotate(360deg); } }
 @keyframes jsTreeTrace { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
@@ -148,22 +141,8 @@ html.light {
 .js-drawer[data-state="open"] { animation: jsDrawerIn 0.26s cubic-bezier(0.32, 0.72, 0, 1); }
 .js-drawer[data-state="closed"] { animation: jsDrawerOut 0.2s ease-in forwards; }
 
-.js-ambient {
-  position: fixed;
-  inset: -28% -16% auto -16%;
-  z-index: 0;
-  height: 72vh;
-  pointer-events: none;
-  background:
-    conic-gradient(from 210deg at 50% 50%, transparent 0 10%, color-mix(in srgb, var(--neon-cyan) 30%, transparent) 18%, transparent 31%, color-mix(in srgb, var(--neon-violet) 26%, transparent) 46%, transparent 60%, color-mix(in srgb, var(--neon-blue) 24%, transparent) 74%, transparent 88%);
-  filter: blur(38px) saturate(1.7);
-  opacity: .82;
-  animation: jsAmbientDrift 9s ease-in-out infinite alternate;
-}
-
-/* Signal-constellation backdrop (replaces the sakura tree): a drifting particle
-   network rendered by SignalField.tsx, sitting with the ambient aurora behind the
-   content (z-0). Full-viewport + subtle so it reads as a live "job network". */
+/* Calm "Signal" backdrop: a low-intensity drifting particle network (HeroBackdrop.tsx)
+   that reads as a live "job network" — the single ambient layer behind content (z-0). */
 .js-signal-field {
   position: fixed;
   inset: 0;
@@ -171,10 +150,10 @@ html.light {
   width: 100%;
   height: 100%;
   pointer-events: none;
-  opacity: .62;
+  opacity: .5;
   mix-blend-mode: screen;
 }
-html.light .js-signal-field { opacity: .4; mix-blend-mode: multiply; }
+html.light .js-signal-field { opacity: .32; mix-blend-mode: multiply; }
 
 /* Aurora hero variant — slow blurred gradient blobs (calm / premium option). */
 .js-hero-aurora { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; opacity: .6; }
@@ -190,21 +169,6 @@ html.light .js-hero-aurora span { mix-blend-mode: multiply; }
 @keyframes jsAuroraA { to { transform: translate(18vw, 12vh) scale(1.2); } }
 @keyframes jsAuroraB { to { transform: translate(-16vw, 10vh) scale(1.15); } }
 @keyframes jsAuroraC { to { transform: translate(10vw, -14vh) scale(1.25); } }
-
-/* Faint console scanlines — a whisper of CRT texture (concept C), behind content. */
-.js-scanlines {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  opacity: .5;
-  background-image: repeating-linear-gradient(
-    0deg,
-    color-mix(in srgb, var(--fg) 4%, transparent) 0 1px,
-    transparent 1px 4px
-  );
-}
-html.light .js-scanlines { opacity: .34; }
 
 /* Mono-forward numerals — the console identity made visible on KPI values. */
 .js-kpi-card > div:first-child {
