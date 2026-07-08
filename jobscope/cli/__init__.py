@@ -119,7 +119,11 @@ def cmd_dashboard(args, cfg):
     from ..deliver import render
     with _store(args, cfg) as store:
         path = render.emit_json(cfg, store, public=getattr(args, "public", False))
+        web = render.emit_web(cfg, store) if getattr(args, "emit_web", False) else None
     print(f"  dashboard json -> {path}")
+    if getattr(args, "emit_web", False):
+        print(f"  web dashboard  -> {web}" if web
+              else "  web dashboard  -> skipped (web/src/data not found)")
     if getattr(args, "open", False):
         print("  view the dashboard with `jobscope serve`")
     return 0
@@ -395,6 +399,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "(no referral contacts, application funnel, or search terms)")
     sp.add_argument("--emit-json", action="store_true",
                     help="(default now) kept for compatibility with the publish scripts")
+    sp.add_argument("--emit-web", action="store_true",
+                    help="Also mirror the un-redacted payload to web/src/data/dashboard.json "
+                         "(what the local web dev server / npm build reads)")
     sp.add_argument("--open", action="store_true",
                     help="(deprecated) view the dashboard with `jobscope serve`")
     sp.set_defaults(func=cmd_dashboard)
