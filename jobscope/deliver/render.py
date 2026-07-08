@@ -57,6 +57,28 @@ def emit_json(cfg: dict, store, public: bool = False) -> str:
     return path
 
 
+def emit_web(cfg: dict, store) -> str | None:
+    """Mirror the un-redacted payload into the web app's data path so a plain
+    ``npm run dev`` / ``npm run build`` bakes fresh data (issue #5).
+
+    The web SPA imports ``web/src/data/dashboard.json``; ``emit_json`` only writes
+    ``data/dashboard.json``, so without this the dev build shows stale data. Always
+    writes the *un-redacted* payload -- it is the local dev copy and is gitignored.
+    The publish scripts never call this (they manage ``web/src/data`` deliberately,
+    copying the redacted public payload), so it can't leak private data into a
+    published build. Returns the path written, or ``None`` when the web source tree
+    isn't present (e.g. jobscope installed without the repo checkout).
+    """
+    web_dir = os.path.join("web", "src", "data")
+    if not os.path.isdir(web_dir):
+        return None
+    path = os.path.join(web_dir, "dashboard.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(build_data(cfg, store, public=False), fh, ensure_ascii=False,
+                  separators=(",", ":"))
+    return path
+
+
 def _redact_public(rows: list[dict], overview: dict) -> None:
     """Strip private fields in place for a publicly-hosted (GitHub Pages) dashboard.
 

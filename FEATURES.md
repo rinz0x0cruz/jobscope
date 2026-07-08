@@ -41,7 +41,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `prep <job_id>` | Builds a review-ready application package folder (tailored resume/cover PDF, filled-answers, index, contacts) and marks status `prepared`. |
 | `apply <job_id> [--assist]` | Opens the posting URL for you to submit. `--assist` = headed Playwright autofill of a **public** ATS form that **stops before submit**. |
 | `outreach <job_id> [--to E] [--send] [--force]` | Drafts a tailored recruiter email + attaches your résumé and **previews it by default**. Resolves a contact deterministically: a real recruiter who emailed you (no-reply/ATS relays filtered out), a published HR/careers email **discovered on the employer's own site** (domain verified by fetching it + matching the company name), or a `careers@` role inbox on that verified domain — or `--to`. Sending is opt-in (`apply.outreach.enabled` + `email.*` + `--send`), **deduped per company** with a cooldown, and honors a do-not-contact list. |
-| `dashboard [--public]` | Emits the dashboard JSON payload the web app consumes (`data/dashboard.json`; `--public` writes the **redacted** `data/dashboard.public.json` — per-job contacts/rationale/resume-base, the Overview funnel/targets, **and all applications** stripped). Used by the publish scripts to bake the site. |
+| `dashboard [--public] [--emit-web]` | Emits the dashboard JSON payload the web app consumes (`data/dashboard.json`; `--public` writes the **redacted** `data/dashboard.public.json` — per-job contacts/rationale/resume-base, the Overview funnel/targets, **and all applications** stripped). `--emit-web` also mirrors the un-redacted payload to `web/src/data/dashboard.json` so a local `npm run dev`/`build` picks up fresh data. Used by the publish scripts to bake the site. |
 | `serve [--port 8799] [--open]` | Builds (if needed) + serves the **web SPA** on 127.0.0.1 with a localhost-only **Refresh & Publish** button (syncs Gmail -> rescore -> publish -> rebuild). |
 | `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E] [--include-spam] [--reclassify]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox; `--include-spam` also sweeps the `[Gmail]/Spam` folder this run (overrides `inbox.include_spam`), catching a real application email Gmail misfiled as spam; `--reclassify` is an **offline** repair — re-check stored mail with the current rules + rebuild the funnel (instance-split), with no Gmail sync. |
@@ -90,9 +90,10 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   signals instead of a ranked checklist.
 - **Wider console layout:** the React dashboard uses a wider scan-friendly container so KPI cards, charts,
   and top-match tables have more breathing room on desktop while preserving the same mobile stack.
-- **Facet visibility:** dashboard facets hide when they have only one possible value. The Resume facet appears
-  once the emitted data contains 2+ distinct `resume_base` values (for example, after importing multiple named
-  resumes and rerunning `match`).
+- **Facet visibility:** dashboard facets hide when they have only one possible value. The Resume facet is a
+  special case — rather than vanish, it shows a **disabled hint** (_"Import 2+ named resumes and rerun match to
+  filter by resume"_) until the emitted data contains 2+ distinct `resume_base` values, so the feature stays
+  discoverable even with a single resume.
 - **Whole-site unlock (two-tier):** with `-Encrypted`, the *entire* un-redacted dashboard — job descriptions,
   match rationale, referral contacts, and applications — is published as a single AES-256-GCM blob. The public
   build stays redacted; a **header lock button** (and the Applications tab gate) takes a passphrase, then

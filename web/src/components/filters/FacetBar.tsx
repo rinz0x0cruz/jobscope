@@ -28,17 +28,36 @@ export function FacetBar({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {FACETS.map((f) =>
-        options[f.key].length > 1 ? (
-          <FacetSelect
-            key={f.key}
-            label={f.label}
-            options={options[f.key]}
-            selected={selected[f.key]}
-            onToggle={(v) => onToggle(f.key, v)}
-          />
-        ) : null,
-      )}
+      {FACETS.map((f) => {
+        if (options[f.key].length > 1) {
+          return (
+            <FacetSelect
+              key={f.key}
+              label={f.label}
+              options={options[f.key]}
+              selected={selected[f.key]}
+              onToggle={(v) => onToggle(f.key, v)}
+            />
+          )
+        }
+        // The Resume facet only filters with 2+ resume bases in the data. Rather
+        // than hide it (which reads as a missing feature), show a disabled hint
+        // that explains how to enable it. #10
+        if (f.key === 'resume') {
+          return (
+            <button
+              key={f.key}
+              type="button"
+              disabled
+              title="Import 2+ named resumes and rerun match to filter by resume"
+              className="flex cursor-not-allowed items-center gap-1 rounded-[10px] border border-dashed border-border bg-card/50 px-2.5 py-1.5 text-[13px] text-mute"
+            >
+              {f.label}
+            </button>
+          )
+        }
+        return null
+      })}
 
       <div className="mx-1 h-5 w-px bg-border" />
 

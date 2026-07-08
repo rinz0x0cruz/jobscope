@@ -23,7 +23,7 @@ optional and degrade gracefully. See ARCHITECTURE.md §1.
 ```powershell
 .venv\Scripts\python.exe -m pytest -q                      # unit tests
 .venv\Scripts\python.exe -m jobscope selftest              # offline self-test
-.venv\Scripts\python.exe -m jobscope dashboard --emit-json # regenerate web/src/data/dashboard.json
+.venv\Scripts\python.exe -m jobscope dashboard --emit-web  # regenerate web/src/data/dashboard.json
 cd web; npm run build                                       # tsc -b && vite build
 ```
 
