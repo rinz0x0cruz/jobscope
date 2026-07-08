@@ -41,7 +41,7 @@ const HERO: HeroVariant = (HERO_VARIANTS as string[]).includes(heroParam)
   ? (heroParam as HeroVariant)
   : prefersCalmHero
     ? 'aurora'
-    : 'grid'
+    : 'constellation'
 
 export default function App() {
   const { state, set } = useSearchState()
@@ -113,9 +113,7 @@ export default function App() {
 
   return (
     <div className="relative min-h-screen overflow-x-clip">
-      <div className="js-ambient" aria-hidden="true" />
       <HeroBackdrop variant={HERO} />
-      <div className="js-scanlines" aria-hidden="true" />
       <Header
         total={rows.length}
         shown={searched.length}
