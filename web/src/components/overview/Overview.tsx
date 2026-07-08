@@ -1,9 +1,10 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import type { JobRow, Overview as OverviewStats } from '@/lib/schema'
+import type { Application, JobRow, Overview as OverviewStats } from '@/lib/schema'
 import { funnelBars, tierSegments, topCompanies, topMatches } from '@/lib/overview'
 import { trackSpotlight } from '@/lib/spotlight'
 import { Donut } from './Donut'
 import { Bars } from './Bars'
+import { Momentum } from './Momentum'
 import { SkillConstellation } from './SkillConstellation'
 import { TopMatches } from './TopMatches'
 
@@ -50,7 +51,7 @@ function rowMentionsSkill(row: JobRow, skill: string): boolean {
   return parts.length > 1 && parts.every((part) => haystack.includes(part))
 }
 
-export function Overview({ rows, stats, onOpen }: { rows: JobRow[]; stats: OverviewStats; onOpen: (id: string) => void }) {
+export function Overview({ rows, stats, apps, onOpen }: { rows: JobRow[]; stats: OverviewStats; apps: Application[]; onOpen: (id: string) => void }) {
   const { segs, total } = tierSegments(rows)
   const companies = topCompanies(rows, 8)
   const gaps = (stats.gaps ?? []).map(([label, value]) => ({ label, value }))
@@ -73,6 +74,10 @@ export function Overview({ rows, stats, onOpen }: { rows: JobRow[]; stats: Overv
       )}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-6">
+        <Card title="Momentum" subtitle="chances & velocity" className="lg:col-span-2">
+          <Momentum rows={rows} apps={apps} />
+        </Card>
+
         <Card title="Fit distribution" className="lg:col-span-2">
           <Donut segs={segs} total={total} />
         </Card>

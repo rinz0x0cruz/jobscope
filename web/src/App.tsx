@@ -131,7 +131,7 @@ export default function App() {
         <Kpis rows={rows} />
         <Tabs value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
         {state.tab === 'overview' ? (
-          <Overview rows={rows} stats={overview} onOpen={openDrawer} />
+          <Overview rows={rows} stats={overview} apps={apps} onOpen={openDrawer} />
         ) : state.tab === 'applications' ? (
           <Applications apps={apps} encBlob={encryptedSite} onUnlock={setUnlocked} onOpen={openDrawer} />
         ) : (

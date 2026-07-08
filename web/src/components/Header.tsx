@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Command, Moon, Search, Sun } from 'lucide-react'
 import { useTheme } from '@/hooks/useTheme'
+import { useScoreFormat } from '@/hooks/useScoreFormat'
 import { COMMAND_EVENT } from '@/components/filters/SearchPalette'
 import { RefreshButton } from '@/components/RefreshButton'
 import { UnlockControl } from '@/components/UnlockControl'
@@ -21,6 +22,7 @@ interface Props {
 
 export function Header({ total, shown, generated, query, onQuery, encBlob, unlocked, onUnlock, onLock }: Props) {
   const { theme, toggle } = useTheme()
+  const { format, setFormat } = useScoreFormat()
   const reduce = useReducedMotion()
   return (
     <header className="js-header-gradient sticky top-0 z-20 flex flex-wrap items-center gap-4 overflow-hidden border-b border-border bg-bg/70 px-6 py-3.5 backdrop-blur-lg backdrop-saturate-150">
@@ -55,6 +57,27 @@ export function Header({ total, shown, generated, query, onQuery, encBlob, unloc
         <UnlockControl encBlob={encBlob} unlocked={unlocked} onUnlock={onUnlock} onLock={onLock} />
       )}
       <RefreshButton />
+
+      <div
+        role="group"
+        aria-label="Fit score display"
+        title="Show fit as a number or an A–F grade"
+        className="flex h-10 items-center rounded-[12px] border border-border bg-card p-0.5 text-[12px] font-medium"
+      >
+        {(['number', 'grade'] as const).map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => setFormat(f)}
+            aria-pressed={format === f}
+            className={`grid h-full place-items-center rounded-[10px] px-2 transition ${
+              format === f ? 'bg-bg2 text-fg' : 'text-mute hover:text-fg'
+            }`}
+          >
+            {f === 'number' ? '123' : 'A–F'}
+          </button>
+        ))}
+      </div>
 
       <button
         type="button"
