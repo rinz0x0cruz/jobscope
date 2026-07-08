@@ -12,11 +12,12 @@ No authenticated-account automation; a human always reviews before submit.
 ## Pipeline / data flow
 
 ```
-scan → store jobs → match (score + filters + resume routing) → enrich top N
-     → tailor → prep package → (human review) → apply/deep-link → track → digest
+resume import → profile (editable data/profile.yaml) → scan → store jobs
+     → match (score + filters + resume routing) → enrich top N → atscheck / coverage
+     → tailor → prep package → (human review) → apply / outreach → interview prep → track → digest
 
 inbox (read-only Gmail IMAP) → classify emails → mail_events (timeline)
-     → advance the application funnel   ← automated inbound side of `track`
+     → reconcile (instance-split the funnel)   ← automated inbound side of `track`
 ```
 
 `pipeline` runs `scan → match → enrich → prep top picks → digest` in one shot.
@@ -30,7 +31,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | Command | Behaviour |
 | --- | --- |
 | `init` | Scaffolds `config.yaml` + `data/` dir. |
-| `resume import <path> --name <n>` | Parses `.md/.json/.pdf/.txt` into a structured resume and stores it under a name. Import several names for multi-resume matching. |
+| `resume import <path> --name <n>` | Parses `.md/.json/.pdf/.txt` into a structured resume and stores it under a name. Import several names for multi-resume matching. Seeds the search profile on first import. |
+| `profile [build\|show] [--resume N] [--force]` | Builds/shows the editable, résumé-derived **search profile** (`data/profile.yaml`): target roles from your titles + a skills→role map, your locations, remote. `scan` fetches from it (config.search is the fallback); `--force` regenerates, never clobbering edits otherwise. |
 | `scan` | Scrapes jobs for every search term across every **profile**, then pulls configured companies' **public ATS boards** directly (see Scraping + Company-direct ATS boards). De-dupes by URL. |
 | `match` | Scores every stored job, applies **filters**, and records the best-fit resume per job. Prints tier counts + filtered count. |
 | `pipeline [--no-prep]` | scan → match → enrich → prep top picks → email digest. `--no-prep` stops after enrich. |
@@ -42,11 +44,15 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `dashboard [--public]` | Emits the dashboard JSON payload the web app consumes (`data/dashboard.json`; `--public` writes the **redacted** `data/dashboard.public.json` — per-job contacts/rationale/resume-base, the Overview funnel/targets, **and all applications** stripped). Used by the publish scripts to bake the site. |
 | `serve [--port 8799] [--open]` | Builds (if needed) + serves the **web SPA** on 127.0.0.1 with a localhost-only **Refresh & Publish** button (syncs Gmail -> rescore -> publish -> rebuild). |
 | `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
-| `inbox [--dry-run] [--backfill] [--since D] [--account E] [--include-spam]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox; `--include-spam` also sweeps the `[Gmail]/Spam` folder this run (overrides `inbox.include_spam`), catching a real application email Gmail misfiled as spam. |
+| `inbox [--dry-run] [--backfill] [--since D] [--account E] [--include-spam] [--reclassify]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox; `--include-spam` also sweeps the `[Gmail]/Spam` folder this run (overrides `inbox.include_spam`), catching a real application email Gmail misfiled as spam; `--reclassify` is an **offline** repair — re-check stored mail with the current rules + rebuild the funnel (instance-split), with no Gmail sync. |
 | `new` | Lists new Strong/Good jobs since your last review, then advances the review marker. |
 | `prune [--yes] [--dry-run]` | Deletes stored jobs outside your geographic scope (`search.home_country` + eligible remote). Previews by default; `--yes` deletes. |
 | `gaps [--top 15]` | Skill-gap learning plan: skills that recur in your matched jobs but are on none of your resumes, ranked by jobs unlocked. |
+| `atscheck [--resume N] [--job ID]` | Deterministic **ATS view** of your parsed résumé (the fields + skills an ATS extracts) with a 0–100 friendliness score and formatting warnings (missing contact, tables/columns, image-only PDFs, corrupting glyphs). `--job` adds the JD keyword-coverage diff. |
+| `coverage <job_id> [--resume N]` | Per-requirement JD coverage: walks the role's responsibilities/qualifications and marks each **covered / partial / missing** with tailoring tips. AI-optional, deterministic fallback. |
 | `brief <job_id>` | Blunt, risk-forward company brief (facts + risks, no marketing fluff). |
+| `referrals [--job ID] [--discover] [--top N]` | Surfaces referral paths across your pipeline — every company you have leads for (public profiles + search links + a copy-ready outreach draft), best live match first; closed roles still shown. `--job` = one company's leads; `--discover` fetches fresh leads. |
+| `interview <job_id> [--note "…"] [--resume N]` | Interview-prep sheet: fit (strengths + gaps), likely JD topics, a STAR story bank, the company brief, referral path, and your notes. `--note` appends a date-stamped note. |
 | `export [--format json\|csv] [--out <path>]` | Exports ranked jobs. |
 | `selftest` | Offline self-tests (no network, no keys). |
 
@@ -62,7 +68,9 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Generative hero backdrop:** a swappable animated canvas (`HeroBackdrop`, default `grid`) with six offline
   variants — `constellation`, `flowfield`, `dotgrid`, `aurora`, `radar`, `grid` — chosen via `?hero=<variant>`.
   Colours read from the theme vars so every variant follows the palette + light/dark toggle; reduced-motion draws
-  a single static frame.
+  a single static frame. **Touch / small screens default to the CSS `aurora`** (it scales smoothly under a
+  pinch-zoom); the canvas variants harden their resize — debounced, frozen mid-zoom via `visualViewport`, and
+  the field is rescaled rather than reseeded — so the backdrop no longer glitches when you zoom on a phone.
 - **Command palette (⌘K):** a `cmdk`-powered palette (also opens on `/` and a header pill) jumps between views,
   toggles the theme, fuzzy-searches every role, and runs refresh actions (pull latest / scan Gmail / connect a token).
 - **Header Refresh button:** rescans Gmail on demand — with a stored fine-grained token it POSTs `workflow_dispatch`
@@ -122,6 +130,22 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Headline score/tier = best fit across all resume framings**, so the routed resume is never
   under-credited for a keyword it happens to omit. The rationale notes `→ tailor from <resume> (… role)`
   when the shown score came from a different framing.
+
+---
+
+## Search profile (résumé-driven fetch)
+
+- `resume import` seeds `data/profile.yaml` from your parsed résumé; you edit it, and `scan` fetches from it —
+  so the search follows your résumé instead of a hand-typed keyword in `config.yaml`.
+- **Derivation (deterministic).** `search_terms` come from your résumé titles (seniority-stripped, so
+  "Security Researcher Intern" → "Security Researcher") plus a skills→role map (appsec → Application Security
+  Engineer; detection/SIEM → Detection Engineer; cloud-security/k8s/terraform → Cloud Security Engineer; …),
+  capped at six; `locations` = Remote + your résumé location; `remote` from config. `seniority`/`top_skills`
+  mirror the résumé for reference (matching still reads the résumé itself, not this file).
+- **Editable + safe.** Plain YAML with an explanatory header at `<db-dir>/profile.yaml` (gitignored). Seeded on
+  the **first** import only — it never clobbers your edits; `profile build --force` regenerates.
+- **Drives `scan`.** The profile's `search_terms` become the scan terms and each `location` a per-location
+  search; `config.search` stays the fallback when no profile exists.
 
 ---
 
@@ -304,12 +328,17 @@ application emails into funnel updates, so the pipeline reflects reality without
   short-circuits from anywhere and a subject-authority rule pins plain confirmations, so a rejection that
   also says "interview" isn't mis-read and a precedence order breaks exact ties. When two or more signals
   finish in a genuine close-call tie, the optional quorum classify strategy can arbitrate **only among the
-  tied labels**; it never invents a new status and is skipped when AI/quorum is unavailable.
+  tied labels**; it never invents a new status and is skipped when AI/quorum is unavailable. Text is normalized
+  for smart quotes/dashes (a curly *you're* / *we're* still matches), and application-received acknowledgments
+  ("great that you're interested", "track the status of your application") are read as confirmations even when
+  their body mentions "interview" in boilerplate.
 - **Precision — noise dropped by sender.** ATS domains always count as job-related; job-board/unknown
   domains need a strong signal. Senders that only *look* like applications are dropped up front by domain,
   whatever keyword they score: newsletters/digests/community blasts, online-course platforms (a Thinkific
   "Training & Assessment" enrollment), and consumer/transactional receipts (a food-delivery order) — so a
-  lifecycle keyword colliding in their subject never reaches the funnel.
+  lifecycle keyword colliding in their subject never reaches the funnel. Account plumbing — email-verification
+  codes, one-time passcodes, and password resets — is likewise dropped even from a careers/ATS domain, so an
+  OTP whose footer mentions "assessment" never lands in the funnel.
 - **Employer, not the ATS platform.** When mail arrives *through* an applicant-tracking or relay platform
   (SuccessFactors, Workday, Greenhouse, Oracle, iCIMS…), the company is recovered from the real employer —
   the sender display name (including an embedded `HR@employer.com`), a subject pattern (`…applying to
@@ -319,10 +348,16 @@ application emails into funnel updates, so the pipeline reflects reality without
 - **Spam-folder aware.** With `inbox.include_spam: true` the scan also reads `[Gmail]/Spam` (or
   `inbox.spam_folder`), since genuine confirmations occasionally land there; the same read-only `BODY.PEEK`
   rules apply.
-- **Signal → status (monotonic).** confirmation/recruiter → `applied`, assessment/interview → `interview`,
-  offer → `offer`, rejection → `rejected`. Status only advances forward (a late "received" can't undo an
-  offer); `rejected` is terminal. Granular per-email signals are preserved in `mail_events` even though the
-  funnel uses the coarse statuses.
+- **Signal → status, timeline-aware.** confirmation/recruiter → `applied`, assessment/interview → `interview`,
+  offer → `offer`, rejection → `rejected`. Within one application instance status advances forward; granular
+  per-email signals are preserved in `mail_events` even though the funnel uses the coarse statuses.
+- **Funnel reconcile (instance-split).** After each sync (and via `inbox --reclassify`) the funnel is rebuilt
+  from each company's mail timeline in date order, split into **instances**: a rejection closes an instance, a
+  later application/interview starts a **new active** instance (a re-application), and a distinct role gets its
+  own. So re-applying — or applying to two roles where one is rejected — keeps an active row for the company
+  instead of collapsing it to a single rejected one. `inbox --reclassify` also re-checks stored mail with the
+  current rules (dropping OTP/verification mail, downgrading a false interview/assessment to a clear
+  confirmation/rejection) and is wired into the cloud refresh so the published dashboard self-heals. Idempotent.
 - **Linking.** Each email links to a scraped job by fuzzy company match (stdlib `difflib`) when one exists,
   otherwise to a stable email-only application (`mail:<hash>`), so applications you made outside jobscope
   still track. Company/role are parsed from the subject/sender.
@@ -338,6 +373,38 @@ application emails into funnel updates, so the pipeline reflects reality without
 - `gaps` scans your Strong/Good/Stretch jobs for lexicon skills present in JDs but absent from **all** your
   resumes, ranked by how many jobs each would unlock, with example companies. Advisory only — add a skill to
   a resume only if genuinely true.
+
+## Résumé ↔ JD intelligence
+
+- **`atscheck` — ATS parse check.** Renders the "ATS view" of your parsed résumé
+  (name/email/phone/location/seniority/skills/titles) with a transparent 0–100 friendliness score
+  (start 100; −22 error / −9 warn / −3 info) and deterministic formatting warnings: missing contact fields,
+  no/few skills, no Skills/Experience heading, unparseable dates, pipe/tab **tables**, **multi-column** layout,
+  **image-only PDFs**, and corrupting **glyphs** (ligatures / box-drawing / icon-font / replacement chars).
+  `--job` adds the JD keyword-coverage diff. Deterministic, no AI.
+- **`coverage` — per-requirement JD coverage.** Walks a JD's actual responsibilities/qualifications (bullets
+  first, then requirement sentences; perks / form-noise / mission boilerplate filtered) and marks each
+  **covered / partial / missing** with a weighted % and tailoring tips. Deterministic (résumé-skill match +
+  token overlap); an optional AI pass re-judges semantically and phrases the tips, falling back wholesale to the
+  deterministic verdict when AI is off / garbled. Complements `atscheck`'s keyword coverage with
+  responsibility-level coverage.
+
+## Interview prep
+
+- `interview <job_id>` assembles a per-job prep sheet from what jobscope already knows: your **fit** (score/tier,
+  strengths to lead with, gaps to prepare), **likely topics** drawn from the JD, a **STAR** story-bank scaffold
+  seeded from your top matched skills, the **company brief**, the **referral path**, and your **notes**.
+- `--note "…"` appends a date-stamped note to the application (`applications.notes`, append-only).
+- Deterministic + offline; reuses `tailor.analyze`, `coverage.extract_requirements`, the stored brief, and referrals.
+
+## Referral surfacing (network activation)
+
+- `referrals` surfaces where in your pipeline you already have a way in: every company you have **legit-only**
+  leads for (public GitHub profiles + LinkedIn/Google people-search links, each with a deterministic outreach
+  draft), best **live** match first — a company whose role has since closed still appears ("network anyway"),
+  because a referral outlasts a posting.
+- `referrals --job <id>` is the moment-of-applying view (real profiles + search links + the copy-ready draft);
+  `--discover` fetches fresh leads for that company on demand. Reads the leads `enrich` stored — no PII harvesting.
 
 ---
 
