@@ -200,6 +200,10 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
     # assessment) -- dropped by domain even when they score a strong signal.
     if mailrules.is_noise_sender(from_name, from_addr) or mailrules.is_newsletter_domain(from_domain):
         return None
+    # OTP / email-verification / password-reset mail is account plumbing, not an
+    # application-status update -- drop it cheaply on the subject before any body fetch.
+    if mailrules.is_transactional(subject):
+        return None
 
     # Cheap first pass on headers only; skip clearly-irrelevant mail from
     # non-ATS domains without ever fetching a body.
@@ -208,6 +212,8 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
         return None
 
     snippet = _fetch_snippet(M, uid)
+    if mailrules.is_transactional(subject, snippet):
+        return None  # some OTP/verification mail carries the tell only in the body
     sig, _scores, ambiguous, tied = mailrules.classify_scored(subject, snippet)
     if not mailrules.is_job_related(from_domain, sig):
         return None

@@ -158,6 +158,9 @@ _WEIGHTED_RULES: list[tuple[str, list[tuple[str, int]]]] = [
     ]),
     ("confirmation", [
         (r"thank(?:s| you) for (?:applying|your application|your interest)", 2),
+        (r"(?:great|glad|happy|delighted|thrilled|excited) (?:that )?you'?re interested", 2),
+        (r"(?:carefully )?review(?:ing)? your application", 1),
+        (r"track (?:the )?status of your application", 2),
         (r"application (?:has been |was |is )?(?:received|submitted|complete)", 2),
         (r"(?:we|we've|we have) received your application", 2),
         (r"successfully (?:applied|submitted)", 2),
@@ -316,11 +319,24 @@ def company_from_domain(from_domain: str) -> str:
     return _title(name)
 
 
+# Smart-quote / dash normalization so patterns written with straight ASCII quotes
+# (you'?re, won'?t, we'?re) still match mail composed with curly quotes / em-dashes.
+_SMART = str.maketrans({
+    "\u2019": "'", "\u2018": "'", "\u02bc": "'",
+    "\u201c": '"', "\u201d": '"',
+    "\u2013": "-", "\u2014": "-", "\u00a0": " ",
+})
+
+
+def _norm(text: str) -> str:
+    return (text or "").translate(_SMART)
+
+
 def score_signals(subject: str, body: str) -> dict[str, int]:
     """Weighted keyword score per signal. A keyword found in the SUBJECT counts
     double one found only in the body (the subject is the stronger cue)."""
-    subject = subject or ""
-    body = body or ""
+    subject = _norm(subject)
+    body = _norm(body)
     scores = {sig: 0 for sig in _PRECEDENCE}
     for sig, pats in _WEIGHTED_COMPILED:
         total = 0
@@ -415,6 +431,23 @@ def is_newsletter_domain(from_domain: str) -> bool:
     if not d:
         return False
     return any(d == k or d.endswith("." + k) for k in NEWSLETTER_DOMAINS)
+
+
+# Account/transactional plumbing (email verification, one-time codes, password
+# resets). These come from careers/ATS domains and score lifecycle keywords from
+# legal-footer boilerplate (an OTP whose footer mentions "assessment"), yet are
+# never an application-status update -- so they are dropped before the funnel.
+_TRANSACTIONAL = re.compile(
+    r"(?i)\b(?:verification code|verify your email|confirm your email(?: address)?|"
+    r"your (?:otp|one[- ]time|verification|security|login|access) code|"
+    r"one[- ]time (?:password|passcode|code)|\bOTP\b|"
+    r"password reset|reset your password|activate your account|account activation)\b")
+
+
+def is_transactional(subject: str, body: str = "") -> bool:
+    """OTP / email-verification / password-reset mail: account plumbing, not an
+    application-status update, even from a careers or ATS domain."""
+    return bool(_TRANSACTIONAL.search(f"{subject or ''}\n{body or ''}"))
 
 
 def signal_to_status(signal: str) -> str:

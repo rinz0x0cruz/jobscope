@@ -93,6 +93,43 @@ def test_classify_confirmation():
         "We have received your application.") == "confirmation"
 
 
+def test_ack_with_interview_boilerplate_is_confirmation():
+    # Real Accenture Workday acknowledgment (curly apostrophes): the subject is a
+    # confirmation and the body is an application-received note that merely mentions
+    # "interview" + a day/time in boilerplate -- it must NOT read as an interview.
+    assert mailrules.classify_signal(
+        "accenture@myworkday.com",
+        "It\u2019s great that you\u2019re interested in Accenture!",
+        "Hi MOHIT, Thanks for applying for the role of Security Architect. We\u2019ll "
+        "get started on carefully reviewing your application and keep you updated "
+        "about next steps. Here you can track the status of your application. "
+        "We can schedule an interview later; our team is available Monday 9am."
+    ) == "confirmation"
+
+
+def test_smart_quotes_do_not_break_matching():
+    # Curly apostrophes must still match patterns written with straight quotes.
+    assert mailrules.classify_signal(
+        "careers@acme.com", "We\u2019re glad you\u2019re interested in Acme",
+        "Thanks for applying.") == "confirmation"
+
+
+def test_verification_code_is_transactional():
+    assert mailrules.is_transactional("Verification Code - Accenture", "Your code is: 027236")
+    assert mailrules.is_transactional("Verify your email address", "")
+    assert mailrules.is_transactional("Reset your password", "")
+    assert not mailrules.is_transactional(
+        "Interview invitation", "Please share your availability for a call.")
+
+
+def test_real_interview_still_classifies_as_interview():
+    # A genuine interview invite must remain an interview after the ack fixes.
+    assert mailrules.classify_signal(
+        "recruiter@acme.com", "Interview invitation - Security Engineer",
+        "We\u2019d like to schedule an interview. Please share your availability."
+    ) == "interview"
+
+
 def test_classify_rejection_beats_interview():
     # A rejection email that also mentions "interview" must classify as rejection.
     assert mailrules.classify_signal(
