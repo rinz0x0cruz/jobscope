@@ -3,6 +3,7 @@
 Usage:
     python -m jobscope init                       Scaffold config + data dir
     python -m jobscope resume import <path> [--name N]  Parse/store a (named) base resume
+    python -m jobscope profile [build|show] [--force]   Editable résumé-derived search profile (drives scan)
     python -m jobscope scan                        Scrape jobs for your searches
     python -m jobscope match                       Score jobs (multi-resume + filters)
     python -m jobscope enrich [--job ID]           Add comp/stock/reddit/news/contacts/brief
@@ -55,6 +56,14 @@ def cmd_resume(args, cfg):
     from ..analyze import resume as _resume
     with _store(args, cfg) as store:
         return _resume.import_resume(args.path, store, cfg, name=getattr(args, "name", "default"))
+
+
+def cmd_profile(args, cfg):
+    from ..analyze import profile
+    with _store(args, cfg) as store:
+        return profile.run(cfg, store, action=getattr(args, "action", "show"),
+                           resume_name=getattr(args, "resume", None),
+                           force=getattr(args, "force", False))
 
 
 def cmd_scan(args, cfg):
@@ -332,6 +341,16 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Name this base resume (e.g. research, consulting) for multi-resume matching")
     sp.set_defaults(func=cmd_resume)
 
+    sp = sub.add_parser("profile",
+                        help="Build/show the editable résumé-derived search profile that drives scan")
+    sp.add_argument("action", nargs="?", choices=["build", "show"], default="show",
+                    help="build (from your résumé) or show (default)")
+    sp.add_argument("--resume", default=None, metavar="NAME",
+                    help="Which base résumé to build from (default: your primary)")
+    sp.add_argument("--force", action="store_true",
+                    help="Overwrite an existing profile.yaml when building")
+    sp.set_defaults(func=cmd_profile)
+
     sub.add_parser("scan", help="Scrape jobs for your searches").set_defaults(func=cmd_scan)
     sub.add_parser("match", help="Score jobs against your resume").set_defaults(func=cmd_match)
 
@@ -481,6 +500,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
+    # A --db override is authoritative for the whole run, so sibling paths derived
+    # from it (e.g. the search profile at <db-dir>/profile.yaml) stay consistent.
+    if getattr(args, "db", None):
+        cfg.setdefault("output", {})["db_path"] = args.db
     try:
         return int(args.func(args, cfg) or 0)
     except KeyboardInterrupt:

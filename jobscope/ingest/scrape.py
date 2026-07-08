@@ -15,6 +15,17 @@ from jobscope.core.store import now_iso
 
 def run(cfg: dict, store) -> int:
     base = cfg["search"]
+    # An editable, résumé-derived search profile (data/profile.yaml) drives the
+    # fetch when present; config.search is the fallback. See analyze/profile.py.
+    from jobscope.analyze import profile as _profile
+    prof = _profile.load(cfg)
+    if prof:
+        base = _profile.apply_to_search(base, prof)
+        terms = base.get("terms") or []
+        locs = base.get("profiles") or []
+        print("  search profile active: "
+              f"{len(terms)} role(s)" + (f" x {len(locs)} location(s)" if locs else "")
+              + (f" -> {', '.join(terms[:6])}" if terms else ""))
     home = base.get("home_country", "India")
     geo_on = bool(base.get("scope_to_home", True))
     total_new = 0
