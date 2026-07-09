@@ -143,18 +143,29 @@ _WEIGHTED_RULES: list[tuple[str, list[tuple[str, int]]]] = [
         (r"complete (?:the|a|your) (?:assessment|challenge|test)", 3),
     ]),
     ("interview", [
-        (r"\binterview\b", 3),
-        (r"schedule (?:a |an |your )?(?:call|time|chat|conversation|meeting|screen)", 3),
-        (r"(?:phone|video|recruiter|hiring manager|initial) screen", 3),
-        (r"(?:your|share your|let us know your) availability", 2),
-        (r"next steps?.{0,40}(?:schedul|interview|call|conversation|availab|meet|chat)", 1),
-        (r"like to (?:speak|chat|meet|connect|talk|discuss)", 2),
+        # decisive (weight 3): an interview is positively invited, scheduled, or
+        # named by modality/stage -- not merely mentioned, nor promised for later.
+        (r"\binterview\b.{0,25}(?:invitation|invite|request|is scheduled|is confirmed|is booked|scheduled for|confirmed for)", 3),
+        (r"(?:invitation|invite|request) (?:to|for) (?:an? )?(?:\w+ ){0,2}interview", 3),
+        (r"invit(?:e|ing) you (?:to|for) (?:an? )?(?:\w+ ){0,2}(?:interview|call|conversation|chat|screen(?:ing)?|meeting)", 3),
+        (r"(?:like|want|glad|happy|delighted|excited|love|would like) to (?:invite you|schedule|set ?up|arrange|book|coordinate)[^.!?\n]{0,25}(?:interview|call|screen|chat|meeting|conversation)", 3),
+        (r"(?:phone|video|onsite|on-site|final|first|second|technical|panel|recruiter|hiring[- ]manager|initial)[- ](?:round[- ])?(?:interview|screen)", 3),
+        (r"interview (?:loop|stage|round|panel)", 3),
+        (r"schedule (?:a |an |your )?(?:call|time|chat|conversation|meeting|screen)\b", 3),
+        (r"calendly\.com|savvycal|cal\.com", 3),
+        (r"(?:share|provide|send (?:us )?|let us know|confirm)\s+your availability", 3),
+        # moderate (weight 2): scheduling that often -- but not always -- means an
+        # interview (an acknowledgment may promise "we'll schedule an interview").
+        (r"(?:schedule|set ?up|arrange|book|coordinate) (?:a |an |your |the )?interview", 2),
+        (r"move(?:d)? (?:you )?(?:to|forward to|on to) the (?:next|interview)", 2),
         (r"set up (?:a |some )?(?:call|time|chat|meeting)", 2),
         (r"book (?:a )?time", 2),
-        (r"calendly\.com|savvycal|cal\.com", 3),
-        (r"invit(?:e|ing) you (?:to|for) (?:an? )?(?:interview|call|conversation|chat|screen(?:ing)?|meeting)", 2),
-        (r"move(?:d)? (?:you )?(?:to|forward to|on to) the (?:next|interview)", 2),
         (r"\b(?:on\s+)?(?:mon|tues|wednes|thurs|fri)day\b.{0,30}\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", 2),
+        # weak (weight 1): a bare mention or soft chat cue -- contributes to the
+        # score but never wins alone (gated by the direct-cue check in classify).
+        (r"next steps?.{0,40}(?:schedul|interview|call|conversation|availab|meet|chat)", 1),
+        (r"\binterview\b", 1),
+        (r"like to (?:speak|chat|meet|talk|connect)", 1),
         (r"\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", 1),
     ]),
     ("confirmation", [
@@ -350,6 +361,37 @@ def score_signals(subject: str, body: str) -> dict[str, int]:
     return scores
 
 
+# Cues that positively assert a REAL interview: invited, scheduled, named by
+# modality/stage, or an active availability request -- as opposed to a bare
+# mention ("our interview process") or an acknowledgment's promise of a future
+# one ("we'll be in touch to schedule an interview"). An interview verdict must
+# be backed by one of these; otherwise an application acknowledgment is kept as
+# the confirmation it is. (A curated subset of the weight-3 interview rules plus
+# the advancement cues, matched independently of the aggregate score.)
+_INTERVIEW_DIRECT: list[re.Pattern[str]] = [re.compile(p, re.I) for p in (
+    r"\binterview\b.{0,25}(?:invitation|invite|request|is scheduled|is confirmed|is booked|scheduled for|confirmed for)",
+    r"(?:invitation|invite|request) (?:to|for) (?:an? )?(?:\w+ ){0,2}interview",
+    r"invit(?:e|ing) you (?:to|for) (?:an? )?(?:\w+ ){0,2}(?:interview|screen(?:ing)?)",
+    r"(?:like|want|glad|happy|delighted|excited|love|would like) to (?:schedule|set ?up|arrange|book|coordinate|invite you to)[^.!?\n]{0,25}(?:interview|screen|call)",
+    r"(?:phone|video|onsite|on-site|final|first|second|technical|panel|recruiter|hiring[- ]manager|initial)[- ](?:round[- ])?(?:interview|screen)",
+    r"interview (?:loop|stage|round|panel)",
+    r"schedule (?:a |an |your )?(?:call|time|chat|conversation|meeting|screen)\b",
+    r"set up (?:a |some )?(?:call|time|chat|meeting)",
+    r"book (?:a )?time",
+    r"calendly\.com|savvycal|cal\.com",
+    r"(?:share|provide|send (?:us )?|let us know|confirm)\s+your availability",
+)]
+
+
+def _interview_is_direct(subject: str, body: str) -> bool:
+    """True when an interview is positively invited / scheduled / named / advanced
+    (see ``_INTERVIEW_DIRECT``), gating the interview verdict so an acknowledgment's
+    boilerplate never reads as a live interview. Subject and body both count."""
+    s = _norm(subject)
+    b = _norm(body)
+    return any(p.search(s) or (bool(b) and p.search(b)) for p in _INTERVIEW_DIRECT)
+
+
 def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool, list[str]]:
     """Deterministic weighted-keyword classification with an ambiguity flag.
 
@@ -370,16 +412,26 @@ def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool,
     body = body or ""
     scores = score_signals(subject, body)
     subj = score_signals(subject, "")
-    # Discount CONDITIONAL rejections: re-score the rejection signal with
-    # hypothetical clauses removed, so an acknowledgment's "if you are not
-    # selected, keep an eye on our page" / "if you don't hear from us ... not a
-    # fit" boilerplate never reads as a real (unconditional) rejection.
-    scores["rejection"] = score_signals(subject, _strip_conditional(body))["rejection"]
+    # De-conditionalize both terminal rejections AND interviews: an acknowledgment's
+    # hypothetical ("if you are not selected...", "if we'd like to proceed we'll
+    # schedule an interview") describes a possible future, not a decision or a live
+    # invite, so the signal is re-scored with those clauses removed.
+    stripped_body = _strip_conditional(body)
+    scores["rejection"] = score_signals(subject, stripped_body)["rejection"]
+    scores["interview"] = score_signals(subject, stripped_body)["interview"]
+    direct_interview = _interview_is_direct(subject, stripped_body)
     # 1. Terminal signals are decisive from anywhere (rarely boilerplate); the
     #    rejection must survive de-conditionalization to count here.
     for sig in ("rejection", "offer"):
         if scores[sig] >= _DECISIVE:
             return sig, scores, False, [sig]
+    # 1b. A DIRECTLY invited/scheduled interview outranks an application
+    #     acknowledgment: being invited to interview is strictly later in the
+    #     funnel than "we received your application", so a generic "Your
+    #     application" subject must not bury a real invite in the body. It does
+    #     not override a stronger assessment (a coding test scored higher wins).
+    if direct_interview and scores["interview"] >= _SCORE_FLOOR and scores["interview"] > scores["assessment"]:
+        return "interview", scores, False, ["interview"]
     # 2. Subject authority: an application-received SUBJECT is a confirmation even
     #    when the body is padded with interview/recruiter boilerplate ("next
     #    steps", "invite you to a conversation") -- ATS confirmations carry that.
@@ -390,6 +442,18 @@ def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool,
     top, top_score = ranked[0]
     if top_score < _SCORE_FLOOR:
         return "other", scores, False, []
+    # 3a. An interview wins only when DIRECTLY invited/scheduled. A bare mention
+    #     ("interview process") or an acknowledgment's promise of a future one
+    #     ("we'll be in touch to schedule an interview") is demoted -- to the
+    #     confirmation it really is when the mail acknowledges an application, else
+    #     set aside so the next-best signal (or "other") stands.
+    if top == "interview" and not direct_interview:
+        if scores["confirmation"] >= _SCORE_FLOOR:
+            return "confirmation", scores, False, ["confirmation"]
+        ranked = [kv for kv in ranked if kv[0] != "interview"]
+        top, top_score = ranked[0] if ranked else ("other", 0)
+        if top_score < _SCORE_FLOOR:
+            return "other", scores, False, []
     tied = [s for s, sc in ranked if sc >= _SCORE_FLOOR and (top_score - sc) < _TIE_MARGIN]
     ambiguous = len(tied) >= 2
     return top, scores, ambiguous, tied
