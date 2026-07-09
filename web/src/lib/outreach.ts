@@ -1,6 +1,8 @@
 // Client for the local `jobscope serve` outreach endpoint. On the public static
 // site these calls 404 (no backend), so the drawer panel simply never appears.
 
+import type { Profile } from './schema'
+
 export interface OutreachPreview {
   ok: boolean
   error?: string
@@ -114,4 +116,35 @@ export async function companyOutreachSend(
     body: JSON.stringify({ company, send: true, ...payload }),
   })
   return (await r.json()) as OutreachSendResult
+}
+
+export interface ResumeUploadResult {
+  ok: boolean
+  name?: string
+  resume?: string
+  profile?: Profile | null
+  error?: string
+}
+
+// Upload a résumé to the local backend, which stores it under data/resumes/ and
+// imports it (parse -> store -> seed profile). Local `serve` only. The raw file
+// bytes are the request body; only an ASCII-safe extension is sent in a header
+// (the server derives the on-disk path itself, never from the client filename).
+export async function uploadResume(
+  file: File,
+  token: string,
+  name = 'default',
+): Promise<ResumeUploadResult> {
+  const ext = (file.name.match(/\.[A-Za-z0-9]+$/)?.[0] || '.md').toLowerCase()
+  const r = await fetch(api('api/resume'), {
+    method: 'POST',
+    headers: {
+      'X-Refresh-Token': token,
+      'X-Resume-Filename': `resume${ext}`,
+      'X-Resume-Name': name,
+      'Content-Type': 'application/octet-stream',
+    },
+    body: file,
+  })
+  return (await r.json()) as ResumeUploadResult
 }

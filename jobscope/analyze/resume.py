@@ -77,6 +77,39 @@ def import_resume(path: str, store, cfg: dict, name: str = "default") -> int:
     return 0
 
 
+_MAX_RESUME_BYTES = 5 * 1024 * 1024
+
+
+def import_resume_upload(data: bytes, filename: str, name: str, store, cfg: dict) -> dict:
+    """Save an uploaded résumé locally, then import it (parse -> store -> seed profile).
+
+    Safe by construction: the on-disk path is derived server-side from a *sanitized*
+    ``name`` + an extension allowlist (the client filename is never used as a path),
+    and oversized uploads are rejected. Returns the freshly-built profile for the UI.
+    """
+    if not data:
+        return {"ok": False, "error": "empty upload"}
+    if len(data) > _MAX_RESUME_BYTES:
+        return {"ok": False, "error": "file too large (max 5 MB)"}
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext == ".markdown":
+        ext = ".md"
+    if ext not in (".md", ".txt", ".json", ".pdf"):
+        return {"ok": False, "error": "unsupported file type — use .md, .txt, .json, or .pdf"}
+    safe = re.sub(r"[^a-z0-9_-]", "", (name or "default").lower()) or "default"
+    resumes_dir = os.path.join(os.path.dirname(os.path.abspath(cfg["output"]["db_path"])), "resumes")
+    os.makedirs(resumes_dir, exist_ok=True)
+    dest = os.path.join(resumes_dir, f"{safe}{ext}")
+    with open(dest, "wb") as fh:
+        fh.write(data)
+    if import_resume(dest, store, cfg, name=safe) != 0:
+        return {"ok": False, "error": "could not parse the résumé — check the file"}
+    from . import profile as _profile
+    resume = store.get_named_resume(safe) or store.get_resume()
+    prof = _profile.build_profile(resume, cfg, safe) if resume else None
+    return {"ok": True, "name": safe, "resume": os.path.basename(dest), "profile": prof}
+
+
 def parse_resume(path: str) -> Resume:
     ext = os.path.splitext(path)[1].lower()
     if ext == ".json":
