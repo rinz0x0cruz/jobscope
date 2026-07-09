@@ -17,7 +17,8 @@ import { fmtGenerated } from '@/lib/format'
 import { useSearchState } from '@/hooks/useSearchState'
 import { Header } from '@/components/Header'
 import { Kpis } from '@/components/Kpis'
-import { Tabs } from '@/components/Tabs'
+import { PrimaryNav, primaryFor, type Primary } from '@/components/PrimaryNav'
+import { TierSegment } from '@/components/TierSegment'
 import { FacetBar } from '@/components/filters/FacetBar'
 import { ActiveChips } from '@/components/filters/ActiveChips'
 import { SearchPalette } from '@/components/filters/SearchPalette'
@@ -110,6 +111,8 @@ export default function App() {
       else next.add(company)
       return next
     })
+  const onPrimary = (p: Primary) =>
+    set({ tab: p === 'jobs' ? (primaryFor(state.tab) === 'jobs' ? state.tab : 'all') : p })
 
   return (
     <div className="relative min-h-screen overflow-x-clip">
@@ -127,13 +130,14 @@ export default function App() {
       />
       <main className="relative z-10 mx-auto flex max-w-7xl flex-col gap-4 px-6 py-6">
         <Kpis rows={rows} />
-        <Tabs value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
+        <PrimaryNav tab={state.tab} jobsCount={tabCounts.all} appsCount={apps.length} onSelect={onPrimary} />
         {state.tab === 'overview' ? (
           <Overview rows={rows} stats={overview} apps={apps} onOpen={openDrawer} />
         ) : state.tab === 'applications' ? (
           <Applications apps={apps} encBlob={encryptedSite} onUnlock={setUnlocked} onOpen={openDrawer} />
         ) : (
           <>
+            <TierSegment value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
             <FacetBar
               options={options}
               selected={selected}
