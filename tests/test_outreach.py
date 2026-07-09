@@ -178,3 +178,82 @@ def test_verified_name_guess_then_role_inbox(monkeypatch):
         assert t and t.source == "role_inbox" and t.domain == "acme.com"
         assert t.email == "careers@acme.com" and t.confidence == "low"
         store.close()
+
+
+# --- company search (Outreach tab) -------------------------------------------
+def test_company_preview_discovers_contacts(monkeypatch):
+    def fake_get_text(url, **_k):
+        return '<a href="mailto:recruiting@acme.com">Careers</a>' if "acme.com" in url else None
+    monkeypatch.setattr("jobscope.core.httpx.get_text", fake_get_text)
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg, store, _ = _seed(tmp)
+        cfg["apply"]["outreach"]["discover"] = True
+        res = outreach.api_company_preview(cfg, store, "Acme", url="https://acme.com")
+        assert res["ok"] and res["domain"] == "acme.com"
+        top = res["candidates"][0]
+        assert top["email"] == "recruiting@acme.com" and top["confidence"] == "medium"
+        # conventional role inboxes are appended (low), deduped against the discovered one
+        assert any(c["source"] == "role_inbox" and c["confidence"] == "low" for c in res["candidates"])
+        assert [c["email"] for c in res["candidates"]].count("recruiting@acme.com") == 1
+        assert res["subject"] and res["body"]
+        store.close()
+
+
+def test_company_preview_never_scans_inbox_by_empty_job_id(monkeypatch):
+    # a real recruiter emailed from a DIFFERENT company; a company search must not
+    # pick it up (an empty stub job id would otherwise match every mail event).
+    monkeypatch.setattr("jobscope.core.httpx.get_text", lambda *a, **k: None)
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg, store, job = _seed(tmp, with_recruiter_mail=True)  # talent@acme.com in the inbox
+        cfg["apply"]["outreach"]["discover"] = True
+        res = outreach.api_company_preview(cfg, store, "Globex")  # unresolvable, different company
+        assert not res["ok"] and res["needs_url"]
+        store.close()
+
+
+def test_company_preview_override_leads(monkeypatch):
+    def fake_get_text(url, **_k):
+        return "<h1>Acme</h1>" if url in ("https://acme.com", "https://www.acme.com") else None
+    monkeypatch.setattr("jobscope.core.httpx.get_text", fake_get_text)
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg, store, _ = _seed(tmp)
+        cfg["apply"]["outreach"]["discover"] = True
+        res = outreach.api_company_preview(cfg, store, "Acme", to="head.of.talent@acme.com")
+        assert res["ok"]
+        assert res["candidates"][0] == {
+            "email": "head.of.talent@acme.com", "confidence": "high",
+            "source": "override", "note": "you entered this address"}
+        store.close()
+
+
+def test_company_preview_requires_resume():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = load_config(None)
+        cfg["output"]["db_path"] = os.path.join(tmp, "t.db")
+        store = Store(cfg["output"]["db_path"])
+        res = outreach.api_company_preview(cfg, store, "Acme", url="https://acme.com")
+        assert not res["ok"] and "résumé" in res["error"]
+        store.close()
+
+
+def test_company_send_sends_and_rejects_automated(monkeypatch):
+    sent: list = []
+    monkeypatch.setattr("jobscope.deliver.email.send", lambda *a, **k: sent.append(k) or True)
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg, store, _ = _seed(tmp)
+        bad = outreach.api_company_send(cfg, store, "Acme", to="noreply@acme.com", subject="s", body="b")
+        assert not bad["ok"] and not sent
+        ok = outreach.api_company_send(cfg, store, "Acme", to="recruiting@acme.com", subject="s", body="b")
+        assert ok["ok"] and ok["sent"] and ok["to"] == "recruiting@acme.com"
+        assert len(sent) == 1 and sent[0]["to"] == "recruiting@acme.com"
+        store.close()
+
+
+def test_company_send_respects_do_not_contact(monkeypatch):
+    sent: list = []
+    monkeypatch.setattr("jobscope.deliver.email.send", lambda *a, **k: sent.append(k) or True)
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg, store, _ = _seed(tmp, do_not_contact=["acme.com"])
+        res = outreach.api_company_send(cfg, store, "Acme", to="recruiting@acme.com", subject="s", body="b")
+        assert not res["ok"] and not sent and "do-not-contact" in res["error"]
+        store.close()

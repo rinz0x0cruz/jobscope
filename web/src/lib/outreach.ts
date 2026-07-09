@@ -26,6 +26,27 @@ export interface OutreachSendResult {
   error?: string
 }
 
+// A plausible HR/recruiting contact for a company search (deterministic).
+export interface CompanyContact {
+  email: string
+  confidence: string // high | medium | low
+  source: string // override | discovered | role_inbox
+  note: string
+}
+
+export interface CompanyOutreach {
+  ok: boolean
+  error?: string
+  needs_url?: boolean
+  company?: string
+  domain?: string
+  candidates?: CompanyContact[]
+  subject?: string
+  body?: string
+  resume?: string
+  sendable?: boolean
+}
+
 const api = (path: string) => `${location.origin}/${path}`
 
 // Probe the local serve API once; resolves to the CSRF token, or null on the
@@ -59,6 +80,38 @@ export async function outreachSend(
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
     body: JSON.stringify({ job_id: jobId, send: true, ...payload }),
+  })
+  return (await r.json()) as OutreachSendResult
+}
+
+// Free-text company search: resolve the employer's domain, discover HR contacts,
+// and draft a résumé-attached note. Local `serve` only (the public site 404s).
+export async function companyOutreachPreview(
+  company: string,
+  token: string,
+  opts?: { url?: string; to?: string },
+): Promise<CompanyOutreach> {
+  const r = await fetch(api('api/company-outreach'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    body: JSON.stringify({
+      company,
+      ...(opts?.url ? { url: opts.url } : {}),
+      ...(opts?.to ? { to: opts.to } : {}),
+    }),
+  })
+  return (await r.json()) as CompanyOutreach
+}
+
+export async function companyOutreachSend(
+  company: string,
+  token: string,
+  payload: { to: string; subject: string; body: string; url?: string; force?: boolean },
+): Promise<OutreachSendResult> {
+  const r = await fetch(api('api/company-outreach'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    body: JSON.stringify({ company, send: true, ...payload }),
   })
   return (await r.json()) as OutreachSendResult
 }
