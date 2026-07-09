@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Toaster } from 'sonner'
 import { AppShell } from '@/app/AppShell'
 import type { Section } from '@/app/AppShell'
@@ -10,7 +10,7 @@ import { buildBoard, filterBoard } from '@/lib/board'
 import { buildBriefing } from '@/lib/briefing'
 import { buildTriage } from '@/lib/triage'
 import { buildTimeline } from '@/lib/timeline'
-import { Card } from '@/ui'
+import { Card, animate, viewTransition } from '@/ui'
 import { JobDrawer } from '@/components/JobDrawer'
 import type { DashboardData, JobRow } from '@/lib/schema'
 
@@ -43,6 +43,21 @@ const SOON: Record<Section, string> = {
   timeline:
     'A time-centric agenda — upcoming interviews, follow-ups due, and the chronological track of your hunt.',
   settings: 'Preferences, résumé, and publishing controls.',
+}
+
+/** Toggle the v2 light/dark theme and persist the choice across reloads. */
+function toggleTheme() {
+  viewTransition(() => {
+    const el = document.documentElement
+    const nextLight = !el.classList.contains('light')
+    el.classList.remove('dark', 'light')
+    el.classList.add(nextLight ? 'light' : 'dark')
+    try {
+      localStorage.setItem('jobscope-theme', nextLight ? 'light' : 'dark')
+    } catch {
+      /* storage unavailable — the toggle still applies for this session */
+    }
+  })
 }
 
 function ComingSoon({ section }: { section: Section }) {
@@ -82,6 +97,20 @@ export function ShellV2({
   const triage = useMemo(() => buildTriage(data), [data])
   const timeline = useMemo(() => buildTimeline(data), [data])
 
+  // Gentle fade+rise of the lens content on each switch (and initial mount).
+  // `animate` is a no-op under prefers-reduced-motion, leaving the final state.
+  const contentRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    animate(
+      contentRef.current,
+      [
+        { opacity: 0, transform: 'translateY(8px)' },
+        { opacity: 1, transform: 'translateY(0)' },
+      ],
+      { duration: 280, easing: 'cubic-bezier(.2,0,0,1)' },
+    )
+  }, [lens])
+
   return (
     <>
       <AppShell
@@ -90,21 +119,23 @@ export function ShellV2({
         title={TITLES[lens]}
         search={search}
         onSearch={onSearch}
-        onToggleTheme={() => document.documentElement.classList.toggle('light')}
+        onToggleTheme={toggleTheme}
         onLock={onLock}
         profile={data.profile ? { name: `résumé: ${data.profile.resume}` } : null}
       >
-        {lens === 'briefing' ? (
-          <Briefing briefing={briefing} onOpen={onOpenJob} />
-        ) : lens === 'triage' ? (
-          <Triage queue={triage} onOpen={onOpenJob} />
-        ) : lens === 'board' ? (
-          <Board columns={columns} onOpen={onOpenJob} />
-        ) : lens === 'timeline' ? (
-          <Timeline timeline={timeline} onOpen={onOpenJob} />
-        ) : (
-          <ComingSoon section={lens} />
-        )}
+        <div ref={contentRef}>
+          {lens === 'briefing' ? (
+            <Briefing briefing={briefing} onOpen={onOpenJob} />
+          ) : lens === 'triage' ? (
+            <Triage queue={triage} onOpen={onOpenJob} />
+          ) : lens === 'board' ? (
+            <Board columns={columns} onOpen={onOpenJob} />
+          ) : lens === 'timeline' ? (
+            <Timeline timeline={timeline} onOpen={onOpenJob} />
+          ) : (
+            <ComingSoon section={lens} />
+          )}
+        </div>
       </AppShell>
       <JobDrawer job={openJob} allRows={data.rows} onOpen={onOpenJob} onClose={onCloseJob} />
       <Toaster

@@ -50,7 +50,18 @@ const HERO: HeroVariant = (HERO_VARIANTS as string[]).includes(heroParam)
 // existing content. Force the light theme so v1 content reads coherently until the
 // phased re-skin lands. Default (no flag) = the current v1 shell, untouched.
 const SHELL_V2 = new URLSearchParams(window.location.search).get('shell') === 'v2'
-if (SHELL_V2 && typeof document !== 'undefined') document.documentElement.classList.add('light')
+if (SHELL_V2 && typeof document !== 'undefined') {
+  // v2 is light-first, but honor a persisted choice so dark mode sticks on reload.
+  let stored: string | null = null
+  try {
+    stored = localStorage.getItem('jobscope-theme')
+  } catch {
+    stored = null
+  }
+  const el = document.documentElement
+  el.classList.remove('dark', 'light')
+  el.classList.add(stored === 'dark' ? 'dark' : 'light')
+}
 
 export default function App() {
   const { state, set } = useSearchState()
