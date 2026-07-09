@@ -26,6 +26,7 @@ import { JobList } from '@/components/JobList'
 import { Overview } from '@/components/overview/Overview'
 import { Applications } from '@/components/applications/Applications'
 import { Outreach } from '@/components/outreach/Outreach'
+import { AppShell, type Section } from '@/app/AppShell'
 import { readCachedUnlock, clearUnlock } from '@/lib/unlock'
 import type { DashboardData } from '@/lib/schema'
 import { JobDrawer } from '@/components/JobDrawer'
@@ -44,6 +45,12 @@ const HERO: HeroVariant = (HERO_VARIANTS as string[]).includes(heroParam)
   : prefersCalmHero
     ? 'aurora'
     : 'constellation'
+
+// v2 UX rebuild preview (?shell=v2): render the new warm light AppShell around the
+// existing content. Force the light theme so v1 content reads coherently until the
+// phased re-skin lands. Default (no flag) = the current v1 shell, untouched.
+const SHELL_V2 = new URLSearchParams(window.location.search).get('shell') === 'v2'
+if (SHELL_V2 && typeof document !== 'undefined') document.documentElement.classList.add('light')
 
 export default function App() {
   const { state, set } = useSearchState()
@@ -115,6 +122,95 @@ export default function App() {
   const onPrimary = (p: Primary) =>
     set({ tab: p === 'jobs' ? (primaryFor(state.tab) === 'jobs' ? state.tab : 'all') : p })
 
+  const tabContent =
+    state.tab === 'overview' ? (
+      <Overview rows={rows} stats={overview} apps={apps} onOpen={openDrawer} />
+    ) : state.tab === 'applications' ? (
+      <Applications apps={apps} encBlob={encryptedSite} onUnlock={setUnlocked} onOpen={openDrawer} />
+    ) : state.tab === 'outreach' ? (
+      <Outreach profile={data.profile} applied={data.applied_outreach ?? []} />
+    ) : (
+      <>
+        <TierSegment value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
+        <FacetBar
+          options={options}
+          selected={selected}
+          onToggle={toggleFacet}
+          group={state.group}
+          onGroup={(v) => set({ group: v })}
+          hideClosed={state.hideClosed}
+          onHideClosed={(v) => set({ hideClosed: v })}
+          activeCount={nActive}
+          onClear={clearAll}
+        />
+        <ActiveChips chips={chips} onRemove={removeChip} />
+        <JobList items={items} collapsed={collapsed} onToggleCollapse={toggleCollapse} onOpen={openDrawer} />
+      </>
+    )
+
+  const overlays = (
+    <>
+      <SearchPalette rows={rows} onNavigate={(t) => set({ tab: t })} />
+      <JobDrawer job={openJob} allRows={rows} onOpen={openDrawer} onClose={closeDrawer} />
+      <Toaster
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            background: 'var(--card)',
+            color: 'var(--fg)',
+            border: '1px solid var(--border)',
+          },
+        }}
+      />
+    </>
+  )
+
+  if (SHELL_V2) {
+    const section: Section =
+      state.tab === 'overview'
+        ? 'overview'
+        : state.tab === 'applications'
+          ? 'applications'
+          : state.tab === 'outreach'
+            ? 'outreach'
+            : 'jobs'
+    const TITLES: Record<Section, string> = {
+      overview: 'Overview',
+      jobs: 'Jobs',
+      applications: 'Applications',
+      outreach: 'Outreach',
+      settings: 'Settings',
+    }
+    const onSection = (s: Section) =>
+      set({
+        tab:
+          s === 'jobs'
+            ? primaryFor(state.tab) === 'jobs'
+              ? state.tab
+              : 'all'
+            : s === 'settings'
+              ? 'outreach'
+              : s,
+      })
+    return (
+      <>
+        <AppShell
+          active={section}
+          onNavigate={onSection}
+          title={TITLES[section]}
+          search={state.q}
+          onSearch={(v) => set({ q: v }, { replace: true })}
+          onToggleTheme={() => document.documentElement.classList.toggle('light')}
+          onLock={relock}
+          profile={data.profile ? { name: `résumé: ${data.profile.resume}` } : null}
+        >
+          {tabContent}
+        </AppShell>
+        {overlays}
+      </>
+    )
+  }
+
   return (
     <div className="relative min-h-screen overflow-x-clip">
       <HeroBackdrop variant={HERO} />
@@ -132,43 +228,9 @@ export default function App() {
       <main className="relative z-10 mx-auto flex max-w-7xl flex-col gap-4 px-6 py-6">
         <Kpis rows={rows} />
         <PrimaryNav tab={state.tab} jobsCount={tabCounts.all} appsCount={apps.length} onSelect={onPrimary} />
-        {state.tab === 'overview' ? (
-          <Overview rows={rows} stats={overview} apps={apps} onOpen={openDrawer} />
-        ) : state.tab === 'applications' ? (
-          <Applications apps={apps} encBlob={encryptedSite} onUnlock={setUnlocked} onOpen={openDrawer} />
-        ) : state.tab === 'outreach' ? (
-          <Outreach profile={data.profile} applied={data.applied_outreach ?? []} />
-        ) : (
-          <>
-            <TierSegment value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />
-            <FacetBar
-              options={options}
-              selected={selected}
-              onToggle={toggleFacet}
-              group={state.group}
-              onGroup={(v) => set({ group: v })}
-              hideClosed={state.hideClosed}
-              onHideClosed={(v) => set({ hideClosed: v })}
-              activeCount={nActive}
-              onClear={clearAll}
-            />
-            <ActiveChips chips={chips} onRemove={removeChip} />
-            <JobList items={items} collapsed={collapsed} onToggleCollapse={toggleCollapse} onOpen={openDrawer} />
-          </>
-        )}
+        {tabContent}
       </main>
-      <SearchPalette rows={rows} onNavigate={(t) => set({ tab: t })} />
-      <JobDrawer job={openJob} allRows={rows} onOpen={openDrawer} onClose={closeDrawer} />
-      <Toaster
-        position="bottom-right"
-        toastOptions={{
-          style: {
-            background: 'var(--card)',
-            color: 'var(--fg)',
-            border: '1px solid var(--border)',
-          },
-        }}
-      />
+      {overlays}
     </div>
   )
 }
