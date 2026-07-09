@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Build the redacted jobscope web dashboard and publish it to jobscope's own gh-pages
-# branch for GitHub Pages, served at https://rinz0x0cruz.github.io/jobscope/. Emits a
-# redacted payload, bakes it into the Vite/React app (web/), builds it, and publishes
-# web/dist. Only the redacted build is published; main is never touched and your
-# database/config never leave your machine. Requires Node.js/npm. Commits use the
-# rinz0x0cruz identity.
+# Build the jobscope web dashboard and publish it to jobscope's own gh-pages branch for
+# GitHub Pages, served at https://rinz0x0cruz.github.io/jobscope/. Whole-app auth: the
+# published build ships NO data -- an empty shell plus an AES-256-GCM blob that only your
+# passphrase can unlock in-browser -- so --encrypted is REQUIRED (this script refuses to
+# publish without it). Bakes the shell into the Vite/React app (web/), builds it, and
+# publishes web/dist. main is never touched and your database/config never leave your
+# machine. Requires Node.js/npm. Commits use the rinz0x0cruz identity.
 #
 # Usage: scripts/publish.sh [--refresh] [--no-scan] [--encrypted] [--force] [repo-url] [branch]
 #   --refresh    rerun scan -> match -> inbox first (fresh data on the published site)
 #   --no-scan    with --refresh, skip the slow job scan (rescore + inbox only)
-#   --encrypted  also bake an AES-256-GCM encrypted applications blob into the Applications tab (passphrase in browser)
+#   --encrypted  REQUIRED: bake the AES-256-GCM encrypted full dashboard the site unlocks with your passphrase (in-browser)
 #   defaults: https://github.com/rinz0x0cruz/jobscope.git  gh-pages
 set -euo pipefail
 
@@ -41,6 +42,19 @@ PY="$REPO_ROOT/.venv/bin/python"
 [ -x "$PY" ] || PY="python3"
 export PYTHONPATH=.
 
+# Whole-app auth: the public build ships NO data -- only the passphrase-encrypted blob
+# can reveal anything -- so a non-encrypted publish would be a dead, unopenable site.
+# Require --encrypted, and fail fast before doing any work.
+if [ -z "${ENCRYPTED:-}" ]; then
+    {
+        echo "error: refusing to publish without encryption."
+        echo "  Since the whole-app-auth change the public build ships no data, so a"
+        echo "  non-encrypted publish would be a dead, unopenable site. Re-run with --encrypted"
+        echo "  (set JOBSCOPE_APPS_PASSPHRASE, or store it: jobscope secrets set JOBSCOPE_APPS_PASSPHRASE)."
+    } >&2
+    exit 2
+fi
+
 # 0. Optional data refresh: rerun the pipeline so the published site reflects the latest
 #    jobs and application emails. --refresh runs scan -> match -> inbox first; --no-scan
 #    skips the slow networked job scan and just rescores + syncs the inbox.
@@ -55,8 +69,8 @@ if [ -n "${REFRESH:-}" ]; then
     "$PY" -m jobscope inbox
 fi
 
-# 1. Emit the redacted dashboard payload and bake it into the web app.
-echo "==> Emitting redacted dashboard JSON (jobscope dashboard --emit-json --public)"
+# 1. Emit the locked (empty) public payload and bake it into the web app.
+echo "==> Emitting the locked (empty) public dashboard JSON (jobscope dashboard --emit-json --public)"
 "$PY" -m jobscope dashboard --emit-json --public
 
 PUBLIC_JSON="$REPO_ROOT/data/dashboard.public.json"

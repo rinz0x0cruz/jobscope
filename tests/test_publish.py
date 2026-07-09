@@ -1,8 +1,9 @@
-"""Public (redacted) dashboard mode.
+"""Public dashboard mode = whole-app auth.
 
-Private fields (third-party referral contacts, the application funnel, search
-terms, and score rationale) must never reach a publicly-hosted dashboard, while
-public job info and fit scores are kept. Fully offline -- no network.
+The public build must ship NO consumable data at all -- no rows, applications,
+profile, funnel, or search terms. The un-redacted payload is only ever available
+via the separately-built AES-256-GCM blob, decrypted in the browser with a
+passphrase. Fully offline -- no network.
 """
 import json
 import os
@@ -27,7 +28,10 @@ def _seed(store):
     return job
 
 
-def test_public_mode_redacts_sensitive_fields():
+def test_public_mode_ships_no_data():
+    """Whole-app auth: the public build must contain NO consumable data. Only the
+    separately-built encrypted blob can reveal anything, and only with the
+    passphrase."""
     with tempfile.TemporaryDirectory() as tmp:
         cfg = load_config(None)
         cfg["output"]["db_path"] = os.path.join(tmp, "p.db")
@@ -43,33 +47,21 @@ def test_public_mode_redacts_sensitive_fields():
         assert "threat detection engineer" in full
         assert "1.7y experience" in full
 
-        # Public payload -> private fields stripped.
-        pub = json.dumps(render.build_data(cfg, store, public=True), ensure_ascii=False)
-        assert "Senior Security Engineer" in pub      # core public job info kept
-        assert "Acme" in pub
-        assert "Dana Recruiter" not in pub            # referral contact name gone
-        assert "dana-secret" not in pub               # referral contact URL gone
-        assert "threat detection engineer" not in pub  # search term gone
-        assert "1.7y experience" not in pub           # score rationale gone
+        # Public payload -> an empty, schema-valid shell. Nothing consumable ships.
+        pub = render.build_data(cfg, store, public=True)
+        assert pub["rows"] == []
+        assert pub["total"] == 0
+        assert pub["applications"] == []
+        assert pub["applied_outreach"] == []
+        assert pub["profile"] is None
+        assert pub["overview"]["funnel"] == {}
+        assert pub["overview"]["targets"] == []
+        assert pub["overview"]["gaps"] == []
+
+        # And none of the seeded private strings survive anywhere in the JSON.
+        blob = json.dumps(pub, ensure_ascii=False)
+        for secret in ("Senior Security Engineer", "Acme", "Dana Recruiter",
+                       "dana-secret", "threat detection engineer", "1.7y experience"):
+            assert secret not in blob
 
         store.close()
-
-
-def test_redact_public_clears_private_keys():
-    rows = [{
-        "title": "X", "company": "Acme", "score": 82,
-        "contacts": [{"name": "Dana", "url": "https://linkedin.com/in/dana"}],
-        "rationale": "~1.7y experience (junior)", "base": "research",
-    }]
-    overview = {"funnel": {"applied": 3}, "targets": ["ml eng"], "gaps": [["k8s", 2]]}
-
-    render._redact_public(rows, overview)
-
-    assert rows[0]["contacts"] == []
-    assert rows[0]["rationale"] == ""
-    assert rows[0]["base"] == ""
-    assert rows[0]["title"] == "X"        # public job info untouched
-    assert rows[0]["score"] == 82
-    assert overview["funnel"] == {}
-    assert overview["targets"] == []
-    assert overview["gaps"]               # aggregate skill gaps intentionally kept

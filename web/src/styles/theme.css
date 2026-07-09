@@ -24,6 +24,21 @@
   --color-cool: var(--cool);
   --color-signal: var(--signal);
 
+  /* v2 rebuild design system (warm editorial neutrals + coral). Additive: these
+     map NEW utilities (bg-paper/panel/inset, text-ink*, border-line*, bg-brand*)
+     used only by the ?shell=v2 UI. No v1 token is touched. */
+  --color-paper: var(--paper);
+  --color-panel: var(--panel);
+  --color-inset: var(--inset);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-brand: var(--brand-coral);
+  --color-brand-weak: var(--brand-weak);
+  --color-brand-strong: var(--brand-strong);
+
   --radius-card: var(--radius);
 
   --font-sans: var(--font);
@@ -64,6 +79,16 @@
   --positive: var(--strong); --warning: var(--stretch); --danger: var(--hot); --focus: var(--accent);
   --dur-fast: 120ms; --dur-base: 200ms; --dur-slow: 320ms;
   --ease-standard: cubic-bezier(.2, 0, 0, 1); --ease-entrance: cubic-bezier(0, 0, 0, 1); --ease-exit: cubic-bezier(.4, 0, 1, 1);
+
+  /* v2 rebuild palette. DARK (default) values live here — warm espresso neutrals
+     so the cockpit reads coherent in the dark theme; html.light overrides below
+     restore the light-first warm surfaces. Tier/status hues (--strong etc.) and
+     --hot already have per-theme values, so cards stay legible in both. */
+  --paper: #141210; --panel: #1e1b16; --inset: #272219;
+  --line: #322d24; --line-strong: #443d31;
+  --ink: #f4efe6; --ink-2: #bcb4a5; --ink-3: #8b8375;
+  --brand-coral: #ef7a5e; --brand-weak: #3a231b; --brand-strong: #f59579;
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -12px rgba(0, 0, 0, .6);
 }
 
 html.light {
@@ -74,6 +99,13 @@ html.light {
   --neon-cyan: #0891b2; --neon-blue: #0284c7; --neon-violet: #7c3aed; --neon-emerald: #0d9488;
   --strong: #059669; --good: #0284c7; --stretch: #d97706; --skip: #64748b;
   --shadow: 0 8px 24px -14px rgba(15, 23, 42, .22);
+
+  /* v2 cockpit — light-first warm editorial neutrals + terracotta/coral. */
+  --paper: #faf8f5; --panel: #ffffff; --inset: #f3f0ea;
+  --line: #e7e2d9; --line-strong: #d8d2c6;
+  --ink: #1d1b18; --ink-2: #5c574f; --ink-3: #8a847a;
+  --brand-coral: #e0654a; --brand-weak: #fcebe6; --brand-strong: #c8543b;
+  --shadow-panel: 0 1px 2px rgba(29, 27, 24, .04), 0 6px 20px -12px rgba(29, 27, 24, .18);
 }
 
 @layer base {

@@ -1,16 +1,18 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Build the redacted jobscope web dashboard and publish it to jobscope's own
-    gh-pages branch, served via GitHub Pages.
+    Build the jobscope web dashboard and publish it (whole-app auth: the public
+    build ships no data, only a passphrase-encrypted blob) to gh-pages / GitHub Pages.
 
 .DESCRIPTION
-    Emits a redacted dashboard payload (`jobscope dashboard --emit-json --public` -- no
-    referral contacts, rationale, resume labels, application funnel, or search terms),
-    bakes it into the Vite/React app in web/, builds it, and publishes web/dist to this
-    repo's `gh-pages` branch, which GitHub Pages serves at
-    https://rinz0x0cruz.github.io/jobscope/. Only the redacted build is published;
-    `main` is never touched and your database/config never leave your machine.
+    Whole-app auth: the public build ships NO data. `jobscope dashboard --emit-json
+    --public` emits an empty shell (no rows, applications, profile, funnel, or search
+    terms); the un-redacted payload is AES-256-GCM encrypted into a separate blob the
+    SPA unlocks in-browser with your passphrase. -Encrypted is therefore REQUIRED --
+    this script refuses to publish without it. Bakes the shell into the Vite/React app
+    in web/, builds it, and publishes web/dist to this repo's `gh-pages` branch, served
+    at https://rinz0x0cruz.github.io/jobscope/. `main` is never touched and your
+    database/config never leave your machine.
 
     Requires Node.js/npm for the web build. Safe to run from a scheduled task;
     commits use the local rinz0x0cruz identity.
@@ -30,18 +32,16 @@
     inbox (a fast, applications-focused refresh).
 
 .PARAMETER Encrypted
-    Also bake an end-to-end encrypted applications blob into the SPA's Applications tab:
-    AES-256-GCM over your un-redacted applications, decrypted only in the browser with a
-    passphrase you enter. Prompted for the passphrase (or set $env:JOBSCOPE_APPS_PASSPHRASE).
+    REQUIRED. Bake the end-to-end encrypted full dashboard into the SPA: AES-256-GCM
+    over your un-redacted data, decrypted only in the browser with a passphrase you
+    enter. Prompted for the passphrase (or set $env:JOBSCOPE_APPS_PASSPHRASE, or store
+    it via `jobscope secrets set JOBSCOPE_APPS_PASSPHRASE`).
 
 .EXAMPLE
-    ./scripts/publish.ps1
+    ./scripts/publish.ps1 -Encrypted
 
 .EXAMPLE
-    ./scripts/publish.ps1 -Refresh -Force   # one-click: refresh data, then publish
-
-.EXAMPLE
-    ./scripts/publish.ps1 -Refresh -Encrypted -Force   # + encrypted applications page
+    ./scripts/publish.ps1 -Refresh -Encrypted -Force   # one-click: refresh data, then publish
 #>
 [CmdletBinding()]
 param(
@@ -68,6 +68,13 @@ $Py = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Py)) { $Py = "python" }
 $env:PYTHONPATH = "."
 
+# Whole-app auth: the public build ships NO data -- only the passphrase-encrypted blob
+# can reveal anything -- so a non-encrypted publish would be a dead, unopenable site.
+# Require -Encrypted, and fail fast before doing any work.
+if (-not $Encrypted) {
+    throw 'Refusing to publish without encryption: since the whole-app-auth change the public build ships no data, so a non-encrypted publish would be a dead, unopenable site. Re-run with -Encrypted (set $env:JOBSCOPE_APPS_PASSPHRASE, or store it via: jobscope secrets set JOBSCOPE_APPS_PASSPHRASE).'
+}
+
 # 0. Optional data refresh: rerun the pipeline so the published site reflects the latest
 #    jobs and application emails. -Refresh runs scan -> match -> inbox first; -NoScan
 #    skips the slow networked job scan and just rescores + syncs the inbox.
@@ -85,8 +92,8 @@ if ($Refresh) {
     if ($LASTEXITCODE -ne 0) { throw "jobscope inbox failed (exit $LASTEXITCODE)" }
 }
 
-# 1. Emit the redacted dashboard payload and bake it into the web app.
-Write-Host "==> Emitting redacted dashboard JSON (jobscope dashboard --emit-json --public)"
+# 1. Emit the locked (empty) public payload and bake it into the web app.
+Write-Host "==> Emitting the locked (empty) public dashboard JSON (jobscope dashboard --emit-json --public)"
 & $Py -m jobscope dashboard --emit-json --public
 if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json --public failed (exit $LASTEXITCODE)" }
 
