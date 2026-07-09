@@ -31,8 +31,9 @@ def test_web_dashboard_animation_assets_are_wired() -> None:
     css = _read("web/src/styles/theme.css")
 
     # The hero backdrop is a swappable generative canvas (it replaced the retired
-    # sakura tree), layered under the console scanlines.
-    assert "<HeroBackdrop" in app and "js-scanlines" in app
+    # sakura tree) and is the single ambient layer (the aurora blob + CRT scanlines
+    # were retired in the UX overhaul's P0 for a calmer console).
+    assert "<HeroBackdrop" in app
     assert "<SignalLottie" in header
     assert "useLottie" in lottie and "jobscope signal" in lottie
     assert "js-signal-glyph" in lottie
@@ -45,12 +46,10 @@ def test_web_dashboard_animation_assets_are_wired() -> None:
     assert "trackSpotlight" in spotlight and "--spot-x" in spotlight and "--spot-y" in spotlight
 
     for marker in (
-        ".js-ambient",
         ".js-logo-mark",
         ".js-neon-title",
         ".js-signal-field",
         ".js-hero-aurora",
-        ".js-scanlines",
         ".js-spotlight-card",
         ".js-status-card",
         ".js-skill-graph",

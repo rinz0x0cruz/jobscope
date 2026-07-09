@@ -84,6 +84,17 @@ def test_reclassify_keeps_real_interview():
         {"subject": "Next steps", "snippet": "", "signal": "interview"}) == "interview"
 
 
+def test_reclassify_drops_newsletter_domain_event():
+    # a LeetCode contest / interview-prep promo mis-tagged interview -> dropped by domain
+    assert reconcile.reclassify_signal(
+        {"subject": "Ace your interview with LeetCode", "snippet": "",
+         "signal": "interview", "from_domain": "leetcode.com"}) is None
+    # a real employer interview (non-newsletter domain) is untouched
+    assert reconcile.reclassify_signal(
+        {"subject": "Interview invitation", "snippet": "", "signal": "interview",
+         "from_domain": "greenhouse.io"}) == "interview"
+
+
 # --- recompute (end to end) -------------------------------------------------
 def test_recompute_reapply_keeps_company_active():
     with tempfile.TemporaryDirectory() as tmp:

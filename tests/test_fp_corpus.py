@@ -54,6 +54,8 @@ DROP_CASES = [
      "Eatclub Confirmation - You have successfully paid online for your order", ""),
     ("thinkific-course-assessment", "PURSUIT Academy", "notify.thinkific.com",
      "You are now enrolled in PURSUIT - Volunteer Training & Assessment!", ""),
+    ("leetcode-interview-promo", "LeetCode", "leetcode.com",
+     "Ace your next interview with LeetCode's Interview Crash Course", ""),
 ]
 
 # Failure modes 2 & 3 -- the employer must win over the ATS/relay platform.
