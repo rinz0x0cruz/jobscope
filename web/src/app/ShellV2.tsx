@@ -12,7 +12,7 @@ import { buildTriage } from '@/lib/triage'
 import { buildTimeline } from '@/lib/timeline'
 import { Card, animate, viewTransition } from '@/ui'
 import { JobDrawer } from '@/components/JobDrawer'
-import type { DashboardData, JobRow } from '@/lib/schema'
+import type { DashboardData } from '@/lib/schema'
 
 export interface ShellV2Props {
   data: DashboardData
@@ -20,7 +20,7 @@ export interface ShellV2Props {
   onSearch: (v: string) => void
   onLock: () => void
   onOpenJob: (id: string) => void
-  openJob: JobRow | null
+  jobId?: string
   onCloseJob: () => void
 }
 
@@ -88,10 +88,11 @@ export function ShellV2({
   onSearch,
   onLock,
   onOpenJob,
-  openJob,
+  jobId,
   onCloseJob,
 }: ShellV2Props) {
   const [lens, setLens] = useState<Section>('briefing')
+  const openJob = useMemo(() => data.rows.find((r) => r.id === jobId) ?? null, [data.rows, jobId])
   const columns = useMemo(() => filterBoard(buildBoard(data), search), [data, search])
   const briefing = useMemo(() => buildBriefing(data), [data])
   const triage = useMemo(() => buildTriage(data), [data])

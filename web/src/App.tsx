@@ -27,6 +27,7 @@ import { Overview } from '@/components/overview/Overview'
 import { Applications } from '@/components/applications/Applications'
 import { Outreach } from '@/components/outreach/Outreach'
 import { ShellV2 } from '@/app/ShellV2'
+import { AuthGate } from '@/app/AuthGate'
 import { readCachedUnlock, clearUnlock } from '@/lib/unlock'
 import type { DashboardData } from '@/lib/schema'
 import { JobDrawer } from '@/components/JobDrawer'
@@ -178,15 +179,19 @@ export default function App() {
 
   if (SHELL_V2) {
     return (
-      <ShellV2
-        data={data}
-        search={state.q}
-        onSearch={(v) => set({ q: v }, { replace: true })}
-        onLock={relock}
-        onOpenJob={openDrawer}
-        openJob={openJob}
-        onCloseJob={closeDrawer}
-      />
+      <AuthGate baked={dashboard} encrypted={encryptedSite}>
+        {(gated, lock) => (
+          <ShellV2
+            data={gated}
+            search={state.q}
+            onSearch={(v) => set({ q: v }, { replace: true })}
+            onLock={lock}
+            jobId={state.job}
+            onOpenJob={openDrawer}
+            onCloseJob={closeDrawer}
+          />
+        )}
+      </AuthGate>
     )
   }
 

@@ -66,9 +66,15 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     """Assemble the dashboard payload (rows + overview) as a plain dict.
 
     This is the data contract the web dashboard build consumes; it reuses the exact
-    per-job and overview shapes the HTML renderer uses, and applies the public
-    redaction when ``public`` is set.
+    per-job and overview shapes the HTML renderer uses. The ``public`` build ships
+    NO data at all (whole-app auth): only the AES-256-GCM ``site.enc.json`` blob --
+    built separately from the un-redacted payload -- can be unlocked in-browser with
+    the passphrase, so the published bundle is an empty, schema-valid shell.
     """
+    if public:
+        return {"generated": now_iso(), "total": 0, "rows": [],
+                "overview": {"funnel": {}, "gaps": [], "considered": 0, "targets": []},
+                "applications": [], "profile": None, "applied_outreach": []}
     jobs = store.jobs(order_by_score=True)
     # Skip-tier roles (off-target / too-senior / filtered) are hidden from the
     # dashboard by default, so the pages show only actionable matches. Set
@@ -78,11 +84,9 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     rows = [_job_record(j, store.get_enrichment(j.company) if j.company else {}, store)
             for j in jobs]
     overview = _overview_data(cfg, store)
-    apps = [] if public else _application_records(store)
-    profile = None if public else _profile_data(cfg, store)
-    applied_outreach = [] if public else _applied_outreach_data(store)
-    if public:
-        _redact_public(rows, overview)
+    apps = _application_records(store)
+    profile = _profile_data(cfg, store)
+    applied_outreach = _applied_outreach_data(store)
     return {"generated": now_iso(), "total": len(rows), "rows": rows,
             "overview": overview, "applications": apps, "profile": profile,
             "applied_outreach": applied_outreach}
@@ -124,24 +128,6 @@ def emit_web(cfg: dict, store) -> str | None:
         json.dump(build_data(cfg, store, public=False), fh, ensure_ascii=False,
                   separators=(",", ":"))
     return path
-
-
-def _redact_public(rows: list[dict], overview: dict) -> None:
-    """Strip private fields in place for a publicly-hosted (GitHub Pages) dashboard.
-
-    Removes third-party referral contacts, score rationale, resume-variant
-    labels, and the archived job-description snapshot from every job, plus the
-    application funnel and search terms from the overview -- leaving only public
-    job info and fit scores. The ``blocked`` flag is already computed in
-    ``_job_record``, so clearing ``rationale`` here is safe.
-    """
-    for r in rows:
-        r["contacts"] = []
-        r["rationale"] = ""
-        r["base"] = ""
-        r["description"] = ""
-    overview["funnel"] = {}
-    overview["targets"] = []
 
 
 def _overview_data(cfg: dict, store) -> dict:

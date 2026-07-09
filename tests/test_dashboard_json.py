@@ -80,7 +80,7 @@ def test_jd_snapshot_cleans_html_and_trims():
     assert len(long) <= 101 and long.endswith("\u2026")
 
 
-def test_emit_json_public_is_redacted():
+def test_emit_json_public_is_empty():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = load_config(None)
         cfg["output"]["db_path"] = os.path.join(tmp, "p.db")
@@ -91,14 +91,15 @@ def test_emit_json_public_is_redacted():
         path = render.emit_json(cfg, store, public=True)
         assert os.path.basename(path) == "dashboard.public.json"
         pub = json.load(open(path, encoding="utf-8"))
-        row = pub["rows"][0]
-        assert row["base"] == "" and row["rationale"] == "" and row["contacts"] == []
-        # #30: the archived JD snapshot is stripped from the public build
-        assert row["description"] == ""
-        # public-safe info is kept
-        assert row["title"] == "Senior Security Engineer" and row["company"] == "Acme"
-        assert pub["profile"] is None                     # the profile is behind the site unlock
-        assert pub["applied_outreach"] == []              # applied-company contacts too
+        # Whole-app auth: the public build ships an empty, schema-valid shell -- no
+        # rows, applications, profile, or funnel. The un-redacted data lives only in
+        # the separately-built encrypted blob.
+        assert pub["rows"] == [] and pub["total"] == 0
+        assert pub["applications"] == [] and pub["applied_outreach"] == []
+        assert pub["profile"] is None
+        assert pub["overview"]["funnel"] == {}
+        # nothing from the seeded private data leaks into the public payload
+        assert "Senior Security Engineer" not in json.dumps(pub)
         store.close()
 
 
@@ -379,17 +380,15 @@ def test_public_build_data_redacts_all_pii():
     assert full["applications"], "seed should give the full build an application"
     assert full["applied_outreach"], "seed should give the full build applied-company contacts"
 
-    # public build strips all of it
-    row = pub["rows"][0]
-    assert row["contacts"] == []
-    assert row["rationale"] == ""
-    assert row["base"] == ""
+    # public build ships an empty, schema-valid shell (whole-app auth): nothing
+    # consumable at all, so there is no row-level PII left to leak.
+    assert pub["rows"] == []
+    assert pub["total"] == 0
     assert pub["overview"]["funnel"] == {}
     assert pub["overview"]["targets"] == []
     assert pub["applications"] == []
     assert pub["applied_outreach"] == []
-    # PII-contract: a public row carries no key beyond the known-safe contract set
-    assert set(row) <= set(_JOB_ROW), f"unexpected public row keys: {set(row) - set(_JOB_ROW)}"
+    assert pub["profile"] is None
 
 
 def test_public_json_has_no_pii_markers():
