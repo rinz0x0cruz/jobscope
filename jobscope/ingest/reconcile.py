@@ -135,14 +135,17 @@ def _write_status(store, jid: str, base: str, status: str, inst: list[dict]) -> 
 def reclassify_signal(ev: dict) -> str | None:
     """New signal for a stored event, or None if it should be dropped.
 
-    Conservative repair: drop OTP/verification mail, and downgrade a false
-    ``interview`` / ``assessment`` tag to whatever the current rules say -- but
-    never disturb an event already classed confirmation / rejection / offer.
+    Conservative repair: drop OTP/verification mail and content/practice-platform
+    newsletters (LeetCode contests, course "challenges", ...), and downgrade a
+    false ``interview`` / ``assessment`` tag to whatever the current rules say --
+    but never disturb an event already classed confirmation / rejection / offer.
     """
     subject = ev.get("subject") or ""
     snippet = ev.get("snippet") or ""
     if mailrules.is_transactional(subject, snippet):
         return None
+    if mailrules.is_newsletter_domain(ev.get("from_domain") or ""):
+        return None   # content/practice platform (LeetCode contests, course "challenges", ...) -- never funnel status
     sig = ev.get("signal") or ""
     if sig in ("interview", "assessment"):
         new = mailrules.classify_scored(subject, snippet)[0]
