@@ -538,3 +538,92 @@ def api_company_send(cfg: dict, store, company: str, *, to: str, subject: str, b
     if not ok:
         return {"ok": False, "error": "SMTP send failed (check email.* + app password)"}
     return {"ok": True, "sent": True, "to": to, "recorded": False}
+
+
+# --- applied-company HR contacts (pre-computed at refresh for the dashboard) ---
+def _applied_company_domain(store, company: str, url: str, *, fetch: bool) -> str:
+    """Employer mail domain for a company you've applied to: from the linked job's
+    URL, a non-ATS domain that emailed you, or a name-guess verified by a fetch."""
+    d = _domain_of_url(url)
+    if d:
+        return d
+    cl = (company or "").strip().lower()
+    for ev in store.mail_events():
+        if (ev.get("company") or "").strip().lower() == cl:
+            fd = (ev.get("from_domain") or "").lower().strip()
+            if fd and "." in fd and not _is_ats_domain(fd) and not any(b in fd for b in _AGGREGATORS):
+                return fd
+    if fetch and company:
+        for cand in _domain_candidates(company):
+            if _verify_domain(cand, company):
+                return cand
+    return ""
+
+
+def _inbox_recruiters(store, company: str) -> list[dict]:
+    """Real recruiter addresses this company already emailed you from (highest
+    confidence -- an actual human at the employer, not a guess)."""
+    cl = (company or "").strip().lower()
+    out: list[dict] = []
+    seen: set[str] = set()
+    for ev in store.mail_events():
+        if (ev.get("company") or "").strip().lower() != cl:
+            continue
+        addr = (ev.get("from_addr") or "").strip().lower()
+        sig = (ev.get("signal") or "").lower()
+        if addr and "@" in addr and sig in _RESPONSE_SIGNALS and not _is_automated(addr) and addr not in seen:
+            seen.add(addr)
+            out.append({"email": addr, "confidence": "high", "source": "recruiter",
+                        "note": "a recruiter emailed you from this address"})
+    return out
+
+
+def discover_company_contacts(cfg: dict, store, company: str, *, url: str = "",
+                              fetch: bool = True) -> tuple[str, list[dict]]:
+    """Resolve a company's domain + aggregate HR contacts from every source, ranked:
+    real recruiters who emailed you (high), addresses published on the company's own
+    site (medium), the opt-in finder (Hunter/Apollo), then role inboxes (low)."""
+    domain = _applied_company_domain(store, company, url, fetch=fetch)
+    if not domain:
+        return "", []
+    contacts = _inbox_recruiters(store, company)
+    have = {c["email"] for c in contacts}
+    oc = (cfg.get("apply", {}).get("outreach", {}) or {})
+    try:
+        from jobscope.apply import finder as _finder
+        for c in _finder.find_contacts(cfg, company, domain):
+            if c["email"] not in have:
+                contacts.append(c)
+                have.add(c["email"])
+    except Exception:  # noqa: BLE001 - finder is optional, never fatal
+        pass
+    for c in _company_candidates(company or domain, domain,
+                                 roles=oc.get("role_inboxes") or _ROLE_DEFAULTS, fetch=fetch):
+        if c["email"] not in have:
+            contacts.append(c)
+            have.add(c["email"])
+    return domain, contacts
+
+
+def scan_applied_contacts(cfg: dict, store, *, limit: Optional[int] = None,
+                          max_age_days: Optional[int] = None, fetch: bool = True) -> dict:
+    """Pre-compute + persist HR contacts for the most-recent ACTIVE applied companies,
+    so the dashboard can show them behind the unlock. Skips companies whose stored
+    contacts are still fresh (< max_age_days). Best-effort; safe to run every refresh."""
+    oc = (cfg.get("apply", {}).get("outreach", {}) or {})
+    scan = (oc.get("applied_scan", {}) or {})
+    limit = int(scan.get("limit", 25)) if limit is None else limit
+    max_age_days = int(scan.get("max_age_days", 14)) if max_age_days is None else max_age_days
+    discovered = skipped = 0
+    for row in store.active_application_companies(limit=limit):
+        company = row["company"]
+        existing = store.get_company_contacts(company)
+        if existing and _within_cooldown(existing.get("discovered_at"), max_age_days):
+            skipped += 1
+            continue
+        domain, contacts = discover_company_contacts(
+            cfg, store, company, url=row.get("company_url") or "", fetch=fetch)
+        if domain:
+            store.set_company_contacts(company, domain, contacts)
+            discovered += 1
+    return {"discovered": discovered, "skipped": skipped}

@@ -131,6 +131,12 @@ CREATE TABLE IF NOT EXISTS mail_events (
     snippet TEXT,
     first_seen TEXT
 );
+CREATE TABLE IF NOT EXISTS company_contacts (
+    company TEXT PRIMARY KEY,
+    domain TEXT,
+    contacts_json TEXT,
+    discovered_at TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
 CREATE INDEX IF NOT EXISTS idx_mail_events_job ON mail_events(job_id);

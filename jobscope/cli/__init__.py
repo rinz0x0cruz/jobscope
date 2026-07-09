@@ -109,6 +109,17 @@ def cmd_outreach(args, cfg):
                             send=getattr(args, "send", False), force=getattr(args, "force", False))
 
 
+def cmd_outreach_scan(args, cfg):
+    from ..apply import outreach
+    with _store(args, cfg) as store:
+        stats = outreach.scan_applied_contacts(
+            cfg, store, limit=getattr(args, "limit", None),
+            fetch=not getattr(args, "no_fetch", False))
+    print(f"  outreach scan: discovered {stats['discovered']} compan(ies), "
+          f"skipped {stats['skipped']} still-fresh.")
+    return 0
+
+
 def cmd_apply(args, cfg):
     from ..apply import apply
     with _store(args, cfg) as store:
@@ -392,6 +403,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--send", action="store_true", help="Actually send via SMTP + record (default: preview only)")
     sp.add_argument("--force", action="store_true", help="Override cooldown / dedup / low-confidence guards")
     sp.set_defaults(func=cmd_outreach)
+
+    sp = sub.add_parser("outreach-scan",
+                        help="Pre-compute HR contacts for your active applications (for the dashboard)")
+    sp.add_argument("--limit", type=int, default=None,
+                    help="Max companies to scan (default: apply.outreach.applied_scan.limit)")
+    sp.add_argument("--no-fetch", action="store_true",
+                    help="Skip network discovery -- use only inbox recruiters + role inboxes")
+    sp.set_defaults(func=cmd_outreach_scan)
 
     sp = sub.add_parser("dashboard", help="Emit the dashboard JSON payload the web app consumes")
     sp.add_argument("--public", action="store_true",

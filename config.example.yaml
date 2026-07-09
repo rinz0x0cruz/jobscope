@@ -165,6 +165,12 @@ apply:
     role_inboxes: ["careers", "jobs", "recruiting", "talent", "hr"]  # tried in order, only on a CONFIRMED company domain
     cooldown_days: 14                 # don't re-contact the same company within N days
     do_not_contact: []                # company names / domains to always skip
+    finder:                           # optional 3rd-party HR-email finder (opt-in). Keys read from these ENV VARS, never stored here
+      hunter_key_env: JOBSCOPE_HUNTER_API_KEY   # unset -> Hunter.io off; deterministic on-site discovery still runs
+      apollo_key_env: JOBSCOPE_APOLLO_API_KEY   # unset -> Apollo off
+    applied_scan:                     # pre-compute HR contacts for active applications (shown on the dashboard behind unlock)
+      limit: 25                       # most-recent active companies to scan per run
+      max_age_days: 14                # re-discover a company's contacts at most once per N days
 
 output:
   db_path: "data/jobscope.db"
