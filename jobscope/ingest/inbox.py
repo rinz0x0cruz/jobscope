@@ -170,7 +170,8 @@ def _sync_folder(M, addr: str, folder: str, store, cfg: dict, job_index: dict, *
         if u > max_uid:
             max_uid = u
         try:
-            ev = _process_uid(M, addr, uid, store, cfg, job_index, dry_run=dry_run)
+            ev = _process_uid(M, addr, uid, store, cfg, job_index, dry_run=dry_run,
+                              rescore=backfill)
         except Exception:  # noqa: BLE001 - one bad message never sinks the run
             ev = None
         if ev is not None:
@@ -199,7 +200,7 @@ def _search_uids(M, last_uid: int, since: Optional[str], lookback_days: int,
 
 
 def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
-                 *, dry_run: bool) -> Optional[MailEvent]:
+                 *, dry_run: bool, rescore: bool = False) -> Optional[MailEvent]:
     uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
 
     hdr = _fetch_headers(M, uid)
@@ -259,7 +260,16 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
     is_new = store.upsert_mail_event(ev)
     if is_new:
         _apply_to_application(store, ev)
-    return ev if is_new else None
+        return ev
+    if rescore:
+        # Re-scan mode (backfill): the message is already stored, so upsert is a
+        # no-op -- but re-score its signal from the freshly-fetched body so rule
+        # changes heal old events (e.g. a mis-tagged interview -> confirmation).
+        # The funnel is rebuilt from these signals by the reclassify pass that
+        # follows, so only the event's classification needs to be made current.
+        store.update_mail_event(ev.id, signal=sig, job_id=job_id)
+        return ev
+    return None
 
 
 def _link_job(company: str, role: str, job_index: dict) -> str:

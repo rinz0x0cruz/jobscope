@@ -628,9 +628,39 @@ def test_inbox_is_incremental_and_idempotent(monkeypatch):
     inbox.run(cfg, store)
     assert len(store.mail_events()) == 3
 
-    # A forced backfill re-scans every UID but message-id dedup keeps it a no-op.
+    # A forced backfill re-scans + re-scores every UID; message-id dedup keeps the
+    # row count stable (it updates signals in place rather than inserting).
     inbox.run(cfg, store, backfill=True)
     assert len(store.mail_events()) == 3
+    store.close()
+
+
+def test_backfill_rescores_existing_events(monkeypatch):
+    # Backfill re-scores already-stored events from their freshly-fetched bodies,
+    # so a classifier change heals an old mis-tag in place (row count unchanged).
+    FakeIMAP.mailbox = {
+        1: _raw("Acme Careers <no-reply@acme-employer.com>",
+                "Thank you for applying to Acme",
+                "We have received your application and will review it.", "<ac-1@acme.com>"),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+
+    inbox.run(cfg, store)
+    evs = store.mail_events()
+    assert len(evs) == 1 and evs[0]["signal"] == "confirmation"
+
+    # Simulate an older rule having stored the wrong signal, then heal via backfill.
+    store.update_mail_event(evs[0]["id"], signal="interview")
+    assert store.mail_events()[0]["signal"] == "interview"
+
+    inbox.run(cfg, store, backfill=True)
+    healed = store.mail_events()
+    assert len(healed) == 1                        # re-scored in place, no duplicate
+    assert healed[0]["signal"] == "confirmation"   # mis-tag corrected from the fresh body
     store.close()
 
 
