@@ -1,6 +1,7 @@
 """Application tracking: prepped/applied status joined back to jobs."""
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from .base import now_iso
@@ -103,3 +104,54 @@ class ApplicationsMixin:
         cur = self.conn.execute("DELETE FROM applications WHERE job_id = ?", (job_id_,))
         self.conn.commit()
         return cur.rowcount
+
+    # -- applied-company HR contacts (outreach pre-compute) -------------------
+    def active_application_companies(self, limit: int = 25) -> list[dict[str, Any]]:
+        """Distinct companies with an in-flight application (applied/interview -- not
+        rejected/offer, and not on a closed job), most-recently active first. One
+        row per company, capped at ``limit`` -- the set worth cold-contacting HR at.
+
+        Uses SQLite's ``GROUP BY``/``MAX`` bare-column form: the row with the latest
+        ``updated`` per company supplies the status/applied_at/company_url."""
+        rows = self.conn.execute(
+            "SELECT COALESCE(NULLIF(j.company, ''), a.company) AS company, a.status, "
+            "       a.applied_at, MAX(a.updated) AS updated, j.company_url AS company_url "
+            "FROM applications a LEFT JOIN jobs j ON j.id = a.job_id "
+            "WHERE a.status IN ('applied', 'interview') "
+            "  AND COALESCE(j.status, 'open') <> 'closed' "
+            "  AND COALESCE(NULLIF(j.company, ''), a.company) <> '' "
+            "GROUP BY COALESCE(NULLIF(j.company, ''), a.company) "
+            "ORDER BY COALESCE(NULLIF(applied_at, ''), updated) DESC, company "
+            "LIMIT ?",
+            (limit,))
+        return [dict(r) for r in rows]
+
+    def set_company_contacts(self, company: str, domain: str, contacts: list[dict]) -> None:
+        """Persist discovered HR contacts for a company (upsert, keyed by company)."""
+        self.conn.execute(
+            "INSERT INTO company_contacts (company, domain, contacts_json, discovered_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(company) DO UPDATE SET "
+            "domain = excluded.domain, contacts_json = excluded.contacts_json, "
+            "discovered_at = excluded.discovered_at",
+            (company, domain, json.dumps(contacts or []), now_iso()))
+        self.conn.commit()
+
+    def get_company_contacts(self, company: str) -> Optional[dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT company, domain, contacts_json, discovered_at FROM company_contacts "
+            "WHERE company = ?", (company,)).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["contacts"] = json.loads(d.pop("contacts_json") or "[]")
+        return d
+
+    def list_company_contacts(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT company, domain, contacts_json, discovered_at FROM company_contacts")
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["contacts"] = json.loads(d.pop("contacts_json") or "[]")
+            out.append(d)
+        return out

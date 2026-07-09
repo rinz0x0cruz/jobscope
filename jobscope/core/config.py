@@ -139,6 +139,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "role_inboxes": ["careers", "jobs", "recruiting", "talent", "hr"],
             "cooldown_days": 14,
             "do_not_contact": [],
+            # Optional third-party HR-email finder (opt-in). API keys are read from
+            # these ENV VARS -- never stored in config; unset -> finder off and the
+            # deterministic on-site discovery still runs.
+            "finder": {
+                "hunter_key_env": "JOBSCOPE_HUNTER_API_KEY",
+                "apollo_key_env": "JOBSCOPE_APOLLO_API_KEY",
+            },
+            # Pre-compute HR contacts for your most-recent ACTIVE applications each
+            # refresh (excludes rejected/offer/closed), so they show on the published
+            # dashboard behind unlock. Re-discovered at most once per max_age_days.
+            "applied_scan": {
+                "limit": 25,
+                "max_age_days": 14,
+            },
         },
     },
     "output": {
