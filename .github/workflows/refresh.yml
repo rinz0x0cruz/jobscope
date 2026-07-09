@@ -20,6 +20,10 @@ on:
         description: "Also scan job boards (slower)"
         type: boolean
         default: false
+      inbox_backfill:
+        description: "Re-scan ALL inbox history and re-score (one-time heal; slower)"
+        type: boolean
+        default: false
 
 concurrency:
   group: refresh
@@ -99,7 +103,11 @@ jobs:
           if [ "${{ inputs.full_scan }}" = "true" ]; then
             python -m jobscope scan || echo "::warning::job-board scan failed (non-fatal)"
           fi
-          python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)" --include-spam
+          if [ "${{ inputs.inbox_backfill }}" = "true" ]; then
+            python -m jobscope inbox --backfill --include-spam
+          else
+            python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)" --include-spam
+          fi
           python -m jobscope inbox --reclassify
           python -m jobscope match
           python -m jobscope new --email || echo "::warning::new-match digest failed (non-fatal)"
