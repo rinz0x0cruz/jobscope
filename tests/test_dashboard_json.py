@@ -9,7 +9,7 @@ import tempfile
 
 from jobscope.deliver import render
 from jobscope.core.config import load_config
-from jobscope.core.model import Application, Contact, Job, MailEvent
+from jobscope.core.model import Application, Contact, Job, MailEvent, Resume
 from jobscope.core.store import Store
 
 
@@ -97,6 +97,7 @@ def test_emit_json_public_is_redacted():
         assert row["description"] == ""
         # public-safe info is kept
         assert row["title"] == "Senior Security Engineer" and row["company"] == "Acme"
+        assert pub["profile"] is None                     # the profile is behind the site unlock
         store.close()
 
 
@@ -115,6 +116,7 @@ _TOP_LEVEL = {
     "rows": list,
     "overview": dict,
     "applications": list,
+    "profile": (dict, type(None)),
 }
 
 _JOB_ROW = {
@@ -139,6 +141,11 @@ _APPLICATION = {
 
 _TIMELINE_EVENT = {
     "date": str, "signal": str, "subject": str, "from": str, "summary": str,
+}
+
+_PROFILE = {
+    "resume": str, "seniority": str, "years_experience": (int, float),
+    "search_terms": list, "locations": list, "remote": bool, "top_skills": list,
 }
 
 # Optional sub-objects _enrich_summary() attaches; a present sub-object's keys
@@ -196,6 +203,8 @@ def _validate_contract(data):
         _require(app, _APPLICATION, f"applications[{i}]")
         for j, ev in enumerate(app["timeline"]):
             _require(ev, _TIMELINE_EVENT, f"applications[{i}].timeline[{j}]")
+    if data["profile"] is not None:
+        _require(data["profile"], _PROFILE, "profile")
 
 
 def test_build_data_matches_contract():
@@ -211,6 +220,8 @@ def test_build_data_matches_contract():
         cfg["output"]["dashboard_path"] = os.path.join(tmp, "dash.html")
         store = Store(cfg["output"]["db_path"])
         _seed(store)
+        store.save_resume(Resume(skills=["python", "aws", "iam"], seniority="mid",
+                                 titles=["Security Engineer"], years_experience=3.0))
         jid = store.jobs()[0].id
 
         # enrichment -> populates rows[0].enrich (stock/comp/reddit/news branches)
@@ -236,6 +247,10 @@ def test_build_data_matches_contract():
         # seam #5: applications is now part of the contract's top-level keys
         assert set(data) >= set(_TOP_LEVEL)
         _validate_contract(data)
+
+        # profile (behind the site unlock) is emitted for the full build
+        assert data["profile"] and data["profile"]["seniority"] == "mid"
+        assert "python" in data["profile"]["top_skills"]
 
         # the seed actually exercised each branch of the contract
         assert data["total"] == 1 and len(data["rows"]) == 1

@@ -18,6 +18,22 @@ from jobscope.core.store import now_iso
 TIER_COLORS = {"Strong": "#16a34a", "Good": "#2563eb", "Stretch": "#d97706", "Skip": "#6b7280"}
 
 
+def _profile_data(cfg: dict, store) -> dict | None:
+    """The résumé-derived search profile for the dashboard (shown behind the site
+    unlock, stripped from the public build): the editable ``profile.yaml`` when it
+    exists, else built on the fly from the stored résumé. ``None`` with no résumé.
+    """
+    from jobscope.analyze import profile as _profile
+    prof = _profile.load(cfg)
+    if prof:
+        return prof
+    resumes = store.list_resumes()
+    if resumes:
+        name, resume = resumes[0]
+        return _profile.build_profile(resume, cfg, name)
+    return None
+
+
 def build_data(cfg: dict, store, public: bool = False) -> dict:
     """Assemble the dashboard payload (rows + overview) as a plain dict.
 
@@ -35,10 +51,11 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
             for j in jobs]
     overview = _overview_data(cfg, store)
     apps = [] if public else _application_records(store)
+    profile = None if public else _profile_data(cfg, store)
     if public:
         _redact_public(rows, overview)
     return {"generated": now_iso(), "total": len(rows), "rows": rows,
-            "overview": overview, "applications": apps}
+            "overview": overview, "applications": apps, "profile": profile}
 
 
 def _json_path(cfg: dict, public: bool) -> str:

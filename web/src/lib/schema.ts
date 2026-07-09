@@ -139,12 +139,25 @@ export interface Application {
   timeline: ApplicationEvent[]
 }
 
+// Résumé-derived search profile (render._profile_data). Present behind the site
+// unlock; null in the public build.
+export interface Profile {
+  resume: string
+  seniority: string
+  years_experience: number
+  search_terms: string[]
+  locations: string[]
+  remote: boolean
+  top_skills: string[]
+}
+
 export interface DashboardData {
   generated: string
   total: number
   rows: JobRow[]
   overview: Overview
   applications?: Application[]
+  profile: Profile | null
 }
 
 export const TIERS: Tier[] = ['Strong', 'Good', 'Stretch', 'Skip']
