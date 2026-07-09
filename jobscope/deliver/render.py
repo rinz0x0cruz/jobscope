@@ -34,6 +34,27 @@ def _profile_data(cfg: dict, store) -> dict | None:
     return None
 
 
+def _applied_outreach_data(store) -> list:
+    """Pre-computed HR contacts for the companies you're actively applied to, joined
+    with each application's status/date (shown behind the site unlock, stripped from
+    the public build). Only companies that are still active AND have stored contacts
+    appear, ordered most-recently-active first (mirrors ``outreach-scan``)."""
+    contacts_by = {c["company"]: c for c in store.list_company_contacts()}
+    out = []
+    for r in store.active_application_companies(limit=1000):
+        cc = contacts_by.get(r["company"])
+        if not cc or not cc.get("contacts"):
+            continue
+        out.append({
+            "company": r["company"],
+            "domain": cc.get("domain") or "",
+            "status": r.get("status") or "",
+            "applied_at": (r.get("applied_at") or "")[:10],
+            "contacts": cc["contacts"],
+        })
+    return out
+
+
 def build_data(cfg: dict, store, public: bool = False) -> dict:
     """Assemble the dashboard payload (rows + overview) as a plain dict.
 
@@ -52,10 +73,12 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     overview = _overview_data(cfg, store)
     apps = [] if public else _application_records(store)
     profile = None if public else _profile_data(cfg, store)
+    applied_outreach = [] if public else _applied_outreach_data(store)
     if public:
         _redact_public(rows, overview)
     return {"generated": now_iso(), "total": len(rows), "rows": rows,
-            "overview": overview, "applications": apps, "profile": profile}
+            "overview": overview, "applications": apps, "profile": profile,
+            "applied_outreach": applied_outreach}
 
 
 def _json_path(cfg: dict, public: bool) -> str:

@@ -5,7 +5,7 @@
   "description": "Machine-readable mirror of render.build_data() (render.py). Single source of truth for the Python->TypeScript data contract (ARCHITECTURE.md section 9). Keep 1:1 with web/src/lib/schema.ts and tests/test_dashboard_json.py. Emitted by `jobscope dashboard --emit-json` to data/dashboard.json.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["generated", "total", "rows", "overview", "applications", "profile"],
+  "required": ["generated", "total", "rows", "overview", "applications", "profile", "applied_outreach"],
   "properties": {
     "generated": {"type": "string", "description": "ISO timestamp (now_iso())."},
     "total": {"type": "integer", "description": "len(rows)."},
@@ -19,9 +19,37 @@
     "profile": {
       "description": "Résumé-derived search profile; null for the public build, present behind the site unlock.",
       "oneOf": [{"type": "null"}, {"$ref": "#/definitions/Profile"}]
+    },
+    "applied_outreach": {
+      "type": "array",
+      "description": "Pre-computed HR contacts for active applied companies; empty ([]) for the public build, present behind the site unlock.",
+      "items": {"$ref": "#/definitions/AppliedCompany"}
     }
   },
   "definitions": {
+    "CompanyContact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["email", "confidence", "source", "note"],
+      "properties": {
+        "email": {"type": "string"},
+        "confidence": {"type": "string"},
+        "source": {"type": "string"},
+        "note": {"type": "string"}
+      }
+    },
+    "AppliedCompany": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["company", "domain", "status", "applied_at", "contacts"],
+      "properties": {
+        "company": {"type": "string"},
+        "domain": {"type": "string"},
+        "status": {"type": "string"},
+        "applied_at": {"type": "string"},
+        "contacts": {"type": "array", "items": {"$ref": "#/definitions/CompanyContact"}}
+      }
+    },
     "Profile": {
       "type": "object",
       "additionalProperties": false,
