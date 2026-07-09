@@ -137,7 +137,7 @@ export default function App() {
         ) : state.tab === 'applications' ? (
           <Applications apps={apps} encBlob={encryptedSite} onUnlock={setUnlocked} onOpen={openDrawer} />
         ) : state.tab === 'outreach' ? (
-          <Outreach profile={data.profile} />
+          <Outreach profile={data.profile} applied={data.applied_outreach ?? []} />
         ) : (
           <>
             <TierSegment value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />

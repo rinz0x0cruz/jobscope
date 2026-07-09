@@ -151,6 +151,24 @@ export interface Profile {
   top_skills: string[]
 }
 
+// A discovered HR/recruiting contact for an applied company.
+export interface CompanyContact {
+  email: string
+  confidence: string // high | medium | low
+  source: string // recruiter | discovered | hunter | apollo | role_inbox
+  note: string
+}
+
+// Pre-computed HR contacts for a company you're actively applied to. Emitted only
+// for the private build; the public payload sends `applied_outreach: []`.
+export interface AppliedCompany {
+  company: string
+  domain: string
+  status: string
+  applied_at: string
+  contacts: CompanyContact[]
+}
+
 export interface DashboardData {
   generated: string
   total: number
@@ -158,6 +176,7 @@ export interface DashboardData {
   overview: Overview
   applications?: Application[]
   profile: Profile | null
+  applied_outreach: AppliedCompany[]
 }
 
 export const TIERS: Tier[] = ['Strong', 'Good', 'Stretch', 'Skip']

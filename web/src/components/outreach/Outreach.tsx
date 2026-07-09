@@ -1,18 +1,20 @@
-import type { Profile } from '@/lib/schema'
+import type { AppliedCompany, Profile } from '@/lib/schema'
 import { ProfileCard } from './ProfileCard'
 import { CompanySearch } from './CompanySearch'
+import { AppliedOutreach } from './AppliedOutreach'
 
-/** Cold-outreach workspace. Surfaces your résumé profile, then a company search that
- *  finds published HR/recruiting emails and drafts a résumé-attached email (live
- *  discovery + send under `jobscope serve`; mailto compose on the published site). */
-export function Outreach({ profile }: { profile: Profile | null }) {
+/** Cold-outreach workspace. Surfaces your résumé profile, HR contacts for the
+ *  companies you've applied to (pre-computed at refresh, behind the unlock), and a
+ *  live company search (discovery + send under `jobscope serve`; mailto on Pages). */
+export function Outreach({ profile, applied }: { profile: Profile | null; applied: AppliedCompany[] }) {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-[13px] text-mute">
-        Your cold-outreach workspace — the résumé profile that drives matching, and a
-        company search that finds HR emails and drafts a note with your résumé attached.
+        Your cold-outreach workspace — the résumé profile that drives matching, HR contacts at
+        companies you've applied to, and a live company search with a résumé-attached draft.
       </p>
       <ProfileCard profile={profile} />
+      <AppliedOutreach applied={applied} profile={profile} />
       <CompanySearch />
     </div>
   )

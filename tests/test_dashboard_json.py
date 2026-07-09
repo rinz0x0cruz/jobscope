@@ -98,6 +98,7 @@ def test_emit_json_public_is_redacted():
         # public-safe info is kept
         assert row["title"] == "Senior Security Engineer" and row["company"] == "Acme"
         assert pub["profile"] is None                     # the profile is behind the site unlock
+        assert pub["applied_outreach"] == []              # applied-company contacts too
         store.close()
 
 
@@ -117,6 +118,7 @@ _TOP_LEVEL = {
     "overview": dict,
     "applications": list,
     "profile": (dict, type(None)),
+    "applied_outreach": list,
 }
 
 _JOB_ROW = {
@@ -146,6 +148,14 @@ _TIMELINE_EVENT = {
 _PROFILE = {
     "resume": str, "seniority": str, "years_experience": (int, float),
     "search_terms": list, "locations": list, "remote": bool, "top_skills": list,
+}
+
+_COMPANY_CONTACT = {
+    "email": str, "confidence": str, "source": str, "note": str,
+}
+
+_APPLIED_COMPANY = {
+    "company": str, "domain": str, "status": str, "applied_at": str, "contacts": list,
 }
 
 # Optional sub-objects _enrich_summary() attaches; a present sub-object's keys
@@ -205,6 +215,10 @@ def _validate_contract(data):
             _require(ev, _TIMELINE_EVENT, f"applications[{i}].timeline[{j}]")
     if data["profile"] is not None:
         _require(data["profile"], _PROFILE, "profile")
+    for i, ac in enumerate(data["applied_outreach"]):
+        _require(ac, _APPLIED_COMPANY, f"applied_outreach[{i}]")
+        for j, c in enumerate(ac["contacts"]):
+            _require(c, _COMPANY_CONTACT, f"applied_outreach[{i}].contacts[{j}]")
 
 
 def test_build_data_matches_contract():
@@ -241,6 +255,9 @@ def test_build_data_matches_contract():
             account="me@example.com", message_id="<m1@acme>", from_domain="acme.com",
             subject="Thanks for applying", date="2026-06-01T10:30:00",
             signal="confirmation", job_id=jid))
+        store.set_company_contacts("Acme", "acme.com", [
+            {"email": "careers@acme.com", "confidence": "low",
+             "source": "role_inbox", "note": "conventional inbox"}])
 
         data = render.build_data(cfg, store, public=False)
 
@@ -251,6 +268,10 @@ def test_build_data_matches_contract():
         # profile (behind the site unlock) is emitted for the full build
         assert data["profile"] and data["profile"]["seniority"] == "mid"
         assert "python" in data["profile"]["top_skills"]
+
+        # applied-company HR contacts (behind the unlock) are emitted for Acme
+        assert data["applied_outreach"] and data["applied_outreach"][0]["company"] == "Acme"
+        assert data["applied_outreach"][0]["contacts"][0]["email"] == "careers@acme.com"
 
         # the seed actually exercised each branch of the contract
         assert data["total"] == 1 and len(data["rows"]) == 1
@@ -299,6 +320,8 @@ def test_dashboard_schema_artifact_matches_contract():
     assert set(defs["Overview"]["required"]) == set(_OVERVIEW)
     assert set(defs["Application"]["required"]) == set(_APPLICATION)
     assert set(defs["ApplicationEvent"]["required"]) == set(_TIMELINE_EVENT)
+    assert set(defs["AppliedCompany"]["required"]) == set(_APPLIED_COMPANY)
+    assert set(defs["CompanyContact"]["required"]) == set(_COMPANY_CONTACT)
 
 
 def test_public_build_data_redacts_all_pii():
@@ -319,6 +342,8 @@ def test_public_build_data_redacts_all_pii():
             id="c1", company="Acme", name="ZZ_SECRET_CONTACT", title="Recruiter",
             profile_url="https://example.test/zz")])
         store.set_application(Application(job_id=jid, status="applied"))
+        store.set_company_contacts("Acme", "acme.com", [
+            {"email": "hr@acme.com", "confidence": "low", "source": "role_inbox", "note": "x"}])
 
         full = render.build_data(cfg, store, public=False)
         pub = render.build_data(cfg, store, public=True)
@@ -329,6 +354,7 @@ def test_public_build_data_redacts_all_pii():
     assert full["rows"][0]["rationale"], "seed should give the full build a rationale"
     assert full["overview"]["funnel"] and full["overview"]["targets"]
     assert full["applications"], "seed should give the full build an application"
+    assert full["applied_outreach"], "seed should give the full build applied-company contacts"
 
     # public build strips all of it
     row = pub["rows"][0]
@@ -338,6 +364,7 @@ def test_public_build_data_redacts_all_pii():
     assert pub["overview"]["funnel"] == {}
     assert pub["overview"]["targets"] == []
     assert pub["applications"] == []
+    assert pub["applied_outreach"] == []
     # PII-contract: a public row carries no key beyond the known-safe contract set
     assert set(row) <= set(_JOB_ROW), f"unexpected public row keys: {set(row) - set(_JOB_ROW)}"
 

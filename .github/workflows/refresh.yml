@@ -99,6 +99,8 @@ jobs:
           JOBSCOPE_GMAIL_APP_PW: ${{ secrets.JOBSCOPE_GMAIL_APP_PW }}
           JOBSCOPE_GMAIL_APP_PW_2: ${{ secrets.JOBSCOPE_GMAIL_APP_PW_2 }}
           JOBSCOPE_SMTP_PASSWORD: ${{ secrets.JOBSCOPE_SMTP_PASSWORD }}
+          JOBSCOPE_HUNTER_API_KEY: ${{ secrets.JOBSCOPE_HUNTER_API_KEY }}
+          JOBSCOPE_APOLLO_API_KEY: ${{ secrets.JOBSCOPE_APOLLO_API_KEY }}
         run: |
           if [ "${{ inputs.full_scan }}" = "true" ]; then
             python -m jobscope scan || echo "::warning::job-board scan failed (non-fatal)"
@@ -111,6 +113,7 @@ jobs:
           python -m jobscope inbox --reclassify
           python -m jobscope match
           python -m jobscope new --email || echo "::warning::new-match digest failed (non-fatal)"
+          python -m jobscope outreach-scan || echo "::warning::outreach scan failed (non-fatal)"
 
       - name: Save encrypted DB back to the `data` branch
         if: steps.guard.outputs.ready == 'true'
@@ -159,6 +162,8 @@ jobs:
 #      JOBSCOPE_SMTP_PASSWORD    (optional) SMTP app-password used to email a digest of new
 #                                matches each refresh; only sends when your JOBSCOPE_CONFIG sets
 #                                email.enabled: true (otherwise the digest step is a no-op)
+#      JOBSCOPE_HUNTER_API_KEY   (optional) Hunter.io key -> richer HR contacts for applied
+#      JOBSCOPE_APOLLO_API_KEY   (optional) Apollo key. Both unset -> deterministic discovery only.
 #      JOBSCOPE_CONFIG           your full config.yaml as text, but with NO passwords in it
 #                                (accounts use password_env: JOBSCOPE_GMAIL_APP_PW / _2),
 #                                and set:  ai: { enabled: false },  output: { db_path: data/jobscope.db },
