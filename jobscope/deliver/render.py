@@ -34,23 +34,30 @@ def _profile_data(cfg: dict, store) -> dict | None:
     return None
 
 
+_CONTACT_CONF_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
 def _applied_outreach_data(store) -> list:
     """Pre-computed HR contacts for the companies you're actively applied to, joined
     with each application's status/date (shown behind the site unlock, stripped from
     the public build). Only companies that are still active AND have stored contacts
-    appear, ordered most-recently-active first (mirrors ``outreach-scan``)."""
+    appear, ordered most-recently-active first (mirrors ``outreach-scan``). Exactly
+    ONE contact per company is surfaced -- the single highest-confidence address (a
+    real recruiter who emailed you > a site-published address > a role inbox)."""
     contacts_by = {c["company"]: c for c in store.list_company_contacts()}
     out = []
     for r in store.active_application_companies(limit=1000):
         cc = contacts_by.get(r["company"])
-        if not cc or not cc.get("contacts"):
+        contacts = (cc or {}).get("contacts") or []
+        if not contacts:
             continue
+        best = min(contacts, key=lambda c: _CONTACT_CONF_RANK.get(c.get("confidence", ""), 3))
         out.append({
             "company": r["company"],
-            "domain": cc.get("domain") or "",
+            "domain": (cc or {}).get("domain") or "",
             "status": r.get("status") or "",
             "applied_at": (r.get("applied_at") or "")[:10],
-            "contacts": cc["contacts"],
+            "contacts": [best],
         })
     return out
 
