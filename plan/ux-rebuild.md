@@ -271,6 +271,11 @@ change only in lockstep; run full `pytest` even for web-only phases (the
 
 ## 9. Open decisions (confirm before P0)
 
+> **Resolved 2026-07-09 — see §10.** Light-first (dark kept) · dedicated Settings/
+> Profile section · client-side "load more" first (#71) · whole-app auth ·
+> **warm-neutral palette + a distinctive non-blue (coral) accent** · a
+> **dependency-free native motion layer** (drop `motion` + `lottie-react`).
+
 1. **Palette**: adopt the refs' green/positive accent as brand, or keep amber? Keep
    a dark mode, or ship light-only?
 2. **Motion**: drop `motion` for CSS transitions (smaller bundle), or keep it?
@@ -280,3 +285,65 @@ change only in lockstep; run full `pytest` even for web-only phases (the
    upload, theme, tokens) split out of Outreach?
 5. **Scraper paging (#71)**: client-side "load more" over the baked payload first,
    or wire a `serve` cursor now?
+
+---
+
+## 10. Researched direction — color system & motion (confirmed)
+
+From a dedicated palette + motion research pass (rather than picking defaults).
+**Confirmed:** light-first with dark kept · a dedicated Settings/Profile section ·
+client-side "load more" first · whole-app auth · and — from the research below — a
+**warm editorial-neutral** base with a **distinctive non-blue accent**, plus a
+**dependency-free native motion layer** (drop `motion` **and** `lottie-react`).
+
+### 10.1 Color — warm editorial neutrals + a non-blue accent
+
+**Why (research):** the differentiated, non-generic direction for current dashboards
+moves away from the default cool-grey/blue SaaS look toward **warm sophisticated
+neutrals** (cream / bone / greige with an ink text) paired with **one distinctive
+non-blue accent** (coral, olive/sage, or rust). It reads premium, lowers eye strain
+for a data-dense tool, and — critically — lets the **semantic tier + status colors
+pop** against a warm ground instead of fighting a blue brand.
+
+**Light tokens (default):**
+- Surfaces: `--surface-0 #FAF8F5` (warm bone page) · `--surface-1 #FFFFFF` (cards) ·
+  `--surface-2 #F3F0EA` (insets) · `--edge #E7E2D9` (hairline borders).
+- Text: `--text-1 #1D1B18` (warm ink) · `--text-2 #5C574F` · `--text-3 #8A847A`.
+- **Brand accent: terracotta/coral `--brand #E0654A`** (warm, non-blue),
+  `--brand-weak #FCEBE6`, hover `#C8543B`. Alternatives kept as commented tokens:
+  olive `#6B7A4F`, rust `#B5533A`.
+- Semantic (kept, re-valued for warm light): positive/Strong `#3F9E6E` ·
+  good `#3E7CB1` (the *one* sanctioned blue — data only) · warning/Stretch `#D9932B` ·
+  skip `#9A938A` · danger `#C4483B`. Focus ring = `--brand`; charts use the semantic
+  ramp, never the brand.
+
+**Dark (kept, warm-inflected):** `--surface-0 #17150F` (warm near-black) · cards
+`#201D16` · ink `#F2EEE6` · brand coral lightened to `#EA7358`.
+
+**Gradients:** retire the neon multi-stop borders/sweeps/conics. Allow at most **one
+restrained, flat brand wash** (`--brand-weak → transparent`) on the auth screen /
+hero stat — low-contrast, no animation. No rotating/glow/scanline effects.
+
+### 10.2 Motion — dependency-free native layer (drop Lottie & `motion`)
+
+**Why (research):** **Rive** is the modern Lottie successor (runtime state machines,
+~90% smaller assets; Spotify/Duolingo) but needs its own editor + a runtime dep;
+**Motion** (motion.dev) is a tiny WAAPI-backed lib. For a **calm, data-dense SaaS
+dashboard**, the strongest "from scratch, not Lottie" answer is a **native layer with
+no animation dependency**:
+
+- **CSS transitions + `@keyframes`** for ~95% (hover, press, enter/exit, bar/donut
+  grow), driven by the existing motion tokens (`--dur-fast/base/slow`, `--ease-*`).
+- **Web Animations API** via one small `animate()` helper in `ui/` for the few
+  imperative cases (count-up, list stagger, drawer spring) — **replaces `motion`**.
+- **View Transitions API** for section switches and the **auth → app reveal**
+  (graceful no-op where unsupported) — shared-element polish for free.
+- **`prefers-reduced-motion`** honored globally (already the pattern); the WAAPI
+  helper early-returns to the final state.
+- **Net:** removes `motion` **and** `lottie-react` + the `SignalLottie` asset →
+  meaningful bundle drop; "motion" becomes tokens + ~2 tiny helpers in `ui/`.
+
+These fold into §6 (deps to drop) and §7: **P0** adds the motion tokens + `animate()`
+helper and the light warm-neutral `tokens.css`; **P5** removes `motion` /
+`lottie-react` / `SignalLottie` with the rest of the decoration.
+
