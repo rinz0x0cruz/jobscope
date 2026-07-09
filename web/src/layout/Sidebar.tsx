@@ -1,16 +1,17 @@
 import {
-  Briefcase,
-  ClipboardList,
+  CalendarClock,
+  Columns3,
   Compass,
-  LayoutDashboard,
-  Send,
+  Inbox,
+  Newspaper,
   Settings,
   User,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
-/** The five top-level destinations rendered in the app shell's left sidebar. */
-export type Section = 'overview' | 'jobs' | 'applications' | 'outreach' | 'settings'
+/** The five top-level lenses rendered in the app shell's left sidebar. Each is a
+ *  distinct view onto the one hunt pipeline, not a separate feature area. */
+export type Section = 'briefing' | 'triage' | 'board' | 'timeline' | 'settings'
 
 /** Bottom mini-card describing the signed-in user's profile completion. */
 export interface SidebarProfile {
@@ -34,10 +35,10 @@ interface NavItem {
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { section: 'overview', label: 'Overview', Icon: LayoutDashboard },
-  { section: 'jobs', label: 'Jobs', Icon: Briefcase },
-  { section: 'applications', label: 'Applications', Icon: ClipboardList },
-  { section: 'outreach', label: 'Outreach', Icon: Send },
+  { section: 'briefing', label: 'Briefing', Icon: Newspaper },
+  { section: 'triage', label: 'Triage', Icon: Inbox },
+  { section: 'board', label: 'Board', Icon: Columns3 },
+  { section: 'timeline', label: 'Timeline', Icon: CalendarClock },
   { section: 'settings', label: 'Settings', Icon: Settings },
 ]
 

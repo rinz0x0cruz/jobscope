@@ -26,7 +26,7 @@ import { JobList } from '@/components/JobList'
 import { Overview } from '@/components/overview/Overview'
 import { Applications } from '@/components/applications/Applications'
 import { Outreach } from '@/components/outreach/Outreach'
-import { AppShell, type Section } from '@/app/AppShell'
+import { ShellV2 } from '@/app/ShellV2'
 import { readCachedUnlock, clearUnlock } from '@/lib/unlock'
 import type { DashboardData } from '@/lib/schema'
 import { JobDrawer } from '@/components/JobDrawer'
@@ -166,48 +166,16 @@ export default function App() {
   )
 
   if (SHELL_V2) {
-    const section: Section =
-      state.tab === 'overview'
-        ? 'overview'
-        : state.tab === 'applications'
-          ? 'applications'
-          : state.tab === 'outreach'
-            ? 'outreach'
-            : 'jobs'
-    const TITLES: Record<Section, string> = {
-      overview: 'Overview',
-      jobs: 'Jobs',
-      applications: 'Applications',
-      outreach: 'Outreach',
-      settings: 'Settings',
-    }
-    const onSection = (s: Section) =>
-      set({
-        tab:
-          s === 'jobs'
-            ? primaryFor(state.tab) === 'jobs'
-              ? state.tab
-              : 'all'
-            : s === 'settings'
-              ? 'outreach'
-              : s,
-      })
     return (
-      <>
-        <AppShell
-          active={section}
-          onNavigate={onSection}
-          title={TITLES[section]}
-          search={state.q}
-          onSearch={(v) => set({ q: v }, { replace: true })}
-          onToggleTheme={() => document.documentElement.classList.toggle('light')}
-          onLock={relock}
-          profile={data.profile ? { name: `résumé: ${data.profile.resume}` } : null}
-        >
-          {tabContent}
-        </AppShell>
-        {overlays}
-      </>
+      <ShellV2
+        data={data}
+        search={state.q}
+        onSearch={(v) => set({ q: v }, { replace: true })}
+        onLock={relock}
+        onOpenJob={openDrawer}
+        openJob={openJob}
+        onCloseJob={closeDrawer}
+      />
     )
   }
 
