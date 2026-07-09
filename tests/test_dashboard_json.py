@@ -288,6 +288,29 @@ def test_build_data_matches_contract():
         store.close()
 
 
+def test_applied_outreach_takes_one_best_contact_per_company():
+    """One contact per applied company -- the single highest-confidence address."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = load_config(None)
+        cfg["output"]["db_path"] = os.path.join(tmp, "p.db")
+        store = Store(cfg["output"]["db_path"])
+        store.upsert_job(Job(id="job:acme", source="ats", title="SE", company="Acme",
+                             status="open"))
+        store.set_application(Application(job_id="job:acme", status="applied",
+                                          company="Acme", title="SE", applied_at="2026-06-01"))
+        store.set_company_contacts("Acme", "acme.com", [
+            {"email": "careers@acme.com", "confidence": "low", "source": "role_inbox", "note": "x"},
+            {"email": "jane@acme.com", "confidence": "high", "source": "recruiter", "note": "y"},
+            {"email": "hr@acme.com", "confidence": "medium", "source": "discovered", "note": "z"},
+        ])
+        data = render.build_data(cfg, store, public=False)
+        ao = data["applied_outreach"]
+        assert len(ao) == 1 and ao[0]["company"] == "Acme"
+        assert len(ao[0]["contacts"]) == 1
+        assert ao[0]["contacts"][0]["email"] == "jane@acme.com"   # the highest-confidence one
+        store.close()
+
+
 def test_public_build_data_applications_empty():
     """The public payload emits `applications: []` (redaction), still contract-valid."""
     with tempfile.TemporaryDirectory() as tmp:
