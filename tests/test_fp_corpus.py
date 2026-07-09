@@ -78,6 +78,66 @@ ANCHOR_CASES = [
      "Thank you for your application to Drivetrain", "", "Drivetrain"),
 ]
 
+# Failure mode 4 -- SIGNAL false positive: the FUNNEL SIGNAL is wrong even though
+# the sender + company parse fine. The recurring case is a live "interview" tag on
+# mail that only *mentions* an interview ("our interview process"), *promises a
+# future* one ("we'll be in touch to schedule an interview"), phrases it as a
+# *hypothetical* ("if selected, we'll invite you to interview"), or carries soft
+# recruiter boilerplate ("I'd like to chat"). A real interview is positively
+# invited / scheduled / named / advanced; anything else is the confirmation,
+# recruiter note, or rejection it really is.
+#   id, subject, body, expected_signal
+SIGNAL_CASES = [
+    # -- genuine interviews: an invite/schedule/modality/advancement is asserted --
+    ("interview-invite-phone", "Interview invitation \u2014 Security Engineer at Acme",
+     "Hi Mohit, we were impressed by your application and would like to invite you to a "
+     "phone interview. Could you share your availability this week?", "interview"),
+    ("interview-schedule-video", "Next steps with Acme",
+     "We'd like to schedule a video interview with the hiring manager. Are you free "
+     "Tuesday or Wednesday afternoon?", "interview"),
+    ("interview-calendly-selfbook", "Let's find time to talk",
+     "Thanks for your patience! Please grab whatever slot works for you here: "
+     "https://calendly.com/acme-talent/screen", "interview"),
+    ("interview-onsite-final-round", "Final round: onsite interview",
+     "Congratulations on reaching the final round. We'd like to arrange an onsite "
+     "interview at our London office next week.", "interview"),
+    ("interview-availability-generic-subject", "Your application to Acme",
+     "We reviewed your application and want to move forward. Please share your "
+     "availability for a 30-minute call with the team.", "interview"),
+    # -- other genuine signals stay put --
+    ("assessment-online-oa", "Coding assessment \u2014 Acme",
+     "Please complete the online coding assessment within 3 days via HackerRank.", "assessment"),
+    ("offer-clear", "Your offer from Acme",
+     "We are pleased to offer you the position of Security Engineer.", "offer"),
+    ("rejection-clear", "Update on your application",
+     "Unfortunately, we have decided not to move forward with your application at this time.",
+     "rejection"),
+    ("rejection-after-interview", "Your application to Acme",
+     "Thank you for taking the time to interview with our team. After careful "
+     "consideration, we've decided to move forward with other candidates.", "rejection"),
+    ("confirmation-clean", "Thank you for applying to Acme",
+     "We've received your application for the Security Engineer role and will review it.",
+     "confirmation"),
+    # -- THE BUG: interview merely mentioned / promised / hypothetical / soft --
+    ("ack-hypothetical-interview", "Update from the Acme talent team",
+     "Thank you for applying to Acme. If your background matches an opening, a recruiter "
+     "will reach out to schedule an interview.", "confirmation"),
+    ("ack-future-interview-promise", "Update from the Acme talent team",
+     "Thanks for applying! Our team will reach out to schedule an interview and share "
+     "next steps soon.", "confirmation"),
+    ("ack-interview-process-described", "What to expect after applying to Acme",
+     "Thank you for applying. Our interview process has three stages, and we'll let you "
+     "know about next steps.", "confirmation"),
+    ("ack-next-steps-generic-subject", "Next steps in your Acme application",
+     "Thanks for applying. We'll review your profile and be in touch about next steps.",
+     "confirmation"),
+    ("recruiter-soft-chat", "Opportunity at Acme",
+     "I came across your LinkedIn profile and would like to chat about a Security "
+     "Engineer role on our team.", "recruiter"),
+    ("content-interview-tips-not-funnel", "5 tips to ace your next interview",
+     "Prepare for your upcoming interview with these tips from our blog.", "other"),
+]
+
 _PLATFORM_NAMES = {"successfactors", "workday", "myworkday", "greenhouse", "lever",
                    "icims", "taleo", "oracle"}
 
@@ -110,3 +170,13 @@ def test_fp_anchor_real_application_survives(cid, from_name, domain, subject, bo
     assert mailrules.is_newsletter_domain(domain) is False
     company, _role = mailrules.parse_company_role(from_name, domain, subject, body)
     assert company == expected
+
+
+@pytest.mark.parametrize(
+    "cid,subject,body,expected", SIGNAL_CASES, ids=[c[0] for c in SIGNAL_CASES]
+)
+def test_fp_signal_is_classified_correctly(cid, subject, body, expected):
+    # Mode 4: the deterministic funnel signal. A real interview must be positively
+    # invited/scheduled/named -- a mention, promise, hypothetical, or soft chat is
+    # the confirmation / recruiter note / rejection it really is.
+    assert mailrules.classify_scored(subject, body)[0] == expected
