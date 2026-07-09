@@ -25,6 +25,7 @@ import { SearchPalette } from '@/components/filters/SearchPalette'
 import { JobList } from '@/components/JobList'
 import { Overview } from '@/components/overview/Overview'
 import { Applications } from '@/components/applications/Applications'
+import { Outreach } from '@/components/outreach/Outreach'
 import { readCachedUnlock, clearUnlock } from '@/lib/unlock'
 import type { DashboardData } from '@/lib/schema'
 import { JobDrawer } from '@/components/JobDrawer'
@@ -63,7 +64,7 @@ export default function App() {
 
   const tabCounts = useMemo(() => {
     const base = tabPool(rows, 'all', state.hideClosed)
-    const c: Record<TabValue, number> = { overview: base.length, applications: apps.length, all: base.length, Strong: 0, Good: 0, Stretch: 0, Skip: 0 }
+    const c: Record<TabValue, number> = { overview: base.length, applications: apps.length, outreach: 0, all: base.length, Strong: 0, Good: 0, Stretch: 0, Skip: 0 }
     for (const r of base) c[r.tier] += 1
     return c
   }, [rows, state.hideClosed, apps.length])
@@ -135,6 +136,8 @@ export default function App() {
           <Overview rows={rows} stats={overview} apps={apps} onOpen={openDrawer} />
         ) : state.tab === 'applications' ? (
           <Applications apps={apps} encBlob={encryptedSite} onUnlock={setUnlocked} onOpen={openDrawer} />
+        ) : state.tab === 'outreach' ? (
+          <Outreach profile={data.profile} />
         ) : (
           <>
             <TierSegment value={state.tab} counts={tabCounts} onChange={(t) => set({ tab: t })} />

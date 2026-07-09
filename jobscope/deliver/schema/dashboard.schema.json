@@ -5,7 +5,7 @@
   "description": "Machine-readable mirror of render.build_data() (render.py). Single source of truth for the Python->TypeScript data contract (ARCHITECTURE.md section 9). Keep 1:1 with web/src/lib/schema.ts and tests/test_dashboard_json.py. Emitted by `jobscope dashboard --emit-json` to data/dashboard.json.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["generated", "total", "rows", "overview", "applications"],
+  "required": ["generated", "total", "rows", "overview", "applications", "profile"],
   "properties": {
     "generated": {"type": "string", "description": "ISO timestamp (now_iso())."},
     "total": {"type": "integer", "description": "len(rows)."},
@@ -15,9 +15,27 @@
       "type": "array",
       "description": "Empty ([]) for the public build; _application_records() otherwise.",
       "items": {"$ref": "#/definitions/Application"}
+    },
+    "profile": {
+      "description": "Résumé-derived search profile; null for the public build, present behind the site unlock.",
+      "oneOf": [{"type": "null"}, {"$ref": "#/definitions/Profile"}]
     }
   },
   "definitions": {
+    "Profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resume", "seniority", "years_experience", "search_terms", "locations", "remote", "top_skills"],
+      "properties": {
+        "resume": {"type": "string"},
+        "seniority": {"type": "string"},
+        "years_experience": {"type": "number"},
+        "search_terms": {"type": "array", "items": {"type": "string"}},
+        "locations": {"type": "array", "items": {"type": "string"}},
+        "remote": {"type": "boolean"},
+        "top_skills": {"type": "array", "items": {"type": "string"}}
+      }
+    },
     "Tier": {"type": "string", "enum": ["Strong", "Good", "Stretch", "Skip"]},
     "JobRow": {
       "type": "object",

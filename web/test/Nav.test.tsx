@@ -21,7 +21,7 @@ describe('primaryFor', () => {
 describe('PrimaryNav', () => {
   it('renders 3 destinations and marks the active primary (a tier -> Jobs)', () => {
     render(<PrimaryNav tab="Strong" jobsCount={127} appsCount={3} onSelect={() => {}} />)
-    expect(screen.getAllByRole('tab')).toHaveLength(3)
+    expect(screen.getAllByRole('tab')).toHaveLength(4)
     expect(screen.getByRole('tab', { name: /Jobs/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: /Overview/ })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByText('127')).toBeInTheDocument() // jobs count

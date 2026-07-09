@@ -4,18 +4,20 @@ import type { TabValue } from '@/lib/urlState'
 // The three primary destinations. The four tier buckets (all/Strong/Good/Stretch/
 // Skip) collapse under "Jobs" and are chosen with the TierSegment, so the top nav
 // stays about *where you are*, not *what you're filtering*.
-export type Primary = 'overview' | 'jobs' | 'applications'
+export type Primary = 'overview' | 'jobs' | 'applications' | 'outreach'
 
 const PRIMARIES: { key: Primary; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'jobs', label: 'Jobs' },
   { key: 'applications', label: 'Applications' },
+  { key: 'outreach', label: 'Outreach' },
 ]
 
 /** Which primary a `tab` param belongs to (any tier bucket ⇒ Jobs). */
 export function primaryFor(tab: TabValue): Primary {
   if (tab === 'overview') return 'overview'
   if (tab === 'applications') return 'applications'
+  if (tab === 'outreach') return 'outreach'
   return 'jobs'
 }
 
@@ -35,6 +37,7 @@ export function PrimaryNav({
     overview: null,
     jobs: jobsCount,
     applications: appsCount,
+    outreach: null,
   }
   return (
     <div
