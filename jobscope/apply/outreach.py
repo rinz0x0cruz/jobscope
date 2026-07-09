@@ -19,6 +19,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from jobscope.core import ai, httpx
+from jobscope.core.model import Job
 from jobscope.core.store import now_iso
 from jobscope.apply.tailor import analyze
 
@@ -261,8 +262,8 @@ def build_draft(cfg: dict, store, resume, job, target: Target) -> tuple[str, str
     return subject, (out or deterministic).strip()
 
 
-def _cooldown_hit(store, job, cooldown_days: int) -> Optional[str]:
-    last = store.last_company_outreach(job.company) if job.company else None
+def _within_cooldown(last: Optional[str], cooldown_days: int) -> Optional[str]:
+    """Return ``last`` if it falls inside the cooldown window, else None."""
     if not last:
         return None
     try:
@@ -274,6 +275,11 @@ def _cooldown_hit(store, job, cooldown_days: int) -> Optional[str]:
     if datetime.now(timezone.utc) - when < timedelta(days=max(0, cooldown_days)):
         return last
     return None
+
+
+def _cooldown_hit(store, job, cooldown_days: int) -> Optional[str]:
+    last = store.last_company_outreach(job.company) if job.company else None
+    return _within_cooldown(last, cooldown_days)
 
 
 def _optout_hit(oc: dict, job, target: Target) -> str:
@@ -421,3 +427,114 @@ def api_send(cfg: dict, store, job_id: str, *, to: str, subject: str, body: str,
         return {"ok": False, "error": "SMTP send failed (check email.* + app password)"}
     store.mark_outreach(job_id, to, now_iso())
     return {"ok": True, "sent": True, "to": to}
+
+
+# --- company search (Outreach tab): find HR contacts by company name ----------
+def _company_domain(store, company: str, url: str, *, fetch: bool) -> str:
+    """Resolve an employer's mail domain for a free-text company search.
+
+    Unlike :func:`_resolve_company_domain`, this never scans your inbox (a company
+    search is not tied to a stored job, so an empty job id would match every event).
+    It uses an explicit website if given, else a name-guess verified by loading the
+    site — so a domain is only ever returned when it demonstrably belongs to them.
+    """
+    d = _domain_of_url(url)
+    if d:
+        return d
+    if fetch and company:
+        for cand in _domain_candidates(company):
+            if _verify_domain(cand, company):
+                return cand
+    return ""
+
+
+def _company_candidates(company: str, domain: str, *, roles: list[str], fetch: bool) -> list[dict]:
+    """Ranked, deterministic HR-ish contacts on the verified domain: addresses
+    published on the company's own site first (medium), then conventional role
+    inboxes (low). No address is ever fabricated from a name alone."""
+    stub = Job(company=company, company_url=f"https://{domain}")
+    out: list[dict] = []
+    for e in discover_emails(stub, domain, fetch=fetch):
+        out.append({"email": e, "confidence": "medium", "source": "discovered",
+                    "note": f"published on {company or domain}'s site"})
+    have = {c["email"] for c in out}
+    for role in (roles or _ROLE_DEFAULTS):
+        addr = f"{role}@{domain}".lower()
+        if addr not in have and not _is_automated(addr):
+            out.append({"email": addr, "confidence": "low", "source": "role_inbox",
+                        "note": f"conventional inbox on {domain} — verify before sending"})
+            have.add(addr)
+    return out
+
+
+def api_company_preview(cfg: dict, store, company: str, *, url: str = "",
+                        to: Optional[str] = None) -> dict:
+    """Company-search card for the Outreach tab: resolve the employer's domain, list
+    plausible HR contacts, and draft a résumé-attached note. Read-only + deterministic."""
+    company = (company or "").strip()
+    url = (url or "").strip()
+    if not company and not url:
+        return {"ok": False, "error": "enter a company name or website"}
+    resume = store.get_resume()
+    if resume is None:
+        return {"ok": False, "error": "no résumé imported — run `resume import` first"}
+    oc = (cfg.get("apply", {}).get("outreach", {}) or {})
+    fetch = bool(oc.get("discover", True))
+
+    domain = _company_domain(store, company, url, fetch=fetch)
+    if not domain:
+        return {"ok": False, "needs_url": True, "company": company,
+                "error": f"couldn't confirm an email domain for {company or url} — "
+                         "add the company website to help"}
+
+    candidates = _company_candidates(company or domain, domain,
+                                     roles=oc.get("role_inboxes") or _ROLE_DEFAULTS, fetch=fetch)
+    override = (to or "").strip()
+    if override and "@" in override:
+        candidates = ([{"email": override, "confidence": "high", "source": "override",
+                        "note": "you entered this address"}]
+                      + [c for c in candidates if c["email"] != override.lower()])
+
+    stub = Job(company=company or domain, company_url=f"https://{domain}")
+    top = Target(email=candidates[0]["email"] if candidates else "", domain=domain)
+    subject, body = build_draft(cfg, store, resume, stub, top)
+    resume_path = resume.source_path if resume.source_path and os.path.exists(resume.source_path) else ""
+    return {
+        "ok": True, "company": company or domain, "domain": domain,
+        "candidates": candidates, "subject": subject, "body": body,
+        "resume": os.path.basename(resume_path) if resume_path else "",
+        "sendable": bool(oc.get("enabled")) and bool(cfg.get("email", {}).get("enabled")),
+    }
+
+
+def api_company_send(cfg: dict, store, company: str, *, to: str, subject: str, body: str,
+                     url: str = "", force: bool = False) -> dict:
+    """Send a company-search outreach with the résumé attached (local serve only).
+
+    Applies the same guardrails as :func:`api_send`. Company searches aren't tied to
+    a stored job, so this send isn't recorded against an application (dedup/records for
+    companies you've applied to arrive with the applied-companies view)."""
+    oc = (cfg.get("apply", {}).get("outreach", {}) or {})
+    if not oc.get("enabled") and not force:
+        return {"ok": False, "error": "sending is off — set apply.outreach.enabled: true"}
+    if not cfg.get("email", {}).get("enabled"):
+        return {"ok": False, "error": "email is not configured (email.*)"}
+    to = (to or "").strip()
+    if "@" not in to or _is_automated(to):
+        return {"ok": False, "error": "enter a valid, non-automated recipient address"}
+    company = (company or "").strip()
+    blocked = {b.lower().strip() for b in (oc.get("do_not_contact") or []) if b}
+    if (company and company.lower() in blocked) or to.split("@")[-1].lower() in blocked:
+        return {"ok": False, "error": f"{company or to} is on your do-not-contact list"}
+    if company and _within_cooldown(store.last_company_outreach(company),
+                                    int(oc.get("cooldown_days", 14))) and not force:
+        return {"ok": False, "error": f"cooldown — {company} was contacted recently"}
+    resume = store.get_resume()
+    resume_path = (resume.source_path if resume and resume.source_path
+                   and os.path.exists(resume.source_path) else "")
+    from jobscope.deliver import email as _email
+    ok = _email.send(cfg, subject or "", body or "", to=to,
+                     attachments=[resume_path] if resume_path else None)
+    if not ok:
+        return {"ok": False, "error": "SMTP send failed (check email.* + app password)"}
+    return {"ok": True, "sent": True, "to": to, "recorded": False}

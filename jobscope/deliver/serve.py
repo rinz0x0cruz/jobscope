@@ -208,6 +208,37 @@ def _build_server(cfg: dict, port: int):
             except Exception as exc:  # noqa: BLE001 - surface to the UI
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
+        def _company_outreach(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except ValueError:
+                data = {}
+            company = str(data.get("company") or "").strip()
+            url = str(data.get("url") or "").strip()
+            if not company and not url:
+                self._send_json(400, {"ok": False, "error": "company or url required"})
+                return
+            try:
+                from jobscope.apply import outreach
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    if data.get("send"):
+                        res = outreach.api_company_send(
+                            cfg, store, company, to=str(data.get("to") or ""),
+                            subject=str(data.get("subject") or ""),
+                            body=str(data.get("body") or ""), url=url,
+                            force=bool(data.get("force")))
+                    else:
+                        res = outreach.api_company_preview(
+                            cfg, store, company, url=url, to=(data.get("to") or None))
+                self._send_json(200, res)
+            except Exception as exc:  # noqa: BLE001 - surface to the UI
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
         # -- routes -------------------------------------------------------
         def do_GET(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0].split("#", 1)[0]
@@ -231,6 +262,9 @@ def _build_server(cfg: dict, port: int):
             route = self.path.split("?", 1)[0]
             if route == "/api/outreach":
                 self._outreach()
+                return
+            if route == "/api/company-outreach":
+                self._company_outreach()
                 return
             if route != "/api/refresh":
                 self.send_error(404)
