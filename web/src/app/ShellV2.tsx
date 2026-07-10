@@ -11,6 +11,7 @@ import { buildBoard, filterBoard } from '@/lib/board'
 import { buildBriefing } from '@/lib/briefing'
 import { buildTriage } from '@/lib/triage'
 import { buildTimeline } from '@/lib/timeline'
+import { scanNewMail } from '@/lib/refresh'
 import { animate, viewTransition } from '@/ui'
 import { JobDrawer } from '@/components/JobDrawer'
 import type { DashboardData } from '@/lib/schema'
@@ -91,6 +92,7 @@ export function ShellV2({
         title={TITLES[lens]}
         search={search}
         onSearch={onSearch}
+        onRefresh={() => void scanNewMail()}
         onToggleTheme={toggleTheme}
         onLock={onLock}
         profile={data.profile ? { name: `résumé: ${data.profile.resume}` } : null}

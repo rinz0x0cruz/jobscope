@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import { Lock } from 'lucide-react'
 import { Badge, Button, Card, Chip, Segmented } from '@/ui'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
+import { connectToken, disconnectToken, hasGitHubToken, pullLatestData } from '@/lib/refresh'
 import { fmtGenerated } from '@/lib/format'
 import type { Profile } from '@/lib/schema'
 
@@ -36,6 +37,7 @@ function applyTheme(theme: 'light' | 'dark') {
 export function Settings({ profile, generated, total, onLock }: SettingsProps) {
   const [theme, setTheme] = useState<'light' | 'dark'>(currentTheme)
   const { format, setFormat } = useScoreFormat()
+  const [tokenConnected, setTokenConnected] = useState(hasGitHubToken)
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
@@ -105,6 +107,46 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
           </div>
         </Card>
       )}
+
+      <Card title="Sync">
+        <div className="space-y-3 text-sm">
+          <p className="text-ink-2">
+            Refresh scans your mailbox via the{' '}
+            <code className="rounded bg-inset px-1 py-0.5 text-[12px]">refresh.yml</code> Action,
+            then pulls the freshly published results. Connect a fine-grained GitHub token (Actions:
+            write) for one-tap scans — it’s stored only in this browser.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            {tokenConnected ? (
+              <>
+                <Badge tone="good">Token connected</Badge>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    disconnectToken()
+                    setTokenConnected(false)
+                  }}
+                >
+                  Disconnect
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  connectToken()
+                  setTokenConnected(hasGitHubToken())
+                }}
+              >
+                Connect GitHub token
+              </Button>
+            )}
+            <Button variant="ghost" onClick={() => void pullLatestData()}>
+              Pull latest
+            </Button>
+          </div>
+        </div>
+      </Card>
 
       <Card title="Session">
         <div className="flex items-center justify-between gap-3">

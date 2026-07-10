@@ -75,4 +75,21 @@ describe('Settings lens', () => {
     renderSettings({ total: 1 })
     expect(screen.getByText(/1 role\b/)).toBeInTheDocument()
   })
+
+  it('shows the sync controls', () => {
+    renderSettings()
+    expect(screen.getByText('Sync')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Pull latest' })).toBeInTheDocument()
+  })
+
+  it('connects and disconnects a GitHub token', () => {
+    vi.stubGlobal('prompt', () => 'ghp_test123')
+    renderSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub token' }))
+    expect(localStorage.getItem('jobscope-gh-token')).toBe('ghp_test123')
+    expect(screen.getByText('Token connected')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    expect(localStorage.getItem('jobscope-gh-token')).toBeNull()
+    vi.unstubAllGlobals()
+  })
 })
