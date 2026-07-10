@@ -33,29 +33,26 @@ function makeColumns(): BoardColumn[] {
 }
 
 describe('Board', () => {
-  it('renders every column label', () => {
-    render(<Board columns={makeColumns()} onOpen={() => {}} />)
-    expect(screen.getByText('Applied')).toBeInTheDocument()
-    expect(screen.getByText('Offer')).toBeInTheDocument()
-  })
-
-  it('renders a card with its company, title, and status pills', () => {
+  it('renders applications as a table by default', () => {
     render(<Board columns={makeColumns()} onOpen={() => {}} />)
     expect(screen.getByText('Acme Corp')).toBeInTheDocument()
     expect(screen.getByText('Senior Platform Engineer')).toBeInTheDocument()
-    expect(screen.getByText('Follow up')).toBeInTheDocument()
-    expect(screen.getByText('HR contact')).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Columns' })).toBeInTheDocument()
   })
 
-  it('calls onOpen with the card id when the card is clicked', () => {
+  it('opens a row when clicked', () => {
     const onOpen = vi.fn()
     render(<Board columns={makeColumns()} onOpen={onOpen} />)
     fireEvent.click(screen.getByRole('button', { name: 'Acme Corp — Senior Platform Engineer' }))
     expect(onOpen).toHaveBeenCalledWith('job-1')
   })
 
-  it('shows an empty-state placeholder for a column with no cards', () => {
+  it('switches to the Kanban columns view with headers, card pills, and empty state', () => {
     render(<Board columns={makeColumns()} onOpen={() => {}} />)
+    fireEvent.click(screen.getByRole('radio', { name: 'Columns' }))
+    expect(screen.getByText('Offer')).toBeInTheDocument()
+    expect(screen.getByText('Follow up')).toBeInTheDocument()
+    expect(screen.getByText('HR contact')).toBeInTheDocument()
     expect(screen.getByText('Nothing here yet')).toBeInTheDocument()
   })
 })

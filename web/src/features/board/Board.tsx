@@ -2,9 +2,9 @@
 // Purely presentational: it renders the already-derived `BoardColumn[]` (see
 // `@/lib/board`) and reports card opens upward. No data fetching, no mutation.
 
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AlarmClock, Clock, Mail, MapPin } from 'lucide-react'
-import { animate, prefersReducedMotion } from '@/ui'
+import { Segmented, animate, prefersReducedMotion } from '@/ui'
 import type { BoardCard, BoardColumn } from '@/lib/board'
 import type { Tier } from '@/lib/schema'
 
@@ -26,12 +26,48 @@ const TIER_COLOR: Record<Tier, string> = {
   Skip: 'var(--skip)',
 }
 
+type BoardView = 'table' | 'columns'
+
+/**
+ * The Board surface: the applied pipeline as either a scannable table (default,
+ * best for volume) or the stage-columned Kanban, toggled in the toolbar.
+ */
+export function Board({ columns, onOpen }: BoardProps) {
+  const [view, setView] = useState<BoardView>('table')
+  const total = columns.reduce((n, col) => n + col.cards.length, 0)
+  return (
+    <div className="flex h-[calc(100dvh-7rem)] flex-col gap-3">
+      <div className="flex shrink-0 items-center justify-between gap-3">
+        <p className="text-sm text-ink-3">
+          {total} {total === 1 ? 'application' : 'applications'}
+        </p>
+        <Segmented
+          ariaLabel="Board view"
+          value={view}
+          onChange={(v) => setView(v === 'columns' ? 'columns' : 'table')}
+          options={[
+            { value: 'table', label: 'Table' },
+            { value: 'columns', label: 'Columns' },
+          ]}
+        />
+      </div>
+      <div className="min-h-0 flex-1">
+        {view === 'columns' ? (
+          <BoardColumns columns={columns} onOpen={onOpen} />
+        ) : (
+          <BoardTable columns={columns} onOpen={onOpen} />
+        )}
+      </div>
+    </div>
+  )
+}
+
 /**
  * Horizontal, scrollable Kanban of the pipeline. Each stage is a lane; each role
  * is a tappable card. On mount the cards fade + rise in a cheap staggered
  * entrance (skipped entirely under `prefers-reduced-motion`).
  */
-export function Board({ columns, onOpen }: BoardProps) {
+function BoardColumns({ columns, onOpen }: BoardProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -54,7 +90,7 @@ export function Board({ columns, onOpen }: BoardProps) {
   }, [])
 
   return (
-    <div ref={scrollerRef} className="flex h-[calc(100dvh-7rem)] gap-3 overflow-x-auto overflow-y-hidden lg:overflow-hidden">
+    <div ref={scrollerRef} className="flex h-full gap-3 overflow-x-auto overflow-y-hidden lg:overflow-hidden">
       {columns.map((col) => (
         <section
           key={col.stage}
@@ -82,6 +118,121 @@ export function Board({ columns, onOpen }: BoardProps) {
       ))}
     </div>
   )
+}
+
+interface TableRow extends BoardCard {
+  stageLabel: string
+  stageColor: string
+}
+
+/** A scannable table of every application: company / role, stage, applied, signals.
+ *  Fit/location live on the un-redacted match rows, which applied roles have
+ *  aged out of, so they're intentionally omitted here (see the Kanban card for
+ *  the richer per-role detail). */
+function BoardTable({ columns, onOpen }: BoardProps) {
+  const rows: TableRow[] = columns.flatMap((col) =>
+    col.cards.map((c) => ({ ...c, stageLabel: col.label, stageColor: col.color })),
+  )
+  if (rows.length === 0) {
+    return <p className="py-16 text-center text-sm text-ink-3">No applications yet</p>
+  }
+  return (
+    <div className="h-full overflow-auto rounded-card border border-line">
+      <table className="w-full border-collapse text-sm">
+        <thead className="sticky top-0 z-10 bg-inset">
+          <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3">
+            <th className="px-3 py-2.5 font-semibold">Company</th>
+            <th className="px-3 py-2.5 font-semibold">Stage</th>
+            <th className="whitespace-nowrap px-3 py-2.5 font-semibold">Applied</th>
+            <th className="px-3 py-2.5 font-semibold">Signals</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {rows.map((r) => (
+            <tr
+              key={r.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`${r.company} — ${r.title}`}
+              onClick={() => onOpen(r.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onOpen(r.id)
+                }
+              }}
+              className="cursor-pointer bg-panel outline-none transition-colors hover:bg-inset/60 focus-visible:bg-inset/60"
+            >
+              <td className="px-3 py-2.5">
+                <div className="font-semibold text-ink">{r.company}</div>
+                <div className="line-clamp-1 text-[12px] text-ink-3">{r.title}</div>
+              </td>
+              <td className="px-3 py-2.5">
+                <span
+                  className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium"
+                  style={{
+                    color: r.stageColor,
+                    background: `color-mix(in srgb, ${r.stageColor} 14%, transparent)`,
+                  }}
+                >
+                  {r.stageLabel}
+                </span>
+              </td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-ink-2">
+                {r.daysSinceApplied != null
+                  ? r.daysSinceApplied === 0
+                    ? 'today'
+                    : `${r.daysSinceApplied}d ago`
+                  : '—'}
+              </td>
+              <td className="px-3 py-2.5">
+                <TableSignals card={r} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** Compact signal chips for a table row (follow-up / ghosted / HR contact / emails). */
+function TableSignals({ card }: { card: BoardCard }) {
+  const items: ReactNode[] = []
+  if (card.followup === 'due') {
+    items.push(
+      <span key="due" className="inline-flex items-center gap-1" style={{ color: 'var(--stretch)' }}>
+        <Clock size={13} aria-hidden="true" />
+        Follow up
+      </span>,
+    )
+  }
+  if (card.followup === 'ghosted') {
+    items.push(
+      <span key="ghost" className="inline-flex items-center gap-1" style={{ color: 'var(--hot)' }}>
+        <AlarmClock size={13} aria-hidden="true" />
+        Ghosted
+      </span>,
+    )
+  }
+  if (card.outreach) {
+    items.push(
+      <span key="hr" className="inline-flex items-center gap-1 text-brand">
+        <Mail size={13} aria-hidden="true" />
+        HR
+      </span>,
+    )
+  }
+  if (card.emails && card.emails > 0) {
+    items.push(
+      <span key="mail" className="inline-flex items-center gap-1 text-ink-3">
+        <Mail size={13} aria-hidden="true" />
+        {card.emails}
+      </span>,
+    )
+  }
+  if (items.length === 0) return <span className="text-ink-3">—</span>
+  return <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">{items}</div>
 }
 
 interface BoardCardButtonProps {
