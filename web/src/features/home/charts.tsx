@@ -7,16 +7,18 @@ function Empty({ label }: { label: string }) {
   return <div className="flex h-24 items-center justify-center text-sm text-ink-3">{label}</div>
 }
 
-/** Ring chart for the fit-tier split, with the total in the middle and a legend. */
+/** Ring chart for the fit-tier split: a thin, gapped donut with the total in the
+ *  middle and a legend where each tier carries its own proportion bar. */
 export function Donut({ segs, total }: { segs: DonutSeg[]; total: number }) {
   if (total <= 0 || segs.length === 0) return <Empty label="No roles yet" />
-  const size = 168
-  const stroke = 22
+  const size = 176
+  const stroke = 16
   const r = (size - stroke) / 2
   const c = 2 * Math.PI * r
   const mid = size / 2
+  const gap = segs.length > 1 ? 0.012 : 0
   return (
-    <div className="flex items-center gap-6">
+    <div className="flex flex-col items-center gap-6 sm:flex-row sm:gap-8">
       <svg
         width={size}
         height={size}
@@ -27,54 +29,65 @@ export function Donut({ segs, total }: { segs: DonutSeg[]; total: number }) {
       >
         <g transform={`rotate(-90 ${mid} ${mid})`}>
           <circle cx={mid} cy={mid} r={r} fill="none" stroke="var(--inset)" strokeWidth={stroke} />
-          {segs.map((s) => (
-            <circle
-              key={s.label}
-              cx={mid}
-              cy={mid}
-              r={r}
-              fill="none"
-              stroke={s.color}
-              strokeWidth={stroke}
-              strokeDasharray={`${s.fraction * c} ${c}`}
-              strokeDashoffset={-s.start * c}
-            />
-          ))}
+          {segs.map((s) => {
+            const len = Math.max((s.fraction - gap) * c, 0.5)
+            return (
+              <circle
+                key={s.label}
+                cx={mid}
+                cy={mid}
+                r={r}
+                fill="none"
+                stroke={s.color}
+                strokeWidth={stroke}
+                strokeDasharray={`${len} ${c - len}`}
+                strokeDashoffset={-(s.start + gap / 2) * c}
+              />
+            )
+          })}
         </g>
         <text
           x="50%"
-          y="47%"
+          y="45%"
           textAnchor="middle"
           dominantBaseline="middle"
-          className="font-mono text-2xl font-semibold"
+          className="font-mono text-[30px] font-semibold"
           style={{ fill: 'var(--ink)' }}
         >
           {total}
         </text>
         <text
           x="50%"
-          y="61%"
+          y="60%"
           textAnchor="middle"
           dominantBaseline="middle"
-          className="text-[11px] uppercase"
-          style={{ fill: 'var(--ink-3)', letterSpacing: '0.05em' }}
+          className="text-[10px] font-semibold uppercase"
+          style={{ fill: 'var(--ink-3)', letterSpacing: '0.1em' }}
         >
           roles
         </text>
       </svg>
-      <ul className="min-w-0 flex-1 space-y-2 text-sm">
+      <ul className="w-full flex-1 space-y-3">
         {segs.map((s) => (
-          <li key={s.label} className="flex items-center gap-2">
-            <span
-              className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
-              style={{ background: s.color }}
-              aria-hidden="true"
-            />
-            <span className="text-ink-2">{s.label}</span>
-            <span className="ml-auto font-mono tabular-nums text-ink">{s.value}</span>
-            <span className="w-12 text-right font-mono text-ink-3">
-              {Math.round(s.fraction * 100)}%
-            </span>
+          <li key={s.label}>
+            <div className="mb-1 flex items-center gap-2 text-sm">
+              <span
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: s.color }}
+                aria-hidden="true"
+              />
+              <span className="font-medium text-ink">{s.label}</span>
+              <span className="ml-auto font-mono tabular-nums text-ink-2">{s.value}</span>
+              <span className="w-9 text-right font-mono text-ink-3">
+                {Math.round(s.fraction * 100)}%
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-inset">
+              <div
+                className="h-full rounded-full"
+                style={{ width: `${Math.max(s.fraction * 100, 2)}%`, background: s.color }}
+              />
+            </div>
           </li>
         ))}
       </ul>
