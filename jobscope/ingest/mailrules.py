@@ -132,15 +132,18 @@ _WEIGHTED_RULES: list[tuple[str, list[tuple[str, int]]]] = [
         (r"welcome (?:aboard|to the team)", 2),
     ]),
     ("assessment", [
-        (r"\bassessment\b", 3),
-        (r"coding (?:challenge|test|exercise|assessment)", 3),
-        (r"take[- ]home (?:assignment|challenge|test|exercise)", 3),
-        (r"online (?:assessment|test|coding)", 3),
-        (r"technical (?:screen(?:ing)?|challenge|exercise|assessment)", 2),
+        # Nouns are plural-tolerant (assessment/assessments): an ATS commonly
+        # sends "Assessments for completion" / "coding challenges", which the
+        # singular \bassessment\b missed (the trailing "s" breaks the boundary).
+        (r"\bassessments?\b", 3),
+        (r"coding (?:challenges?|tests?|exercises?|assessments?)", 3),
+        (r"take[- ]home (?:assignments?|challenges?|tests?|exercises?)", 3),
+        (r"online (?:assessments?|tests?|coding)", 3),
+        (r"technical (?:screen(?:ing)?|challenges?|exercises?|assessments?)", 2),
         (r"\bOA\b", 2),
         (r"hackerrank|codility|codesignal|hackerearth|karat|coderpad|codingame", 3),
-        (r"skills? (?:test|assessment)", 2),
-        (r"complete (?:the|a|your) (?:assessment|challenge|test)", 3),
+        (r"skills? (?:tests?|assessments?)", 2),
+        (r"complete (?:the|a|your) (?:assessments?|challenges?|tests?)", 3),
     ]),
     ("interview", [
         # decisive (weight 3): an interview is positively invited, scheduled, or
