@@ -74,18 +74,18 @@ export function Home({ model, briefing, apps, onOpen }: HomeProps) {
         })}
       </section>
 
-      <section data-stagger className="grid gap-4 lg:grid-cols-2">
+      <section data-stagger className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card title="Fit distribution">
           <Donut segs={model.tiers.segs} total={model.tiers.total} />
         </Card>
         <Card title="Score distribution">
           <VBars items={model.scores} />
         </Card>
-        <Card title="Pipeline flow" className="lg:col-span-2">
-          <PipelineFlow apps={apps} />
-        </Card>
-        <Card title="Roles surfaced · last 8 weeks" className="lg:col-span-2">
+        <Card title="Roles surfaced · last 8 weeks">
           <TrendArea points={model.trend} />
+        </Card>
+        <Card title="Pipeline flow" className="sm:col-span-2 lg:col-span-3">
+          <PipelineFlow apps={apps} />
         </Card>
         <Card title="Top companies">
           <BarRows items={model.companies} emptyLabel="No companies yet" />
@@ -93,7 +93,7 @@ export function Home({ model, briefing, apps, onOpen }: HomeProps) {
         <Card title="Where roles are">
           <BarRows items={model.locations} color="var(--good)" emptyLabel="No locations yet" />
         </Card>
-        <Card title="Sources" className="lg:col-span-2">
+        <Card title="Sources">
           <BarRows items={model.sources} color="var(--stretch)" emptyLabel="No sources yet" />
         </Card>
       </section>
