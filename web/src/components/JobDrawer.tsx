@@ -2,8 +2,9 @@ import { useMemo, useState, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ExternalLink, Link2, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
-import type { JobRow } from '@/lib/schema'
+import type { Application, ApplicationEvent, JobRow } from '@/lib/schema'
 import { TIER_COLOR } from '@/lib/schema'
+import { signalColor, statusColor, statusLabel } from '@/components/applications/constants'
 import { compLabel } from '@/lib/format'
 import { scoreToGrade } from '@/lib/gamification'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
@@ -117,12 +118,109 @@ function money(n: number, currency?: string): string {
   return `${sym}${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 }
 
+const SIGNAL_LABEL: Record<string, string> = {
+  confirmation: 'Confirmation',
+  recruiter: 'Recruiter',
+  assessment: 'Assessment',
+  interview: 'Interview',
+  offer: 'Offer',
+  rejection: 'Rejection',
+  other: 'Update',
+}
+
+/** Short, timezone-safe date for a timeline entry ("Jul 8"). */
+function fmtEventDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '')
+  if (!m) return iso || ''
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+/**
+ * The application's email thread — the "mail summary" surfaced from the board:
+ * one entry per scanned email (signal, date, subject, sender, and a one-line
+ * body preview present when inbox.store_snippets is enabled).
+ */
+function EmailTimeline({ events }: { events: ApplicationEvent[] }) {
+  return (
+    <Section title={`Emails (${events.length})`}>
+      <ol className="space-y-3">
+        {events.map((ev, i) => {
+          const color = signalColor(ev.signal)
+          const label = SIGNAL_LABEL[ev.signal] ?? ev.signal ?? 'Update'
+          return (
+            <li key={i} className="relative border-l border-border pl-4">
+              <span
+                aria-hidden="true"
+                className="absolute -left-[4.5px] top-1 h-2 w-2 rounded-full"
+                style={{ background: color, boxShadow: '0 0 0 2px var(--bg2)' }}
+              />
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color }}>
+                  {label}
+                </span>
+                <time className="shrink-0 text-[11px] text-mute">{fmtEventDate(ev.date)}</time>
+              </div>
+              {ev.subject && (
+                <div className="mt-0.5 text-[13px] font-medium leading-snug text-fg">{ev.subject}</div>
+              )}
+              {ev.from && <div className="mt-0.5 text-[11px] text-mute">{ev.from}</div>}
+              {ev.summary && <p className="mt-1 text-[12px] leading-relaxed text-dim">{ev.summary}</p>}
+            </li>
+          )
+        })}
+      </ol>
+    </Section>
+  )
+}
+
+/**
+ * Drawer body for an applied role that no longer has a live match row (it aged
+ * out of the fresh feed): a compact header + the email timeline, so opening a
+ * board card always surfaces the mail summary.
+ */
+function ApplicationBody({ app }: { app: Application }) {
+  return (
+    <>
+      <div className="flex items-start gap-3 px-5 py-4">
+        <div className="min-w-0 flex-1">
+          <Dialog.Title className="text-[15px] font-semibold leading-snug">
+            {app.title || app.company || 'Application'}
+          </Dialog.Title>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[13px] text-dim">
+            <span className="font-medium text-fg">{app.company || '—'}</span>
+            <span style={{ color: statusColor(app.status) }}>· {statusLabel(app.status)}</span>
+            {app.applied_at && <span className="text-mute">· applied {fmtEventDate(app.applied_at)}</span>}
+          </div>
+        </div>
+        <Dialog.Close
+          aria-label="Close"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border text-dim transition hover:border-border-h hover:text-fg"
+        >
+          <X size={15} />
+        </Dialog.Close>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        {app.timeline.length > 0 ? (
+          <EmailTimeline events={app.timeline} />
+        ) : (
+          <Section title="Emails">
+            <p className="text-[13px] text-mute">No emails linked to this application yet.</p>
+          </Section>
+        )}
+      </div>
+    </>
+  )
+}
+
 function DrawerBody({
   job,
+  application,
   allRows,
   onOpen,
 }: {
   job: JobRow
+  application?: Application | null
   allRows: JobRow[]
   onOpen: (id: string) => void
 }) {
@@ -188,6 +286,9 @@ function DrawerBody({
 
       {/* scrollable sections */}
       <div className="min-h-0 flex-1 overflow-auto">
+        {application && application.timeline.length > 0 && (
+          <EmailTimeline events={application.timeline} />
+        )}
         <RecruiterOutreach jobId={job.id} />
         {job.description && <JobDescription text={job.description} />}
 
@@ -349,24 +450,30 @@ function DrawerBody({
 
 export function JobDrawer({
   job,
+  application,
   allRows,
   onOpen,
   onClose,
 }: {
   job: JobRow | null
+  application?: Application | null
   allRows: JobRow[]
   onOpen: (id: string) => void
   onClose: () => void
 }) {
   return (
-    <Dialog.Root open={!!job} onOpenChange={(o) => !o && onClose()}>
+    <Dialog.Root open={!!job || !!application} onOpenChange={(o) => !o && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="js-overlay fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" />
         <Dialog.Content
           aria-describedby={undefined}
           className="js-drawer fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-border bg-bg2 shadow-2xl outline-none"
         >
-          {job && <DrawerBody job={job} allRows={allRows} onOpen={onOpen} />}
+          {job ? (
+            <DrawerBody job={job} application={application} allRows={allRows} onOpen={onOpen} />
+          ) : application ? (
+            <ApplicationBody app={application} />
+          ) : null}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

@@ -74,6 +74,10 @@ export function ShellV2({
   const [cmdOpen, setCmdOpen] = useState(false)
 
   const openJob = useMemo(() => data.rows.find((r) => r.id === jobId) ?? null, [data.rows, jobId])
+  const openApp = useMemo(
+    () => (jobId ? (data.applications ?? []).find((a) => a.job_id === jobId) ?? null : null),
+    [data.applications, jobId],
+  )
 
   // One filtered "view" drives every lens, so global search narrows the whole
   // cockpit consistently (the drawer + palette still see all rows).
@@ -190,7 +194,13 @@ export function ShellV2({
         onLock={onLock}
       />
 
-      <JobDrawer job={openJob} allRows={data.rows} onOpen={onOpenJob} onClose={onCloseJob} />
+      <JobDrawer
+        job={openJob}
+        application={openApp}
+        allRows={data.rows}
+        onOpen={onOpenJob}
+        onClose={onCloseJob}
+      />
       <Toaster
         position="bottom-right"
         toastOptions={{
