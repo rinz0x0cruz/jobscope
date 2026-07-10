@@ -4,11 +4,13 @@ import { AppShell } from '@/app/AppShell'
 import type { Section } from '@/app/AppShell'
 import { Board } from '@/features/board'
 import { Briefing } from '@/features/briefing'
+import { Overview } from '@/features/overview'
 import { Triage } from '@/features/triage'
 import { Timeline } from '@/features/timeline'
 import { Settings } from '@/features/settings'
 import { buildBoard, filterBoard } from '@/lib/board'
 import { buildBriefing } from '@/lib/briefing'
+import { buildOverview } from '@/lib/overview'
 import { buildTriage } from '@/lib/triage'
 import { buildTimeline } from '@/lib/timeline'
 import { scanNewMail } from '@/lib/refresh'
@@ -28,6 +30,7 @@ export interface ShellV2Props {
 
 const TITLES: Record<Section, string> = {
   briefing: 'Briefing',
+  overview: 'Overview',
   triage: 'To apply',
   board: 'Board',
   timeline: 'Timeline',
@@ -67,6 +70,7 @@ export function ShellV2({
   const openJob = useMemo(() => data.rows.find((r) => r.id === jobId) ?? null, [data.rows, jobId])
   const columns = useMemo(() => filterBoard(buildBoard(data), search), [data, search])
   const briefing = useMemo(() => buildBriefing(data), [data])
+  const overviewModel = useMemo(() => buildOverview(data), [data])
   const triage = useMemo(() => buildTriage(data), [data])
   const timeline = useMemo(() => buildTimeline(data), [data])
 
@@ -100,6 +104,8 @@ export function ShellV2({
         <div ref={contentRef}>
           {lens === 'briefing' ? (
             <Briefing briefing={briefing} onOpen={onOpenJob} />
+          ) : lens === 'overview' ? (
+            <Overview model={overviewModel} />
           ) : lens === 'triage' ? (
             <Triage queue={triage} onOpen={onOpenJob} query={search} />
           ) : lens === 'board' ? (

@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   CalendarClock,
   Columns3,
   Compass,
@@ -9,9 +10,9 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
-/** The five top-level lenses rendered in the app shell's left sidebar. Each is a
+/** The six top-level lenses rendered in the app shell's left sidebar. Each is a
  *  distinct view onto the one hunt pipeline, not a separate feature area. */
-export type Section = 'briefing' | 'triage' | 'board' | 'timeline' | 'settings'
+export type Section = 'briefing' | 'overview' | 'triage' | 'board' | 'timeline' | 'settings'
 
 /** Bottom mini-card describing the signed-in user's profile completion. */
 export interface SidebarProfile {
@@ -36,6 +37,7 @@ interface NavItem {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { section: 'briefing', label: 'Briefing', Icon: Newspaper },
+  { section: 'overview', label: 'Overview', Icon: BarChart3 },
   { section: 'triage', label: 'To apply', Icon: Inbox },
   { section: 'board', label: 'Board', Icon: Columns3 },
   { section: 'timeline', label: 'Timeline', Icon: CalendarClock },
