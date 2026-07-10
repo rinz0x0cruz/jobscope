@@ -107,6 +107,8 @@ SIGNAL_CASES = [
     # -- other genuine signals stay put --
     ("assessment-online-oa", "Coding assessment \u2014 Acme",
      "Please complete the online coding assessment within 3 days via HackerRank.", "assessment"),
+    ("assessment-plural-subject-only", "Action Required:IBM Assessments for completion",
+     "", "assessment"),
     ("offer-clear", "Your offer from Acme",
      "We are pleased to offer you the position of Security Engineer.", "offer"),
     ("rejection-clear", "Update on your application",
