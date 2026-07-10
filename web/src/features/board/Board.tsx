@@ -54,11 +54,11 @@ export function Board({ columns, onOpen }: BoardProps) {
   }, [])
 
   return (
-    <div ref={scrollerRef} className="flex h-[calc(100dvh-7rem)] gap-3 overflow-hidden">
+    <div ref={scrollerRef} className="flex h-[calc(100dvh-7rem)] gap-3 overflow-x-auto overflow-y-hidden lg:overflow-hidden">
       {columns.map((col) => (
         <section
           key={col.stage}
-          className="flex min-w-0 flex-1 flex-col rounded-card bg-inset/60 p-2"
+          className="flex w-[80vw] flex-none flex-col rounded-card bg-inset/60 p-2 sm:w-[46vw] lg:w-auto lg:min-w-0 lg:flex-1"
         >
           <header className="flex items-center gap-2 border-b border-line pb-2">
             <span

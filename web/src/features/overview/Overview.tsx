@@ -2,9 +2,10 @@
 // a fit-tier donut, a conversion funnel, a weekly surfacing trend, a score
 // histogram, and top-N breakdowns (companies / locations / sources).
 
+import { useEffect, useRef } from 'react'
 import { Briefcase, CalendarClock, Gauge, Send, Star, Trophy } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { Card, StatCard } from '@/ui'
+import { Card, StatCard, animate } from '@/ui'
 import type { OverviewModel } from '@/lib/overview'
 import { BarRows, Donut, Funnel, TrendArea, VBars } from './charts'
 
@@ -22,8 +23,32 @@ const KPI_ICON: Record<string, LucideIcon> = {
 }
 
 export function Overview({ model }: OverviewProps) {
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // Staggered fade+rise of the KPI tiles then each chart card on mount.
+  // `animate` is a no-op under prefers-reduced-motion (items stay visible).
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    root.querySelectorAll<HTMLElement>('section > *').forEach((el, i) => {
+      animate(
+        el,
+        [
+          { opacity: 0, transform: 'translateY(8px)' },
+          { opacity: 1, transform: 'translateY(0)' },
+        ],
+        {
+          duration: 260,
+          delay: Math.min(i * 35, 350),
+          easing: 'cubic-bezier(.2,0,0,1)',
+          fill: 'backwards',
+        },
+      )
+    })
+  }, [])
+
   return (
-    <div className="space-y-6">
+    <div ref={rootRef} className="space-y-6">
       <section
         aria-label="Key figures"
         className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6"

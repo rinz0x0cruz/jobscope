@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Toaster } from 'sonner'
 import { AppShell } from '@/app/AppShell'
 import type { Section } from '@/app/AppShell'
@@ -8,11 +8,13 @@ import { Overview } from '@/features/overview'
 import { Triage } from '@/features/triage'
 import { Timeline } from '@/features/timeline'
 import { Settings } from '@/features/settings'
-import { buildBoard, filterBoard } from '@/lib/board'
+import { CommandPalette } from '@/features/command'
+import { buildBoard } from '@/lib/board'
 import { buildBriefing } from '@/lib/briefing'
 import { buildOverview } from '@/lib/overview'
 import { buildTriage } from '@/lib/triage'
 import { buildTimeline } from '@/lib/timeline'
+import { filterData } from '@/lib/viewFilter'
 import { scanNewMail } from '@/lib/refresh'
 import { animate, viewTransition } from '@/ui'
 import { JobDrawer } from '@/components/JobDrawer'
@@ -37,6 +39,9 @@ const TITLES: Record<Section, string> = {
   settings: 'Settings',
 }
 
+/** Lens order for the digit (1–6) keyboard shortcuts — mirrors the sidebar. */
+const LENS_ORDER: Section[] = ['briefing', 'overview', 'triage', 'board', 'timeline', 'settings']
+
 /** Toggle the v2 light/dark theme and persist the choice across reloads. */
 function toggleTheme() {
   viewTransition(() => {
@@ -53,9 +58,10 @@ function toggleTheme() {
 }
 
 /**
- * v2 "cockpit" shell. Owns its own lens navigation (Briefing / Triage / Board /
- * Timeline / Settings) — decoupled from the legacy tab/URL state — and renders a
- * distinct surface per lens over the one hunt pipeline.
+ * v2 "cockpit" shell. Owns lens navigation, the global-search view, and the ⌘K
+ * command palette; renders a distinct surface per lens over the one hunt
+ * pipeline. Keyboard: ⌘K/Ctrl-K palette, "/" focuses search, digits 1–6 switch
+ * lenses.
  */
 export function ShellV2({
   data,
@@ -67,15 +73,24 @@ export function ShellV2({
   onCloseJob,
 }: ShellV2Props) {
   const [lens, setLens] = useState<Section>('briefing')
-  const openJob = useMemo(() => data.rows.find((r) => r.id === jobId) ?? null, [data.rows, jobId])
-  const columns = useMemo(() => filterBoard(buildBoard(data), search), [data, search])
-  const briefing = useMemo(() => buildBriefing(data), [data])
-  const overviewModel = useMemo(() => buildOverview(data), [data])
-  const triage = useMemo(() => buildTriage(data), [data])
-  const timeline = useMemo(() => buildTimeline(data), [data])
+  const [cmdOpen, setCmdOpen] = useState(false)
 
-  // Gentle fade+rise of the lens content on each switch (and initial mount).
-  // `animate` is a no-op under prefers-reduced-motion, leaving the final state.
+  const openJob = useMemo(() => data.rows.find((r) => r.id === jobId) ?? null, [data.rows, jobId])
+
+  // One filtered "view" drives every lens, so global search narrows the whole
+  // cockpit consistently (the drawer + palette still see all rows).
+  const view = useMemo(() => filterData(data, search), [data, search])
+  const columns = useMemo(() => buildBoard(view), [view])
+  const briefing = useMemo(() => buildBriefing(view), [view])
+  const overviewModel = useMemo(() => buildOverview(view), [view])
+  const triage = useMemo(() => buildTriage(view), [view])
+  const timeline = useMemo(() => buildTimeline(view), [view])
+
+  const refresh = useCallback(() => void scanNewMail(), [])
+
+  // Gentle fade+rise of the lens content on each switch, then move focus to the
+  // region so keyboard/SR users land on the new content. `animate` no-ops under
+  // prefers-reduced-motion, leaving the final state.
   const contentRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     animate(
@@ -86,7 +101,41 @@ export function ShellV2({
       ],
       { duration: 280, easing: 'cubic-bezier(.2,0,0,1)' },
     )
+    contentRef.current?.focus({ preventScroll: true })
   }, [lens])
+
+  // Global keyboard shortcuts.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault()
+        setCmdOpen((o) => !o)
+        return
+      }
+      const el = document.activeElement
+      const typing =
+        el instanceof HTMLElement &&
+        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === '/') {
+        const input = document.querySelector<HTMLInputElement>('input[type="search"]')
+        if (input) {
+          e.preventDefault()
+          input.focus()
+        }
+        return
+      }
+      if (e.key >= '1' && e.key <= '6') {
+        const target = LENS_ORDER[Number(e.key) - 1]
+        if (target) {
+          e.preventDefault()
+          setLens(target)
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   return (
     <>
@@ -96,18 +145,24 @@ export function ShellV2({
         title={TITLES[lens]}
         search={search}
         onSearch={onSearch}
-        onRefresh={() => void scanNewMail()}
+        onOpenCommand={() => setCmdOpen(true)}
+        onRefresh={refresh}
         onToggleTheme={toggleTheme}
         onLock={onLock}
+        onProfile={() => setLens('settings')}
         profile={data.profile ? { name: `résumé: ${data.profile.resume}` } : null}
       >
-        <div ref={contentRef}>
+        {/* Announce the active lens to assistive tech on each switch. */}
+        <div aria-live="polite" className="sr-only">
+          {TITLES[lens]}
+        </div>
+        <div ref={contentRef} tabIndex={-1} className="outline-none">
           {lens === 'briefing' ? (
             <Briefing briefing={briefing} onOpen={onOpenJob} />
           ) : lens === 'overview' ? (
             <Overview model={overviewModel} />
           ) : lens === 'triage' ? (
-            <Triage queue={triage} onOpen={onOpenJob} query={search} />
+            <Triage queue={triage} onOpen={onOpenJob} />
           ) : lens === 'board' ? (
             <Board columns={columns} onOpen={onOpenJob} />
           ) : lens === 'timeline' ? (
@@ -122,6 +177,18 @@ export function ShellV2({
           )}
         </div>
       </AppShell>
+
+      <CommandPalette
+        open={cmdOpen}
+        onOpenChange={setCmdOpen}
+        rows={data.rows}
+        onNavigate={setLens}
+        onOpenJob={onOpenJob}
+        onRefresh={refresh}
+        onToggleTheme={toggleTheme}
+        onLock={onLock}
+      />
+
       <JobDrawer job={openJob} allRows={data.rows} onOpen={onOpenJob} onClose={onCloseJob} />
       <Toaster
         position="bottom-right"

@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/* v2 overlay / drawer / command-palette entrance keyframes. Referenced via
+   arbitrary `[animation:…]` utilities and disabled at the call-site with
+   `motion-reduce:animate-none`. */
+@keyframes cmd-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes cmd-pop-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.98); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+@keyframes drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
 /* Map jobscope's design tokens into Tailwind's theme. `inline` makes the
    generated utilities reference the CSS vars at runtime, so toggling the
    `.light` / `.dark` class re-themes everything without rebuilding classes. */
