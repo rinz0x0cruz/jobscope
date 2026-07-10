@@ -27,7 +27,7 @@ function setup(over: Partial<React.ComponentProps<typeof CommandPalette>> = {}) 
 describe('CommandPalette', () => {
   it('lists lenses, actions, and recent roles when open', () => {
     setup()
-    expect(screen.getByText('Overview')).toBeInTheDocument()
+    expect(screen.getByText('Home')).toBeInTheDocument()
     expect(screen.getByText('Toggle theme')).toBeInTheDocument()
     expect(screen.getByText('Stripe')).toBeInTheDocument()
   })

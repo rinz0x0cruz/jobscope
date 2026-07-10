@@ -7,13 +7,12 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { Command } from 'cmdk'
 import Fuse from 'fuse.js'
 import {
-  BarChart3,
   Briefcase,
   CalendarClock,
   Columns3,
+  Home,
   Inbox,
   Lock,
-  Newspaper,
   RefreshCw,
   Search,
   Settings as SettingsIcon,
@@ -35,8 +34,7 @@ export interface CommandPaletteProps {
 }
 
 const LENSES: { section: Section; label: string; Icon: LucideIcon }[] = [
-  { section: 'briefing', label: 'Briefing', Icon: Newspaper },
-  { section: 'overview', label: 'Overview', Icon: BarChart3 },
+  { section: 'home', label: 'Home', Icon: Home },
   { section: 'triage', label: 'To apply', Icon: Inbox },
   { section: 'board', label: 'Board', Icon: Columns3 },
   { section: 'timeline', label: 'Timeline', Icon: CalendarClock },

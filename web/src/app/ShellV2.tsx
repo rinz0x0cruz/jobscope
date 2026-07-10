@@ -3,15 +3,13 @@ import { Toaster } from 'sonner'
 import { AppShell } from '@/app/AppShell'
 import type { Section } from '@/app/AppShell'
 import { Board } from '@/features/board'
-import { Briefing } from '@/features/briefing'
-import { Overview } from '@/features/overview'
+import { Home } from '@/features/home'
 import { Triage } from '@/features/triage'
 import { Timeline } from '@/features/timeline'
 import { Settings } from '@/features/settings'
 import { CommandPalette } from '@/features/command'
 import { buildBoard } from '@/lib/board'
 import { buildBriefing } from '@/lib/briefing'
-import { buildOverview } from '@/lib/overview'
 import { buildTriage } from '@/lib/triage'
 import { buildTimeline } from '@/lib/timeline'
 import { filterData } from '@/lib/viewFilter'
@@ -31,16 +29,15 @@ export interface ShellV2Props {
 }
 
 const TITLES: Record<Section, string> = {
-  briefing: 'Briefing',
-  overview: 'Overview',
+  home: 'Home',
   triage: 'To apply',
   board: 'Board',
   timeline: 'Timeline',
   settings: 'Settings',
 }
 
-/** Lens order for the digit (1–6) keyboard shortcuts — mirrors the sidebar. */
-const LENS_ORDER: Section[] = ['briefing', 'overview', 'triage', 'board', 'timeline', 'settings']
+/** Lens order for the digit (1-5) keyboard shortcuts - mirrors the sidebar. */
+const LENS_ORDER: Section[] = ['home', 'triage', 'board', 'timeline', 'settings']
 
 /** Toggle the v2 light/dark theme and persist the choice across reloads. */
 function toggleTheme() {
@@ -72,7 +69,7 @@ export function ShellV2({
   jobId,
   onCloseJob,
 }: ShellV2Props) {
-  const [lens, setLens] = useState<Section>('briefing')
+  const [lens, setLens] = useState<Section>('home')
   const [cmdOpen, setCmdOpen] = useState(false)
 
   const openJob = useMemo(() => data.rows.find((r) => r.id === jobId) ?? null, [data.rows, jobId])
@@ -82,7 +79,6 @@ export function ShellV2({
   const view = useMemo(() => filterData(data, search), [data, search])
   const columns = useMemo(() => buildBoard(view), [view])
   const briefing = useMemo(() => buildBriefing(view), [view])
-  const overviewModel = useMemo(() => buildOverview(view), [view])
   const triage = useMemo(() => buildTriage(view), [view])
   const timeline = useMemo(() => buildTimeline(view), [view])
 
@@ -157,10 +153,8 @@ export function ShellV2({
           {TITLES[lens]}
         </div>
         <div ref={contentRef} tabIndex={-1} className="outline-none">
-          {lens === 'briefing' ? (
-            <Briefing briefing={briefing} onOpen={onOpenJob} />
-          ) : lens === 'overview' ? (
-            <Overview model={overviewModel} />
+          {lens === 'home' ? (
+            <Home briefing={briefing} apps={view.applications ?? []} onOpen={onOpenJob} />
           ) : lens === 'triage' ? (
             <Triage queue={triage} onOpen={onOpenJob} />
           ) : lens === 'board' ? (
