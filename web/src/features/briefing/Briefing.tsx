@@ -11,6 +11,9 @@ import type { Tier } from '@/lib/schema'
 export interface BriefingProps {
   briefing: Briefing
   onOpen: (jobId: string) => void
+  /** Show the slim figures line under the headline. Hidden on Home, where the
+   *  dashboard already renders KPI tiles. Defaults to true. */
+  showFigures?: boolean
 }
 
 function cx(...classes: Array<string | false | null | undefined>): string {
@@ -102,7 +105,7 @@ function MatchRow({ match, onOpen }: { match: BriefingMatch; onOpen: (jobId: str
  * the search — headline, a slim figure line, and three text-forward sections
  * ("This week", "Needs you", "Fresh matches").
  */
-export function Briefing({ briefing, onOpen }: BriefingProps) {
+export function Briefing({ briefing, onOpen, showFigures = true }: BriefingProps) {
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <header>
@@ -112,19 +115,21 @@ export function Briefing({ briefing, onOpen }: BriefingProps) {
         <p className="mt-2 text-sm text-ink-3">{briefing.subhead}</p>
       </header>
 
-      <div className="flex flex-wrap items-stretch gap-y-2">
-        {briefing.figures.map((fig, i) => (
-          <div key={fig.key} className={cx('flex flex-col', i > 0 && 'ml-4 border-l border-line pl-4')}>
-            <span
-              className={cx('text-2xl font-semibold', !fig.accent && 'text-ink')}
-              style={fig.accent ? { color: fig.accent } : undefined}
-            >
-              {fig.value}
-            </span>
-            <span className="text-[11px] uppercase tracking-wide text-ink-3">{fig.label}</span>
-          </div>
-        ))}
-      </div>
+      {showFigures && (
+        <div className="flex flex-wrap items-stretch gap-y-2">
+          {briefing.figures.map((fig, i) => (
+            <div key={fig.key} className={cx('flex flex-col', i > 0 && 'ml-4 border-l border-line pl-4')}>
+              <span
+                className={cx('text-2xl font-semibold', !fig.accent && 'text-ink')}
+                style={fig.accent ? { color: fig.accent } : undefined}
+              >
+                {fig.value}
+              </span>
+              <span className="text-[11px] uppercase tracking-wide text-ink-3">{fig.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <Section title="This week">
         {briefing.moved.length === 0 ? (

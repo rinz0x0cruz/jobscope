@@ -10,6 +10,7 @@ import { Settings } from '@/features/settings'
 import { CommandPalette } from '@/features/command'
 import { buildBoard } from '@/lib/board'
 import { buildBriefing } from '@/lib/briefing'
+import { buildOverview } from '@/lib/overview'
 import { buildTriage } from '@/lib/triage'
 import { buildTimeline } from '@/lib/timeline'
 import { filterData } from '@/lib/viewFilter'
@@ -79,6 +80,7 @@ export function ShellV2({
   const view = useMemo(() => filterData(data, search), [data, search])
   const columns = useMemo(() => buildBoard(view), [view])
   const briefing = useMemo(() => buildBriefing(view), [view])
+  const overviewModel = useMemo(() => buildOverview(view), [view])
   const triage = useMemo(() => buildTriage(view), [view])
   const timeline = useMemo(() => buildTimeline(view), [view])
 
@@ -154,7 +156,12 @@ export function ShellV2({
         </div>
         <div ref={contentRef} tabIndex={-1} className="outline-none">
           {lens === 'home' ? (
-            <Home briefing={briefing} apps={view.applications ?? []} onOpen={onOpenJob} />
+            <Home
+              model={overviewModel}
+              briefing={briefing}
+              apps={view.applications ?? []}
+              onOpen={onOpenJob}
+            />
           ) : lens === 'triage' ? (
             <Triage queue={triage} onOpen={onOpenJob} />
           ) : lens === 'board' ? (
