@@ -1,35 +1,31 @@
-// Board model for the v2 "cockpit" — the whole hunt as one Kanban pipeline.
-// Pure derivation over the already-emitted dashboard payload (no change to the
-// Python↔TS contract): tracked `applications` become stage cards, and the top
-// un-applied `rows` seed the "New" column, so the board is the single source of
-// truth for every role in flight. The columns ARE the funnel
-// (new → prepared → applied → interview → offer/rejected).
+// Board model for the v2 cockpit — the APPLIED pipeline. Pure derivation over the
+// emitted `applications`: each tracked application becomes a card in its stage
+// column (applied → interview → offer → rejected). Un-applied matches live in the
+// separate "To apply" list, not here. Follow-up staleness (#27/#29) and ready HR
+// outreach surface as per-card flags.
 
 import type { DashboardData, Tier } from '@/lib/schema'
 import { STATUS_LABEL, statusColor } from '@/components/applications/constants'
 import { staleness } from '@/lib/pipeline'
 
-/** The pipeline stages rendered as board columns, left → right. `skipped` roles
- *  are intentionally excluded from the board. */
-export type BoardStage = 'new' | 'prepared' | 'applied' | 'interview' | 'offer' | 'rejected'
+/** The pipeline stages rendered as board columns, left → right. Roles that
+ *  haven't been submitted (new / prepared) and skipped roles are not on the
+ *  board — un-applied matches live in the "To apply" list. */
+export type BoardStage = 'applied' | 'interview' | 'offer' | 'rejected'
 
 export const BOARD_STAGES: readonly BoardStage[] = [
-  'new',
-  'prepared',
   'applied',
   'interview',
   'offer',
   'rejected',
 ] as const
 
-/** A single role on the board — either a tracked application or an un-applied
- *  match seeded into the "New" column. */
+/** A single applied role on the board. */
 export interface BoardCard {
   id: string // job_id (matches JobRow.id)
   company: string
   title: string
   stage: BoardStage
-  kind: 'match' | 'application'
   tier?: Tier
   score?: number
   location?: string
@@ -40,7 +36,7 @@ export interface BoardCard {
   followup?: 'due' | 'ghosted'
   /** True when the company has HR contacts ready to reach out to. */
   outreach?: boolean
-  /** Number of timeline emails on the application (0 for matches). */
+  /** Number of timeline emails on the application. */
   emails?: number
   url?: string
 }
@@ -53,27 +49,17 @@ export interface BoardColumn {
   cards: BoardCard[]
 }
 
-/** How many top un-applied matches to seed into the "New" column. */
-const NEW_MATCH_CAP = 40
-
-function isClosedRow(status: string, closedAt: string): boolean {
-  return (!!status && status !== 'open') || !!closedAt
-}
-
-/** Normalize a tracked application status onto a board stage (or null to drop it,
- *  e.g. `skipped`). Unknown statuses fall back to "New". */
+/** Normalize a tracked application status onto a board stage, or null to drop it:
+ *  new / prepared (not yet submitted → the "To apply" list) and skipped (hidden). */
 function toStage(status: string): BoardStage | null {
-  const s = (status || 'new').toLowerCase()
-  if (s === 'skipped') return null
-  if ((BOARD_STAGES as readonly string[]).includes(s)) return s as BoardStage
-  return 'new'
+  const s = (status || '').toLowerCase()
+  return (BOARD_STAGES as readonly string[]).includes(s) ? (s as BoardStage) : null
 }
 
 /**
- * Build the Kanban columns from the dashboard payload. Applications are grouped
- * by their pipeline status; the remaining capacity of the "New" column is filled
- * with the highest-scoring un-applied, still-open matches. Follow-up staleness
- * (#27/#29) and ready HR outreach are surfaced as per-card flags.
+ * Build the Kanban columns from the dashboard payload: tracked applications
+ * grouped by pipeline status (applied → interview → offer → rejected). Follow-up
+ * staleness (#27/#29) and ready HR outreach are surfaced as per-card flags.
  */
 export function buildBoard(data: DashboardData, now = Date.now()): BoardColumn[] {
   const apps = data.applications ?? []
@@ -94,29 +80,25 @@ export function buildBoard(data: DashboardData, now = Date.now()): BoardColumn[]
 
   // Fast lookups from the un-redacted rows for tier/score/location/url.
   const rowById = new Map(rows.map((r) => [r.id, r]))
-  const appIds = new Set(apps.map((a) => a.job_id))
 
   const byStage = new Map<BoardStage, BoardCard[]>()
   for (const st of BOARD_STAGES) byStage.set(st, [])
 
-  // 1) Tracked applications → their stage column.
   for (const app of apps) {
     const stage = toStage(app.status)
     if (!stage) continue
     const row = rowById.get(app.job_id)
-    const dApplied = daysBetween(app.applied_at, now)
     byStage.get(stage)!.push({
       id: app.job_id,
       company: app.company,
       title: app.title,
       stage,
-      kind: 'application',
       tier: row?.tier,
       score: row?.score,
       location: row?.location,
       appliedAt: app.applied_at || undefined,
       updatedAt: app.updated || undefined,
-      daysSinceApplied: dApplied ?? undefined,
+      daysSinceApplied: daysBetween(app.applied_at, now) ?? undefined,
       followup: stale.get(app.job_id),
       outreach: outreachReady.has((app.company || '').toLowerCase()) || undefined,
       emails: (app.timeline ?? []).length,
@@ -124,37 +106,11 @@ export function buildBoard(data: DashboardData, now = Date.now()): BoardColumn[]
     })
   }
 
-  // 2) Seed "New" with the best still-open matches we haven't applied to yet.
-  const matches = rows
-    .filter((r) => !appIds.has(r.id))
-    .filter((r) => r.tier !== 'Skip')
-    .filter((r) => !isClosedRow(r.status, r.closed_at))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, NEW_MATCH_CAP)
-  for (const r of matches) {
-    byStage.get('new')!.push({
-      id: r.id,
-      company: r.company,
-      title: r.title,
-      stage: 'new',
-      kind: 'match',
-      tier: r.tier,
-      score: r.score,
-      location: r.location,
-      outreach: outreachReady.has((r.company || '').toLowerCase()) || undefined,
-      emails: 0,
-      url: r.url,
-    })
-  }
-
-  // Sort each column: applications by most-recently-updated, matches by score.
+  // Most-recently-updated first within each stage.
   for (const st of BOARD_STAGES) {
-    byStage.get(st)!.sort((a, b) => {
-      if (a.kind !== b.kind) return a.kind === 'application' ? -1 : 1
-      if (a.kind === 'application')
-        return (b.updatedAt ?? b.appliedAt ?? '').localeCompare(a.updatedAt ?? a.appliedAt ?? '')
-      return (b.score ?? 0) - (a.score ?? 0)
-    })
+    byStage.get(st)!.sort((a, b) =>
+      (b.updatedAt ?? b.appliedAt ?? '').localeCompare(a.updatedAt ?? a.appliedAt ?? ''),
+    )
   }
 
   return BOARD_STAGES.map((stage) => ({

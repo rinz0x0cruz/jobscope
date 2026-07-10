@@ -36,7 +36,7 @@ interface NavItem {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { section: 'briefing', label: 'Briefing', Icon: Newspaper },
-  { section: 'triage', label: 'Triage', Icon: Inbox },
+  { section: 'triage', label: 'To apply', Icon: Inbox },
   { section: 'board', label: 'Board', Icon: Columns3 },
   { section: 'timeline', label: 'Timeline', Icon: CalendarClock },
   { section: 'settings', label: 'Settings', Icon: Settings },

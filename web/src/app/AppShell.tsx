@@ -50,7 +50,7 @@ export function AppShell({
           onToggleTheme={onToggleTheme}
           onLock={onLock}
         />
-        <main style={MAIN_STYLE} className="mx-auto w-full max-w-6xl px-6 py-6">
+        <main style={MAIN_STYLE} className="w-full px-6 py-6">
           {children}
         </main>
       </div>

@@ -3,7 +3,7 @@
 // `@/lib/board`) and reports card opens upward. No data fetching, no mutation.
 
 import { useEffect, useRef, type ReactNode } from 'react'
-import { AlarmClock, Clock, Mail, MapPin, Sparkles } from 'lucide-react'
+import { AlarmClock, Clock, Mail, MapPin } from 'lucide-react'
 import { Badge, animate, prefersReducedMotion } from '@/ui'
 import type { BoardCard, BoardColumn } from '@/lib/board'
 import type { Tier } from '@/lib/schema'
@@ -54,11 +54,11 @@ export function Board({ columns, onOpen }: BoardProps) {
   }, [])
 
   return (
-    <div ref={scrollerRef} className="flex h-full gap-4 overflow-x-auto p-4">
+    <div ref={scrollerRef} className="flex h-[calc(100dvh-7rem)] gap-3 overflow-hidden">
       {columns.map((col) => (
         <section
           key={col.stage}
-          className="flex min-w-[280px] max-w-[300px] flex-1 flex-col rounded-card bg-inset/60 p-2.5"
+          className="flex min-w-0 flex-1 flex-col rounded-card bg-inset/60 p-2"
         >
           <header className="flex items-center gap-2 border-b border-line pb-2">
             <span
@@ -72,7 +72,7 @@ export function Board({ columns, onOpen }: BoardProps) {
             </span>
           </header>
 
-          <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+          <div className="mt-2 flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-0.5">
             {col.cards.length === 0 ? (
               <p className="py-6 text-center text-xs text-ink-3">Nothing here yet</p>
             ) : (
@@ -108,7 +108,7 @@ function BoardCardButton({ card, onOpen }: BoardCardButtonProps) {
   if (card.score != null) {
     meta.push({ key: 'score', node: <span>{card.score}</span> })
   }
-  if (card.kind === 'application' && card.daysSinceApplied != null) {
+  if (card.daysSinceApplied != null) {
     meta.push({
       key: 'applied',
       node: (
@@ -160,8 +160,8 @@ function BoardCardButton({ card, onOpen }: BoardCardButtonProps) {
       onClick={() => onOpen(card.id)}
       aria-label={`${card.company} — ${card.title}`}
       className={cx(
-        'group relative w-full overflow-hidden rounded-card border border-line bg-panel',
-        'py-2.5 pl-4 pr-3 text-left',
+        'group relative w-full shrink-0 overflow-hidden rounded-card border border-line bg-panel',
+        'py-2 pl-3 pr-2.5 text-left',
         'shadow-[0_1px_2px_rgba(29,27,24,0.04)] transition-all duration-200 ease-[cubic-bezier(.2,0,0,1)]',
         'hover:-translate-y-0.5 hover:border-line-strong hover:shadow-[var(--shadow-panel)]',
         'outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-paper',
@@ -175,9 +175,6 @@ function BoardCardButton({ card, onOpen }: BoardCardButtonProps) {
 
       <div className="flex items-baseline justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
-          {card.kind === 'match' && (
-            <Sparkles size={12} className="shrink-0 text-brand" aria-hidden="true" />
-          )}
           <span className="truncate text-[13px] font-semibold text-ink">{card.company}</span>
         </span>
         {card.tier && (
@@ -190,10 +187,10 @@ function BoardCardButton({ card, onOpen }: BoardCardButtonProps) {
         )}
       </div>
 
-      <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-ink-2">{card.title}</p>
+      <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-ink-2">{card.title}</p>
 
       {meta.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-ink-3">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-ink-3">
           {meta.map((m, i) => (
             <span key={m.key} className="inline-flex items-center gap-1">
               {i > 0 && <span aria-hidden="true">·</span>}
@@ -204,7 +201,7 @@ function BoardCardButton({ card, onOpen }: BoardCardButtonProps) {
       )}
 
       {flags.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
+        <div className="mt-1.5 flex flex-wrap gap-1">
           {flags.map((f) => (
             <span
               key={f.key}

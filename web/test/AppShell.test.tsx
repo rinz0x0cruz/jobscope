@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { AppShell } from '@/app/AppShell'
 
-const NAV_LABELS = ['Briefing', 'Triage', 'Board', 'Timeline', 'Settings']
+const NAV_LABELS = ['Briefing', 'To apply', 'Board', 'Timeline', 'Settings']
 
 describe('AppShell', () => {
   it('renders the five sidebar sections and marks the active one', () => {
