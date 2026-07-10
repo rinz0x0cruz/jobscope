@@ -88,13 +88,13 @@ export function Home({ model, briefing, apps, onOpen }: HomeProps) {
           <PipelineFlow apps={apps} />
         </Card>
         <Card title="Top companies">
-          <BarRows items={model.companies} emptyLabel="No companies yet" />
+          <BarRows items={model.companies} color="var(--chart-indigo)" emptyLabel="No companies yet" />
         </Card>
         <Card title="Where roles are">
-          <BarRows items={model.locations} color="var(--good)" emptyLabel="No locations yet" />
+          <BarRows items={model.locations} color="var(--chart-teal)" emptyLabel="No locations yet" />
         </Card>
         <Card title="Sources">
-          <BarRows items={model.sources} color="var(--stretch)" emptyLabel="No sources yet" />
+          <BarRows items={model.sources} color="var(--chart-amber)" emptyLabel="No sources yet" />
         </Card>
       </section>
 

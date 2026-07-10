@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, type ReactNode } from 'react'
 import { AlarmClock, Clock, Mail, MapPin } from 'lucide-react'
-import { Badge, animate, prefersReducedMotion } from '@/ui'
+import { animate, prefersReducedMotion } from '@/ui'
 import type { BoardCard, BoardColumn } from '@/lib/board'
 import type { Tier } from '@/lib/schema'
 
@@ -58,21 +58,18 @@ export function Board({ columns, onOpen }: BoardProps) {
       {columns.map((col) => (
         <section
           key={col.stage}
-          className="flex w-[80vw] flex-none flex-col rounded-card bg-inset/60 p-2 sm:w-[46vw] lg:w-auto lg:min-w-0 lg:flex-1"
+          className="flex w-[80vw] flex-none flex-col overflow-hidden rounded-card border border-line sm:w-[46vw] lg:w-auto lg:min-w-0 lg:flex-1"
+          style={{ background: `color-mix(in srgb, ${col.color} 5%, var(--panel))` }}
         >
-          <header className="flex items-center gap-2 border-b border-line pb-2">
-            <span
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ background: col.color }}
-              aria-hidden="true"
-            />
+          <span className="h-1 shrink-0" style={{ background: col.color }} aria-hidden="true" />
+          <header className="flex items-center gap-2 px-3 py-2.5">
             <span className="truncate text-sm font-semibold text-ink">{col.label}</span>
-            <span className="ml-auto shrink-0">
-              <Badge tone="neutral">{col.cards.length}</Badge>
+            <span className="ml-auto shrink-0 rounded-full bg-panel px-2 py-0.5 text-[11px] font-semibold tabular-nums text-ink-2">
+              {col.cards.length}
             </span>
           </header>
 
-          <div className="mt-2 flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-0.5">
+          <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto px-2 pb-2 pr-1.5">
             {col.cards.length === 0 ? (
               <p className="py-6 text-center text-xs text-ink-3">Nothing here yet</p>
             ) : (

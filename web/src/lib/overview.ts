@@ -4,7 +4,16 @@
 // weekly surfacing trend, and a score histogram.
 
 import type { Application, DashboardData, JobRow, Tier } from '@/lib/schema'
-import { TIERS, TIER_COLOR } from '@/lib/schema'
+import { TIERS } from '@/lib/schema'
+
+// Fit-donut palette — a cohesive teal / indigo / amber / slate set, distinct from
+// the semantic tier tokens the pipeline Sankey + board rails still use.
+const DONUT_COLOR: Record<Tier, string> = {
+  Strong: 'var(--chart-teal)',
+  Good: 'var(--chart-indigo)',
+  Stretch: 'var(--chart-amber)',
+  Skip: 'var(--chart-slate)',
+}
 
 export interface DonutSeg {
   label: string
@@ -77,7 +86,7 @@ function tierDonut(rows: JobRow[]): { segs: DonutSeg[]; total: number } {
     const value = counts[t]
     if (value <= 0) continue
     const fraction = value / total
-    segs.push({ label: t, value, color: TIER_COLOR[t], fraction, start })
+    segs.push({ label: t, value, color: DONUT_COLOR[t], fraction, start })
     start += fraction
   }
   return { segs, total: rows.length }
@@ -138,11 +147,11 @@ function buildTrend(rows: JobRow[], now: number, weeks = 8): TrendPoint[] {
 }
 
 const SCORE_BANDS: { label: string; min: number; max: number; color: string }[] = [
-  { label: '<60', min: -Infinity, max: 60, color: 'var(--skip)' },
-  { label: '60-69', min: 60, max: 70, color: 'var(--stretch)' },
-  { label: '70-79', min: 70, max: 80, color: 'var(--good)' },
-  { label: '80-89', min: 80, max: 90, color: 'var(--good)' },
-  { label: '90+', min: 90, max: Infinity, color: 'var(--strong)' },
+  { label: '<60', min: -Infinity, max: 60, color: 'var(--score-1)' },
+  { label: '60-69', min: 60, max: 70, color: 'var(--score-2)' },
+  { label: '70-79', min: 70, max: 80, color: 'var(--score-3)' },
+  { label: '80-89', min: 80, max: 90, color: 'var(--score-4)' },
+  { label: '90+', min: 90, max: Infinity, color: 'var(--score-5)' },
 ]
 
 function buildScores(rows: JobRow[]): BarItem[] {

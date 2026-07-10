@@ -155,7 +155,7 @@ export function Funnel({ stages }: { stages: FunnelStage[] }) {
 /** Filled area + line for roles surfaced per week, with faint gridlines. */
 export function TrendArea({
   points,
-  color = 'var(--brand-coral)',
+  color = 'var(--chart-indigo)',
 }: {
   points: TrendPoint[]
   color?: string
