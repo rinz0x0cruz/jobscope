@@ -26,7 +26,7 @@ export interface ShellV2Props {
 
 const TITLES: Record<Section, string> = {
   briefing: 'Briefing',
-  triage: 'Triage',
+  triage: 'To apply',
   board: 'Board',
   timeline: 'Timeline',
   settings: 'Settings',
@@ -128,7 +128,7 @@ export function ShellV2({
           {lens === 'briefing' ? (
             <Briefing briefing={briefing} onOpen={onOpenJob} />
           ) : lens === 'triage' ? (
-            <Triage queue={triage} onOpen={onOpenJob} />
+            <Triage queue={triage} onOpen={onOpenJob} query={search} />
           ) : lens === 'board' ? (
             <Board columns={columns} onOpen={onOpenJob} />
           ) : lens === 'timeline' ? (

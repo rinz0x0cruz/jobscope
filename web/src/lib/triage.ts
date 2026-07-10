@@ -1,6 +1,6 @@
-// Triage model for the v2 cockpit — a keyboard-first "today's queue" of the
-// decisions worth making now: fresh, un-applied, still-open matches ordered by
-// fit. Pure derivation; the surface walks the queue one card at a time.
+// "To apply" model for the v2 cockpit — the roles you can still apply to: fresh,
+// un-applied, still-open matches ordered by fit. Pure derivation; the surface
+// renders them as a ranked, tier-grouped list with progressive "show more".
 
 import type { DashboardData, Tier } from '@/lib/schema'
 import { daysSince } from '@/lib/pipeline'
@@ -49,5 +49,16 @@ export function buildTriage(data: DashboardData, now = Date.now(), cap = 60): Tr
       url: r.url,
     }))
 
+  return { items, total: items.length }
+}
+
+/** Case-insensitive filter across company / title / location (empty query returns
+ *  the queue unchanged). */
+export function filterTriage(queue: TriageQueue, query: string): TriageQueue {
+  const q = query.trim().toLowerCase()
+  if (!q) return queue
+  const items = queue.items.filter((i) =>
+    `${i.company} ${i.title} ${i.location}`.toLowerCase().includes(q),
+  )
   return { items, total: items.length }
 }

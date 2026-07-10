@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BOARD_STAGES, buildBoard, filterBoard } from '@/lib/board'
-import type { Application, DashboardData, JobRow } from '@/lib/schema'
+import type { Application, DashboardData } from '@/lib/schema'
 
 const NOW = Date.parse('2026-07-01T00:00:00Z')
 const DAY = 86_400_000
@@ -15,39 +15,6 @@ function makeData(over: Partial<DashboardData> = {}): DashboardData {
     applications: [],
     profile: null,
     applied_outreach: [],
-    ...over,
-  }
-}
-
-function row(over: Partial<JobRow> & Pick<JobRow, 'id'>): JobRow {
-  return {
-    title: 'Engineer',
-    company: 'Acme',
-    location: 'Remote',
-    remote: true,
-    remote_scope: '',
-    url: 'https://x',
-    source: 'x',
-    score: 50,
-    tier: 'Good',
-    base: '',
-    salary: '',
-    size: '',
-    funding: '',
-    country: '',
-    place: '',
-    industry: null,
-    rationale: '',
-    blocked: false,
-    posted: null,
-    first_seen: '',
-    status: 'open',
-    last_seen: '',
-    closed_at: '',
-    enrich: {},
-    brief: '',
-    description: '',
-    contacts: [],
     ...over,
   }
 }
@@ -91,23 +58,6 @@ describe('buildBoard', () => {
     expect(cols.flatMap((c) => c.cards).some((c) => c.id === 'd')).toBe(false)
   })
 
-  it('seeds the New column with top open, non-skip, un-applied matches by score', () => {
-    const data = makeData({
-      rows: [
-        row({ id: 'hi', score: 90, tier: 'Strong' }),
-        row({ id: 'lo', score: 40, tier: 'Good' }),
-        row({ id: 'skip', score: 99, tier: 'Skip' }),
-        row({ id: 'closed', score: 95, tier: 'Good', status: 'closed' }),
-        row({ id: 'applied-row', score: 95, tier: 'Good' }),
-      ],
-      applications: [app({ job_id: 'applied-row', status: 'applied' })],
-    })
-    const cols = buildBoard(data, NOW)
-    // Skip tier, closed, and already-applied rows are excluded; sorted by score.
-    expect(col(cols, 'new').cards.map((c) => c.id)).toEqual(['hi', 'lo'])
-    expect(col(cols, 'new').cards.every((c) => c.kind === 'match')).toBe(true)
-  })
-
   it('flags applications that have gone quiet as due / ghosted', () => {
     const data = makeData({
       applications: [
@@ -142,9 +92,9 @@ describe('buildBoard', () => {
 describe('filterBoard', () => {
   const base = buildBoard(
     makeData({
-      rows: [
-        row({ id: 'x', company: 'Stripe', title: 'Backend Engineer' }),
-        row({ id: 'y', company: 'Acme', title: 'Data Scientist' }),
+      applications: [
+        app({ job_id: 'x', company: 'Stripe', title: 'Backend Engineer', status: 'applied' }),
+        app({ job_id: 'y', company: 'Acme', title: 'Data Scientist', status: 'applied' }),
       ],
     }),
     NOW,
@@ -152,7 +102,7 @@ describe('filterBoard', () => {
 
   it('keeps only cards matching the query across company/title/location', () => {
     const filtered = filterBoard(base, 'stripe')
-    expect(col(filtered, 'new').cards.map((c) => c.id)).toEqual(['x'])
+    expect(col(filtered, 'applied').cards.map((c) => c.id)).toEqual(['x'])
   })
 
   it('returns columns unchanged for an empty query', () => {

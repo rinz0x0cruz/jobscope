@@ -3,7 +3,7 @@
 // `@/lib/board`) and reports card opens upward. No data fetching, no mutation.
 
 import { useEffect, useRef, type ReactNode } from 'react'
-import { AlarmClock, Clock, Mail, MapPin, Sparkles } from 'lucide-react'
+import { AlarmClock, Clock, Mail, MapPin } from 'lucide-react'
 import { Badge, animate, prefersReducedMotion } from '@/ui'
 import type { BoardCard, BoardColumn } from '@/lib/board'
 import type { Tier } from '@/lib/schema'
@@ -108,7 +108,7 @@ function BoardCardButton({ card, onOpen }: BoardCardButtonProps) {
   if (card.score != null) {
     meta.push({ key: 'score', node: <span>{card.score}</span> })
   }
-  if (card.kind === 'application' && card.daysSinceApplied != null) {
+  if (card.daysSinceApplied != null) {
     meta.push({
       key: 'applied',
       node: (
@@ -175,9 +175,6 @@ function BoardCardButton({ card, onOpen }: BoardCardButtonProps) {
 
       <div className="flex items-baseline justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
-          {card.kind === 'match' && (
-            <Sparkles size={12} className="shrink-0 text-brand" aria-hidden="true" />
-          )}
           <span className="truncate text-[13px] font-semibold text-ink">{card.company}</span>
         </span>
         {card.tier && (

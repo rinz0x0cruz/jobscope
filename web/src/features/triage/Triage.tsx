@@ -1,196 +1,143 @@
-// The "Triage" lens — a keyboard-first review queue that shows ONE role at a
-// time (an inbox you clear), so you can quickly decide what to pursue. Purely
-// presentational + session-local: it walks an already-derived `TriageQueue`
-// (see `@/lib/triage`) one card at a time, tracking a cursor and a dismissed
-// set in local state, and reports role opens upward. No data fetching, no
-// persistence — skips live only for this session.
+// The "To apply" lens: a ranked, tier-grouped list of roles you can still apply
+// to. Best-fit first (the research pattern for relevance-ranked lists): tier
+// dividers act as landmarks, and a "Show more" button reveals the rest on demand
+// instead of an endless scroll. The topbar search filters it live.
 
-import type { KeyboardEvent } from 'react'
-import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, CheckCircle2, ExternalLink, MapPin, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { ExternalLink, MapPin } from 'lucide-react'
 import { Button } from '@/ui'
+import { filterTriage } from '@/lib/triage'
 import type { TriageItem, TriageQueue } from '@/lib/triage'
+import type { Tier } from '@/lib/schema'
 
 export interface TriageProps {
   queue: TriageQueue
   onOpen: (jobId: string) => void
+  /** Live filter from the topbar search (empty = show everything). */
+  query?: string
 }
 
-/** Tier → accent color for the corner micro-label (matches the legend hues). */
-const TIER_COLOR: Record<TriageItem['tier'], string> = {
+/** How many rows to show initially and reveal per "Show more". */
+const PAGE = 15
+
+const TIER_COLOR: Record<Tier, string> = {
   Strong: 'var(--strong)',
   Good: 'var(--good)',
   Stretch: 'var(--stretch)',
   Skip: 'var(--skip)',
 }
 
-/** "surfaced …" phrasing for the meta line; 0 days reads as "today". */
-function surfaced(ageDays: number): string {
-  return ageDays === 0 ? 'surfaced today' : `surfaced ${ageDays}d ago`
+function cx(...classes: Array<string | false | null | undefined>): string {
+  return classes.filter(Boolean).join(' ')
 }
 
-/**
- * The Triage lens: a centered, single-card review queue. Skip clears the
- * current role (advancing to the next as the list shrinks), Prev steps back,
- * Details opens the drawer, and Apply opens the posting. Keyboard-first:
- * →/x skip · ← prev · o/Enter open · a apply.
- */
-export function Triage({ queue, onOpen }: TriageProps) {
-  const [index, setIndex] = useState(0)
-  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set())
-  const rootRef = useRef<HTMLDivElement>(null)
+export function Triage({ queue, onOpen, query = '' }: TriageProps) {
+  const [visible, setVisible] = useState(PAGE)
+  const filtered = useMemo(() => filterTriage(queue, query), [queue, query])
+  const items = filtered.items
 
-  // Focus the queue on mount so the keyboard shortcuts work without a click.
-  useEffect(() => {
-    rootRef.current?.focus()
-  }, [])
-
-  const visible = queue.items.filter((item) => !dismissed.has(item.jobId))
-  const visibleCount = visible.length
-  const clamped = Math.min(index, Math.max(0, visibleCount - 1))
-  const current = visible[clamped]
-
-  const cleared = Math.max(0, queue.total - visibleCount)
-  const pct = queue.total > 0 ? Math.min(100, (cleared / queue.total) * 100) : 0
-
-  function skip() {
-    if (!current) return
-    const id = current.jobId
-    setDismissed((prev) => {
-      const next = new Set(prev)
-      next.add(id)
-      return next
-    })
+  if (items.length === 0) {
+    return (
+      <div className="mx-auto max-w-2xl py-20 text-center text-sm text-ink-3">
+        {query ? 'No matches for that search.' : 'No new roles to apply to right now.'}
+      </div>
+    )
   }
 
-  function prev() {
-    setIndex(Math.max(0, clamped - 1))
-  }
-
-  function openDetails() {
-    if (current) onOpen(current.jobId)
-  }
-
-  function apply() {
-    if (current?.url) window.open(current.url, '_blank', 'noopener,noreferrer')
-  }
-
-  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
-    if (!current) return
-    switch (e.key) {
-      case 'ArrowRight':
-      case 'x':
-        e.preventDefault()
-        skip()
-        break
-      case 'ArrowLeft':
-        e.preventDefault()
-        prev()
-        break
-      case 'o':
-      case 'Enter':
-        e.preventDefault()
-        openDetails()
-        break
-      case 'a':
-        e.preventDefault()
-        apply()
-        break
-      default:
-        break
-    }
-  }
+  const shown = items.slice(0, visible)
+  let lastTier: Tier | null = null
 
   return (
-    <div
-      ref={rootRef}
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
-      className="mx-auto max-w-xl outline-none"
-    >
-      {current ? (
-        <>
-          <div className="mb-4">
-            <div className="flex items-baseline justify-between">
-              <span className="font-display text-sm font-semibold text-ink">Reviewing</span>
-              <span className="text-[12px] text-ink-3">{visibleCount} left</span>
-            </div>
-            <div
-              className="mt-2 h-1 w-full overflow-hidden rounded-full bg-inset"
-              role="progressbar"
-              aria-valuenow={cleared}
-              aria-valuemin={0}
-              aria-valuemax={queue.total}
-            >
-              <div
-                className="h-full rounded-full bg-brand transition-[width]"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-          </div>
+    <div className="mx-auto max-w-2xl">
+      <p className="mb-4 text-sm text-ink-3">
+        {items.length} role{items.length === 1 ? '' : 's'} to apply to, best fit first.
+      </p>
 
-          <div className="rounded-card border border-line bg-panel p-6 shadow-[var(--shadow-panel)]">
-            <div className="flex items-start justify-between gap-3">
-              <span className="text-lg font-semibold text-ink">{current.company}</span>
-              <span className="flex shrink-0 items-center gap-2">
-                <span
-                  className="text-[11px] font-semibold uppercase"
-                  style={{ color: TIER_COLOR[current.tier] }}
+      <ul className="space-y-1.5">
+        {shown.map((item, idx) => {
+          const header = item.tier !== lastTier ? item.tier : null
+          lastTier = item.tier
+          return (
+            <li key={item.jobId}>
+              {header && (
+                <div
+                  className={cx(
+                    'mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider',
+                    idx > 0 && 'mt-5',
+                  )}
+                  style={{ color: TIER_COLOR[header] }}
                 >
-                  {current.tier}
-                </span>
-                <span className="text-sm text-ink-3">{current.score}</span>
-              </span>
-            </div>
-
-            <p className="mt-1 text-[15px] text-ink-2">{current.title}</p>
-
-            <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-ink-3">
-              {current.location && (
-                <span className="inline-flex items-center gap-1">
-                  <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
-                  {current.location}
-                </span>
+                  <span>{header}</span>
+                  <span className="text-ink-3">{items.filter((i) => i.tier === header).length}</span>
+                </div>
               )}
-              {current.remote && current.location.toLowerCase() !== 'remote' && <span>Remote</span>}
-              {current.ageDays != null && <span>{surfaced(current.ageDays)}</span>}
-            </div>
+              <TriageRow item={item} onOpen={onOpen} />
+            </li>
+          )
+        })}
+      </ul>
 
-            {current.brief && (
-              <p className="mt-4 text-[14px] leading-relaxed text-ink-2">{current.brief}</p>
-            )}
-
-            <div className="mt-6 flex items-center gap-2">
-              {clamped > 0 && (
-                <Button variant="ghost" size="sm" onClick={prev} aria-label="Prev">
-                  <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              )}
-              <Button variant="secondary" size="sm" onClick={skip}>
-                <X className="h-4 w-4" aria-hidden="true" />
-                Skip
-              </Button>
-              <Button variant="secondary" size="sm" onClick={openDetails}>
-                Details
-              </Button>
-              <Button variant="primary" size="sm" onClick={apply} className="ml-auto">
-                <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                Apply
-              </Button>
-            </div>
-
-            <p className="mt-3 text-[11px] text-ink-3">← prev · → skip · O open · A apply</p>
-          </div>
-        </>
-      ) : (
-        <div className="flex flex-col items-center justify-center rounded-card border border-line bg-panel px-6 py-16 text-center shadow-[var(--shadow-panel)]">
-          <CheckCircle2 className="h-10 w-10 text-brand" aria-hidden="true" />
-          <p className="mt-4 font-display text-lg font-semibold text-ink">All caught up</p>
-          <p className="mt-1 text-sm text-ink-3">
-            Nothing left to review — new roles will show up here.
-          </p>
+      {visible < items.length && (
+        <div className="mt-5 flex justify-center">
+          <Button variant="secondary" onClick={() => setVisible((v) => v + PAGE)}>
+            Show {Math.min(PAGE, items.length - visible)} more
+          </Button>
         </div>
+      )}
+    </div>
+  )
+}
+
+function TriageRow({ item, onOpen }: { item: TriageItem; onOpen: (jobId: string) => void }) {
+  return (
+    <div className="group flex items-stretch gap-3 rounded-card border border-line bg-panel pr-2 transition-colors hover:border-line-strong">
+      <button
+        type="button"
+        onClick={() => onOpen(item.jobId)}
+        aria-label={`${item.company} — ${item.title}`}
+        className="flex min-w-0 flex-1 items-stretch gap-3 py-2.5 pl-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-brand"
+      >
+        <span
+          aria-hidden="true"
+          className="w-1 shrink-0 rounded-full"
+          style={{ background: TIER_COLOR[item.tier] }}
+        />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2">
+            <span className="truncate text-[13px] font-semibold text-ink">{item.company}</span>
+            <span
+              className="shrink-0 text-[10px] font-semibold uppercase tracking-wide"
+              style={{ color: TIER_COLOR[item.tier] }}
+            >
+              {item.tier}
+            </span>
+          </span>
+          <span className="mt-0.5 block truncate text-[12px] text-ink-2">{item.title}</span>
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-ink-3">
+            {item.location && (
+              <span className="inline-flex items-center gap-1">
+                <MapPin size={11} aria-hidden="true" />
+                {item.location}
+              </span>
+            )}
+            <span>· {item.score}</span>
+            {item.ageDays != null && (
+              <span>· {item.ageDays === 0 ? 'today' : `${item.ageDays}d ago`}</span>
+            )}
+          </span>
+        </span>
+      </button>
+
+      {item.url && (
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="my-2 inline-flex shrink-0 items-center gap-1 self-center rounded-card px-2.5 py-1.5 text-[12px] font-medium text-brand outline-none transition-colors hover:bg-brand-weak focus-visible:ring-2 focus-visible:ring-brand"
+        >
+          <ExternalLink size={13} aria-hidden="true" />
+          Apply
+        </a>
       )}
     </div>
   )
