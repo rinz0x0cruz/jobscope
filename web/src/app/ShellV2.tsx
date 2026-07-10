@@ -6,11 +6,12 @@ import { Board } from '@/features/board'
 import { Briefing } from '@/features/briefing'
 import { Triage } from '@/features/triage'
 import { Timeline } from '@/features/timeline'
+import { Settings } from '@/features/settings'
 import { buildBoard, filterBoard } from '@/lib/board'
 import { buildBriefing } from '@/lib/briefing'
 import { buildTriage } from '@/lib/triage'
 import { buildTimeline } from '@/lib/timeline'
-import { Card, animate, viewTransition } from '@/ui'
+import { animate, viewTransition } from '@/ui'
 import { JobDrawer } from '@/components/JobDrawer'
 import type { DashboardData } from '@/lib/schema'
 
@@ -32,19 +33,6 @@ const TITLES: Record<Section, string> = {
   settings: 'Settings',
 }
 
-// One-line intent for each not-yet-built lens (rendered as an intentional
-// placeholder, not the old feature content).
-const SOON: Record<Section, string> = {
-  briefing:
-    'A single-scroll “state of your search” — a written brief of what moved this week and what needs you.',
-  triage:
-    'A keyboard-first queue of today’s decisions — new matches and inbound signals, one at a time.',
-  board: '',
-  timeline:
-    'A time-centric agenda — upcoming interviews, follow-ups due, and the chronological track of your hunt.',
-  settings: 'Preferences, résumé, and publishing controls.',
-}
-
 /** Toggle the v2 light/dark theme and persist the choice across reloads. */
 function toggleTheme() {
   viewTransition(() => {
@@ -60,27 +48,10 @@ function toggleTheme() {
   })
 }
 
-function ComingSoon({ section }: { section: Section }) {
-  return (
-    <div className="mx-auto max-w-md py-20">
-      <Card>
-        <div className="text-center">
-          <div className="text-xs font-semibold uppercase tracking-wide text-brand">
-            Coming next
-          </div>
-          <h2 className="mt-2 font-display text-xl font-semibold text-ink">{TITLES[section]}</h2>
-          <p className="mt-2 text-sm text-ink-2">{SOON[section]}</p>
-        </div>
-      </Card>
-    </div>
-  )
-}
-
 /**
  * v2 "cockpit" shell. Owns its own lens navigation (Briefing / Triage / Board /
  * Timeline / Settings) — decoupled from the legacy tab/URL state — and renders a
- * genuinely new surface per lens over the one hunt pipeline. Only the Board lens
- * is live; the others are intentional placeholders for the phased rebuild.
+ * distinct surface per lens over the one hunt pipeline.
  */
 export function ShellV2({
   data,
@@ -134,7 +105,12 @@ export function ShellV2({
           ) : lens === 'timeline' ? (
             <Timeline timeline={timeline} onOpen={onOpenJob} />
           ) : (
-            <ComingSoon section={lens} />
+            <Settings
+              profile={data.profile}
+              generated={data.generated}
+              total={data.total}
+              onLock={onLock}
+            />
           )}
         </div>
       </AppShell>
