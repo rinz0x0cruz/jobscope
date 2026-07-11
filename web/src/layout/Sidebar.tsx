@@ -1,18 +1,17 @@
 import {
-  BarChart3,
   CalendarClock,
   Columns3,
   Compass,
+  Home,
   Inbox,
-  Newspaper,
   Settings,
   User,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
-/** The six top-level lenses rendered in the app shell's left sidebar. Each is a
+/** The five top-level lenses rendered in the app shell's left sidebar. Each is a
  *  distinct view onto the one hunt pipeline, not a separate feature area. */
-export type Section = 'briefing' | 'overview' | 'triage' | 'board' | 'timeline' | 'settings'
+export type Section = 'home' | 'triage' | 'board' | 'timeline' | 'settings'
 
 /** Bottom mini-card describing the signed-in user's profile completion. */
 export interface SidebarProfile {
@@ -36,8 +35,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { section: 'briefing', label: 'Briefing', Icon: Newspaper },
-  { section: 'overview', label: 'Overview', Icon: BarChart3 },
+  { section: 'home', label: 'Home', Icon: Home },
   { section: 'triage', label: 'To apply', Icon: Inbox },
   { section: 'board', label: 'Board', Icon: Columns3 },
   { section: 'timeline', label: 'Timeline', Icon: CalendarClock },
@@ -48,6 +46,40 @@ function cx(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(' ')
 }
 
+export interface NavListProps {
+  active: Section
+  onNavigate: (section: Section) => void
+}
+
+/** The primary lens navigation, shared by the desktop sidebar and mobile drawer. */
+export function NavList({ active, onNavigate }: NavListProps) {
+  return (
+    <nav aria-label="Primary" className="flex flex-1 flex-col gap-1 px-3 py-3">
+      {NAV_ITEMS.map(({ section, label, Icon }) => {
+        const isActive = section === active
+        return (
+          <button
+            key={section}
+            type="button"
+            onClick={() => onNavigate(section)}
+            aria-current={isActive ? 'page' : undefined}
+            className={cx(
+              'flex w-full items-center gap-2.5 rounded-card px-3 py-2 text-sm transition-colors',
+              'outline-none focus-visible:ring-2 focus-visible:ring-brand',
+              isActive
+                ? 'bg-brand-weak font-medium text-brand'
+                : 'text-ink-2 hover:bg-inset hover:text-ink',
+            )}
+          >
+            <Icon size={18} aria-hidden="true" className="shrink-0" />
+            <span>{label}</span>
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
 /**
  * Persistent, full-height left navigation: brand mark, the five primary
  * sections, and an optional profile-completion mini-card. Presentational only —
@@ -55,7 +87,7 @@ function cx(...classes: Array<string | false | null | undefined>): string {
  */
 export function Sidebar({ active, onNavigate, profile }: SidebarProps) {
   return (
-    <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col self-start border-r border-line bg-panel">
+    <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col self-start border-r border-line bg-panel md:flex">
       <div className="flex h-16 items-center gap-2.5 px-5">
         <span className="inline-flex h-8 w-8 items-center justify-center rounded-card bg-brand text-white">
           <Compass size={18} aria-hidden="true" />
@@ -63,33 +95,15 @@ export function Sidebar({ active, onNavigate, profile }: SidebarProps) {
         <span className="font-display text-lg font-semibold text-ink">jobscope</span>
       </div>
 
-      <nav aria-label="Primary" className="flex flex-1 flex-col gap-1 px-3 py-3">
-        {NAV_ITEMS.map(({ section, label, Icon }) => {
-          const isActive = section === active
-          return (
-            <button
-              key={section}
-              type="button"
-              onClick={() => onNavigate(section)}
-              aria-current={isActive ? 'page' : undefined}
-              className={cx(
-                'flex w-full items-center gap-2.5 rounded-card px-3 py-2 text-sm transition-colors',
-                'outline-none focus-visible:ring-2 focus-visible:ring-brand',
-                isActive
-                  ? 'bg-brand-weak font-medium text-brand'
-                  : 'text-ink-2 hover:bg-inset hover:text-ink',
-              )}
-            >
-              <Icon size={18} aria-hidden="true" className="shrink-0" />
-              <span>{label}</span>
-            </button>
-          )
-        })}
-      </nav>
+      <NavList active={active} onNavigate={onNavigate} />
 
       {profile != null && (
         <div className="p-3">
-          <div className="flex items-center gap-3 rounded-card border border-line p-3">
+          <button
+            type="button"
+            onClick={() => onNavigate('settings')}
+            className="flex w-full items-center gap-3 rounded-card border border-line p-3 text-left outline-none transition-colors hover:bg-inset focus-visible:ring-2 focus-visible:ring-brand"
+          >
             <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-inset text-ink-2">
               <User size={18} aria-hidden="true" />
             </span>
@@ -114,7 +128,7 @@ export function Sidebar({ active, onNavigate, profile }: SidebarProps) {
                 </>
               )}
             </div>
-          </div>
+          </button>
         </div>
       )}
     </aside>

@@ -4,13 +4,16 @@
 // three quiet text-forward sections — and reports role opens upward. No data
 // fetching, no mutation.
 
-import type { ReactNode } from 'react'
+import { Card } from '@/ui'
 import type { Briefing, BriefingItem, BriefingMatch, ItemTone } from '@/lib/briefing'
 import type { Tier } from '@/lib/schema'
 
 export interface BriefingProps {
   briefing: Briefing
   onOpen: (jobId: string) => void
+  /** Show the slim figures line under the headline. Hidden on Home, where the
+   *  dashboard already renders KPI tiles. Defaults to true. */
+  showFigures?: boolean
 }
 
 function cx(...classes: Array<string | false | null | undefined>): string {
@@ -32,16 +35,6 @@ const TIER_COLOR: Record<Tier, string> = {
   Good: 'var(--good)',
   Stretch: 'var(--stretch)',
   Skip: 'var(--skip)',
-}
-
-/** A section: tiny uppercase heading over a hairline divider, then its body. */
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="border-t border-line pt-6">
-      <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-ink-3">{title}</h2>
-      {children}
-    </section>
-  )
 }
 
 /** A "This week" / "Needs you" row: a toned dot beside a line of copy. Clickable
@@ -98,69 +91,73 @@ function MatchRow({ match, onOpen }: { match: BriefingMatch; onOpen: (jobId: str
 }
 
 /**
- * The Briefing lens: a single-scroll, centered editorial brief on the state of
+ * The Briefing brief: a headline + subhead and three card sections on the state of
  * the search — headline, a slim figure line, and three text-forward sections
  * ("This week", "Needs you", "Fresh matches").
  */
-export function Briefing({ briefing, onOpen }: BriefingProps) {
+export function Briefing({ briefing, onOpen, showFigures = true }: BriefingProps) {
   return (
-    <div className="mx-auto max-w-2xl space-y-8">
-      <header>
-        <h1 className="font-display text-[26px] font-semibold leading-tight text-balance text-ink">
+    <div className="space-y-5">
+      <header className="max-w-3xl">
+        <h2 className="font-display text-xl font-semibold leading-snug text-balance text-ink">
           {briefing.headline}
-        </h1>
-        <p className="mt-2 text-sm text-ink-3">{briefing.subhead}</p>
+        </h2>
+        <p className="mt-1 text-sm text-ink-3">{briefing.subhead}</p>
       </header>
 
-      <div className="flex flex-wrap items-stretch gap-y-2">
-        {briefing.figures.map((fig, i) => (
-          <div key={fig.key} className={cx('flex flex-col', i > 0 && 'ml-4 border-l border-line pl-4')}>
-            <span
-              className={cx('text-2xl font-semibold', !fig.accent && 'text-ink')}
-              style={fig.accent ? { color: fig.accent } : undefined}
-            >
-              {fig.value}
-            </span>
-            <span className="text-[11px] uppercase tracking-wide text-ink-3">{fig.label}</span>
-          </div>
-        ))}
+      {showFigures && (
+        <div className="flex flex-wrap items-stretch gap-y-2">
+          {briefing.figures.map((fig, i) => (
+            <div key={fig.key} className={cx('flex flex-col', i > 0 && 'ml-4 border-l border-line pl-4')}>
+              <span
+                className={cx('text-2xl font-semibold', !fig.accent && 'text-ink')}
+                style={fig.accent ? { color: fig.accent } : undefined}
+              >
+                {fig.value}
+              </span>
+              <span className="text-[11px] uppercase tracking-wide text-ink-3">{fig.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <Card title="This week">
+          {briefing.moved.length === 0 ? (
+            <p className="text-sm text-ink-3">Quiet week so far.</p>
+          ) : (
+            <div className="-my-1.5">
+              {briefing.moved.map((item) => (
+                <ItemRow key={item.id} item={item} onOpen={onOpen} />
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card title="Needs you">
+          {briefing.needs.length === 0 ? (
+            <p className="text-sm text-ink-3">You're all caught up.</p>
+          ) : (
+            <div className="-my-1.5">
+              {briefing.needs.map((item) => (
+                <ItemRow key={item.id} item={item} onOpen={onOpen} />
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card title="Fresh matches" className="md:col-span-2 xl:col-span-1">
+          {briefing.matches.length === 0 ? (
+            <p className="text-sm text-ink-3">No new matches right now.</p>
+          ) : (
+            <div className="-my-1">
+              {briefing.matches.map((m) => (
+                <MatchRow key={m.jobId} match={m} onOpen={onOpen} />
+              ))}
+            </div>
+          )}
+        </Card>
       </div>
-
-      <Section title="This week">
-        {briefing.moved.length === 0 ? (
-          <p className="text-sm text-ink-3">Quiet week so far.</p>
-        ) : (
-          <div>
-            {briefing.moved.map((item) => (
-              <ItemRow key={item.id} item={item} onOpen={onOpen} />
-            ))}
-          </div>
-        )}
-      </Section>
-
-      <Section title="Needs you">
-        {briefing.needs.length === 0 ? (
-          <p className="text-sm text-ink-3">You're all caught up.</p>
-        ) : (
-          <div>
-            {briefing.needs.map((item) => (
-              <ItemRow key={item.id} item={item} onOpen={onOpen} />
-            ))}
-          </div>
-        )}
-      </Section>
-
-      <Section title="Fresh matches">
-        {briefing.matches.length === 0 ? (
-          <p className="text-sm text-ink-3">No new matches right now.</p>
-        ) : (
-          <div>
-            {briefing.matches.map((m) => (
-              <MatchRow key={m.jobId} match={m} onOpen={onOpen} />
-            ))}
-          </div>
-        )}
-      </Section>
     </div>
   )
 }
