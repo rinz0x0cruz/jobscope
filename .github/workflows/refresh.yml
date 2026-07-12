@@ -24,6 +24,10 @@ on:
         description: "Re-scan ALL inbox history and re-score (one-time heal; slower)"
         type: boolean
         default: false
+      backfill_since:
+        description: "How far back the one-time backfill re-scans (YYYY-MM-DD)"
+        type: string
+        default: "2024-01-01"
 
 concurrency:
   group: refresh
@@ -106,7 +110,7 @@ jobs:
             python -m jobscope scan || echo "::warning::job-board scan failed (non-fatal)"
           fi
           if [ "${{ inputs.inbox_backfill }}" = "true" ]; then
-            python -m jobscope inbox --backfill --include-spam
+            python -m jobscope inbox --backfill --since "${{ inputs.backfill_since }}" --include-spam
           else
             python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)" --include-spam
           fi
