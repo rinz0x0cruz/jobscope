@@ -261,6 +261,15 @@ function DrawerBody({
                 stale
               </span>
             )}
+            {job.remote_mismatch && (
+              <span
+                className="rounded-full px-1.5 py-0.5 text-[11px]"
+                style={{ color: 'var(--hot)', background: 'color-mix(in srgb, var(--hot) 14%, transparent)' }}
+                title="Tagged remote, but the description mentions onsite/hybrid"
+              >
+                remote?
+              </span>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -290,6 +299,19 @@ function DrawerBody({
         >
           Apply on {job.source || 'source'} <ExternalLink size={14} />
         </a>
+        {job.sources.length > 1 && (
+          <div className="mt-2 text-[12px] text-mute">
+            Also on{' '}
+            {job.sources.slice(1).map((s, i) => (
+              <span key={s.url}>
+                {i > 0 && ', '}
+                <a href={s.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                  {s.source}
+                </a>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* scrollable sections */}

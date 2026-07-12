@@ -83,8 +83,8 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     if not (cfg.get("output", {}) or {}).get("include_skip"):
         jobs = [j for j in jobs if (j.tier or "Skip") != "Skip"]
     stale_days = int((cfg.get("filters", {}) or {}).get("stale_days", 45) or 0)
-    rows = [_job_record(j, store.get_enrichment(j.company) if j.company else {}, store, stale_days)
-            for j in jobs]
+    rows = _dedupe([_job_record(j, store.get_enrichment(j.company) if j.company else {}, store, stale_days)
+                    for j in jobs])
     overview = _overview_data(cfg, store)
     apps = _application_records(store)
     profile = _profile_data(cfg, store)
@@ -297,6 +297,54 @@ def _age_days(iso: str) -> int | None:
     return max(0, (datetime.now(timezone.utc) - d).days)
 
 
+# Onsite/hybrid cues in a JD that contradict a "remote" tag (remote reality-check).
+# Deliberately specific -- bare "hybrid" is skipped (it collides with "hybrid cloud");
+# we require work-location phrasing.
+_ONSITE_RE = re.compile(
+    r"\breturn[-\s]to[-\s]office\b|\bRTO\b"
+    r"|\b\d+\s*days?\b[^.\n]{0,24}\b(?:in[-\s]?office|on-?site|in the office)\b"
+    r"|\b(?:on-?site|in-?office)\s+(?:required|mandatory|presence|expectation|position|role)\b"
+    r"|\bhybrid\s+(?:role|position|schedule|work\s*model|working|arrangement|setup)\b",
+    re.I,
+)
+
+
+def _remote_mismatch(job) -> bool:
+    """True when a role is tagged remote but its JD describes onsite/hybrid work."""
+    if not job.is_remote:
+        return False
+    return bool(_ONSITE_RE.search(job.description or ""))
+
+
+def _norm_title(title: str) -> str:
+    """Loose title key for cross-source de-dupe: lowercased, parentheticals + punctuation
+    dropped, whitespace collapsed. Seniority/level words are KEPT so 'Engineer II' and
+    'Engineer' stay distinct."""
+    t = re.sub(r"\([^)]*\)", " ", (title or "").lower())
+    t = re.sub(r"[^a-z0-9]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _dedupe(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse the same role posted to multiple sources into one row, keeping the
+    highest-scored (rows arrive score-sorted) and merging the others' sources."""
+    groups: dict[tuple, dict[str, Any]] = {}
+    order: list[tuple] = []
+    for r in rows:
+        key = (r["company"].strip().lower(), _norm_title(r["title"]), (r["location"] or "").strip().lower())
+        canon = groups.get(key)
+        if canon is None:
+            groups[key] = r
+            order.append(key)
+            continue
+        seen = {s["url"] for s in canon["sources"]}
+        for s in r["sources"]:
+            if s["url"] not in seen:
+                canon["sources"].append(s)
+                seen.add(s["url"])
+    return [groups[k] for k in order]
+
+
 def _job_record(job, enr: dict, store, stale_days: int = 45) -> dict[str, Any]:
     salary = _fmt_salary(job)
     contacts = store.contacts_for(job.company) if job.company else []
@@ -329,6 +377,8 @@ def _job_record(job, enr: dict, store, stale_days: int = 45) -> dict[str, Any]:
         "closed_at": job.closed_at or "",
         "posted_age_days": posted_age,
         "stale": bool(stale_days and posted_age is not None and posted_age >= stale_days),
+        "remote_mismatch": _remote_mismatch(job),
+        "sources": [{"source": job.source, "url": job.url}],
         "enrich": _enrich_summary(enr),
         "brief": ((enr or {}).get("brief") or {}).get("text", "") if enr else "",
         "description": _jd_snapshot(job.description),

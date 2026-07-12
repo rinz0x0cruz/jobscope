@@ -131,6 +131,7 @@ _JOB_ROW = {
     "posted": (str, type(None)), "first_seen": str, "status": str,
     "last_seen": str, "closed_at": str,
     "posted_age_days": (int, type(None)), "stale": bool,
+    "remote_mismatch": bool, "sources": list,
     "enrich": dict, "brief": str,
     "description": str, "contacts": list,
 }
@@ -348,6 +349,45 @@ def test_dashboard_schema_artifact_matches_contract():
     assert set(defs["ApplicationEvent"]["required"]) == set(_TIMELINE_EVENT)
     assert set(defs["AppliedCompany"]["required"]) == set(_APPLIED_COMPANY)
     assert set(defs["CompanyContact"]["required"]) == set(_COMPANY_CONTACT)
+
+
+def test_render_dedupe_collapses_cross_source_duplicates():
+    """#2: the same role from multiple sources collapses to one row, merging their
+    source links; a different seniority stays distinct."""
+    rows = [
+        {"company": "Acme", "title": "Security Engineer (Remote)", "location": "Remote",
+         "sources": [{"source": "linkedin", "url": "u1"}]},
+        {"company": "acme", "title": "Security Engineer", "location": "remote",
+         "sources": [{"source": "greenhouse", "url": "u2"}]},
+        {"company": "Acme", "title": "Senior Security Engineer", "location": "Remote",
+         "sources": [{"source": "indeed", "url": "u3"}]},
+    ]
+    out = render._dedupe(rows)
+    assert len(out) == 2
+    assert {s["url"] for s in out[0]["sources"]} == {"u1", "u2"}
+
+
+def test_render_remote_mismatch_ignores_hybrid_cloud():
+    """#3: onsite/hybrid *work* phrasing on a remote-tagged role flags a mismatch,
+    but 'hybrid cloud' (a tech term) must not, and non-remote roles never flag."""
+    class _J:
+        def __init__(self, is_remote, description):
+            self.is_remote = is_remote
+            self.description = description
+
+    assert render._remote_mismatch(_J(True, "This is a hybrid role: 3 days in office.")) is True
+    assert render._remote_mismatch(_J(True, "Fully remote. We run a hybrid cloud environment.")) is False
+    assert render._remote_mismatch(_J(False, "3 days in office required")) is False
+
+
+def test_render_age_days():
+    """#1: whole-day age from a date; None when empty/unparseable."""
+    import datetime as _dt
+
+    assert render._age_days("") is None
+    assert render._age_days("nope") is None
+    d = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=10)).strftime("%Y-%m-%d")
+    assert render._age_days(d) in (9, 10, 11)
 
 
 def test_public_build_data_redacts_all_pii():

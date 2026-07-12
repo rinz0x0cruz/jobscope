@@ -31,6 +31,8 @@ export function jobRow(over: Partial<JobRow> & Pick<JobRow, 'id'>): JobRow {
     closed_at: '',
     posted_age_days: null,
     stale: false,
+    remote_mismatch: false,
+    sources: [],
     enrich: {},
     brief: '',
     description: '',

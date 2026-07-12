@@ -73,7 +73,7 @@
         "source", "score", "tier", "base", "salary", "size", "funding",
         "country", "place", "industry", "rationale", "blocked", "posted",
         "first_seen", "status", "last_seen", "closed_at", "posted_age_days",
-        "stale", "enrich", "brief",
+        "stale", "remote_mismatch", "sources", "enrich", "brief",
         "description", "contacts"
       ],
       "properties": {
@@ -103,6 +103,8 @@
         "closed_at": {"type": "string"},
         "posted_age_days": {"type": ["integer", "null"]},
         "stale": {"type": "boolean"},
+        "remote_mismatch": {"type": "boolean"},
+        "sources": {"type": "array", "items": {"type": "object", "required": ["source", "url"], "properties": {"source": {"type": "string"}, "url": {"type": "string"}}}},
         "enrich": {"$ref": "#/definitions/EnrichSummary"},
         "brief": {"type": "string"},
         "description": {"type": "string", "description": "Trimmed JD snapshot (issue #30); \"\" in the public build."},

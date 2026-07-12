@@ -54,6 +54,11 @@ export interface Contact {
   url?: string | null
 }
 
+export interface JobSource {
+  source: string
+  url: string
+}
+
 export interface JobRow {
   id: string
   title: string
@@ -81,6 +86,8 @@ export interface JobRow {
   closed_at: string
   posted_age_days: number | null
   stale: boolean
+  remote_mismatch: boolean
+  sources: JobSource[]
   enrich: EnrichSummary
   brief: string
   description: string

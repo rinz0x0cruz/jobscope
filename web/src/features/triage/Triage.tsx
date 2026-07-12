@@ -155,6 +155,20 @@ function TriageRow({ item, onOpen }: { item: TriageItem; onOpen: (jobId: string)
                 stale
               </span>
             )}
+            {item.remoteMismatch && (
+              <span
+                className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                style={{ color: 'var(--hot)', background: 'color-mix(in srgb, var(--hot) 14%, transparent)' }}
+                title="Tagged remote, but the description mentions onsite/hybrid"
+              >
+                remote?
+              </span>
+            )}
+            {item.sources.length > 1 && (
+              <span title={`Also posted on ${item.sources.slice(1).join(', ')}`}>
+                · also on {item.sources.slice(1).join(', ')}
+              </span>
+            )}
           </span>
         </span>
       </button>
