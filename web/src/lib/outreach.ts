@@ -62,11 +62,11 @@ export function localServeToken(): Promise<string | null> {
   return tokenProbe
 }
 
-export async function outreachPreview(jobId: string, token: string, to?: string): Promise<OutreachPreview> {
+export async function outreachPreview(jobId: string, token: string, to?: string, followup?: boolean): Promise<OutreachPreview> {
   const r = await fetch(api('api/outreach'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
-    body: JSON.stringify({ job_id: jobId, ...(to ? { to } : {}) }),
+    body: JSON.stringify({ job_id: jobId, ...(to ? { to } : {}), ...(followup ? { followup: true } : {}) }),
   })
   return (await r.json()) as OutreachPreview
 }

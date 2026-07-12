@@ -228,13 +228,30 @@ def resolve_target(cfg: dict, store, job, override: Optional[str] = None) -> Opt
                   note=f"conventional role inbox on {domain} -- verify it exists before sending")
 
 
-def build_draft(cfg: dict, store, resume, job, target: Target) -> tuple[str, str]:
-    """A short, tailored outreach email (deterministic; AI-rewritten if available)."""
+def build_draft(cfg: dict, store, resume, job, target: Target,
+                followup: bool = False) -> tuple[str, str]:
+    """A short, tailored outreach email (deterministic; AI-rewritten if available).
+
+    ``followup=True`` reframes it as a polite nudge on an application already sent
+    (deterministic only -- no AI, no cold intro)."""
     analysis = analyze(resume, job)
     top = ", ".join(analysis["matched"][:6]) or ", ".join(resume.skills[:6])
     name = resume.full_name or "the candidate"
-    subject = f"{job.title} — {name}" if job.title else f"Introduction — {name}"
+    subject = f"{job.title} \u2014 {name}" if job.title else f"Introduction \u2014 {name}"
     sig = f"\n{resume.email}" if resume.email else ""
+
+    if followup:
+        fu_subject = (f"Following up \u2014 {job.title} application" if job.title
+                      else f"Following up on my application \u2014 {name}")
+        fu_body = (
+            f"Hello,\n\n"
+            f"I recently applied for the {job.title or 'open'} role at "
+            f"{job.company or 'your team'} and wanted to follow up to reaffirm my interest. "
+            f"My background aligns well{(': ' + top) if top else ''}, and I'd welcome the "
+            f"chance to briefly discuss how I can contribute.\n\n"
+            f"Happy to share anything further. Thank you for your time,\n{name}{sig}"
+        ).strip()
+        return fu_subject, fu_body
 
     deterministic = (
         f"Hello,\n\n"
@@ -366,7 +383,8 @@ def run(cfg: dict, store, job_id: str, *, to: Optional[str] = None,
 
 
 # --- structured API (used by the local `serve` dashboard, no printing) -------
-def api_preview(cfg: dict, store, job_id: str, *, to: Optional[str] = None) -> dict:
+def api_preview(cfg: dict, store, job_id: str, *, to: Optional[str] = None,
+                followup: bool = False) -> dict:
     """Resolve a contact + draft for the drawer's Email-recruiter panel."""
     job = store.get_job(job_id)
     if job is None:

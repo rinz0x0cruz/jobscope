@@ -208,6 +208,7 @@ function ApplicationBody({ app }: { app: Application }) {
             <p className="text-[13px] text-mute">No emails linked to this application yet.</p>
           </Section>
         )}
+        <RecruiterOutreach jobId={app.job_id} followup />
       </div>
     </>
   )

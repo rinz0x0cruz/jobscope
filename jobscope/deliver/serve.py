@@ -203,7 +203,8 @@ def _build_server(cfg: dict, port: int):
                             subject=str(data.get("subject") or ""),
                             body=str(data.get("body") or ""), force=bool(data.get("force")))
                     else:
-                        res = outreach.api_preview(cfg, store, job_id, to=(data.get("to") or None))
+                        res = outreach.api_preview(cfg, store, job_id, to=(data.get("to") or None),
+                                                   followup=bool(data.get("followup")))
                 self._send_json(200, res)
             except Exception as exc:  # noqa: BLE001 - surface to the UI
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
