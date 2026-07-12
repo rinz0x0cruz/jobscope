@@ -129,7 +129,9 @@ _JOB_ROW = {
     "size": str, "funding": str, "country": str, "place": str,
     "industry": (str, type(None)), "rationale": str, "blocked": bool,
     "posted": (str, type(None)), "first_seen": str, "status": str,
-    "last_seen": str, "closed_at": str, "enrich": dict, "brief": str,
+    "last_seen": str, "closed_at": str,
+    "posted_age_days": (int, type(None)), "stale": bool,
+    "enrich": dict, "brief": str,
     "description": str, "contacts": list,
 }
 

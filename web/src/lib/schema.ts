@@ -79,6 +79,8 @@ export interface JobRow {
   status: string
   last_seen: string
   closed_at: string
+  posted_age_days: number | null
+  stale: boolean
   enrich: EnrichSummary
   brief: string
   description: string

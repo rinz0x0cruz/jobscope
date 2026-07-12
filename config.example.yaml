@@ -89,6 +89,7 @@ filters:                              # jobs matching these are forced to Skip (
   block_title_keywords: []            # substring match on title only
   require_title_keywords: []          # allow-list: if set, a title matching NONE of these is forced to Skip (e.g. [security, appsec, detection])
   max_age_days: 0                     # 0 = off; else drop postings older than N days
+  stale_days: 45                      # badge (not drop) postings older than N days as likely-stale/ghost; 0 = off
   max_years_experience: 0             # 0 = off; else drop roles asking clearly more (Senior/Staff titles, "N+ years") than this cap
 
 enrich:

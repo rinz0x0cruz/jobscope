@@ -253,6 +253,14 @@ function DrawerBody({
             {job.place && <span className="text-mute">· {job.place}</span>}
             {job.remote_scope && <span className="text-mute">· {job.remote_scope}</span>}
             <span className="text-mute">· {job.tier}</span>
+            {job.stale && (
+              <span
+                className="rounded-full bg-bg px-1.5 py-0.5 text-[11px] text-mute"
+                title={job.posted_age_days != null ? `Posted ${job.posted_age_days}d ago \u2014 likely stale` : 'Likely stale'}
+              >
+                stale
+              </span>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">

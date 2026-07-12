@@ -10,6 +10,7 @@ import html
 import json
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from jobscope.core import companies
@@ -81,7 +82,8 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     # output.include_skip: true to publish them anyway.
     if not (cfg.get("output", {}) or {}).get("include_skip"):
         jobs = [j for j in jobs if (j.tier or "Skip") != "Skip"]
-    rows = [_job_record(j, store.get_enrichment(j.company) if j.company else {}, store)
+    stale_days = int((cfg.get("filters", {}) or {}).get("stale_days", 45) or 0)
+    rows = [_job_record(j, store.get_enrichment(j.company) if j.company else {}, store, stale_days)
             for j in jobs]
     overview = _overview_data(cfg, store)
     apps = _application_records(store)
@@ -278,10 +280,28 @@ def _jd_snapshot(text: str, limit: int = 6000) -> str:
     return s[: cut if cut > limit - 200 else limit].rstrip() + "\u2026"
 
 
-def _job_record(job, enr: dict, store) -> dict[str, Any]:
+def _age_days(iso: str) -> int | None:
+    """Whole days since an ISO date/datetime, or None if empty/unparseable."""
+    s = (iso or "").strip()
+    if not s:
+        return None
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            d = datetime.strptime(s[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - d).days)
+
+
+def _job_record(job, enr: dict, store, stale_days: int = 45) -> dict[str, Any]:
     salary = _fmt_salary(job)
     contacts = store.contacts_for(job.company) if job.company else []
     rationale = job.rationale or ""
+    posted_age = _age_days(job.date_posted or job.first_seen or "")
     return {
         "id": job.id,
         "title": job.title,
@@ -307,6 +327,8 @@ def _job_record(job, enr: dict, store) -> dict[str, Any]:
         "status": job.status or "open",
         "last_seen": job.last_seen or "",
         "closed_at": job.closed_at or "",
+        "posted_age_days": posted_age,
+        "stale": bool(stale_days and posted_age is not None and posted_age >= stale_days),
         "enrich": _enrich_summary(enr),
         "brief": ((enr or {}).get("brief") or {}).get("text", "") if enr else "",
         "description": _jd_snapshot(job.description),

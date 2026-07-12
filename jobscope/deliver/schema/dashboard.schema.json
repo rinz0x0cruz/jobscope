@@ -72,7 +72,8 @@
         "id", "title", "company", "location", "remote", "remote_scope", "url",
         "source", "score", "tier", "base", "salary", "size", "funding",
         "country", "place", "industry", "rationale", "blocked", "posted",
-        "first_seen", "status", "last_seen", "closed_at", "enrich", "brief",
+        "first_seen", "status", "last_seen", "closed_at", "posted_age_days",
+        "stale", "enrich", "brief",
         "description", "contacts"
       ],
       "properties": {
@@ -100,6 +101,8 @@
         "status": {"type": "string"},
         "last_seen": {"type": "string"},
         "closed_at": {"type": "string"},
+        "posted_age_days": {"type": ["integer", "null"]},
+        "stale": {"type": "boolean"},
         "enrich": {"$ref": "#/definitions/EnrichSummary"},
         "brief": {"type": "string"},
         "description": {"type": "string", "description": "Trimmed JD snapshot (issue #30); \"\" in the public build."},

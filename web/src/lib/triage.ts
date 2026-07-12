@@ -14,6 +14,9 @@ export interface TriageItem {
   location: string
   remote: boolean
   ageDays: number | null
+  /** Posted-date age; likely-stale/ghost when `stale` is set (see filters.stale_days). */
+  postedAgeDays: number | null
+  stale: boolean
   /** One-line reason this surfaced (rationale/brief), for a quick decision. */
   brief: string
   url: string
@@ -45,6 +48,8 @@ export function buildTriage(data: DashboardData, now = Date.now(), cap = 60): Tr
       location: r.location,
       remote: r.remote,
       ageDays: daysSince(r.first_seen, now),
+      postedAgeDays: r.posted_age_days,
+      stale: r.stale,
       brief: (r.brief || r.rationale || '').trim(),
       url: r.url,
     }))

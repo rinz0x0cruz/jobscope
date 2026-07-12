@@ -26,7 +26,7 @@ function row(over: Partial<JobRow> & Pick<JobRow, 'id'>): JobRow {
     title: 'Engineer', company: 'Acme', location: 'Remote', remote: true, remote_scope: '',
     url: 'https://x', source: 'x', score: 50, tier: 'Good', base: '', salary: '', size: '',
     funding: '', country: '', place: '', industry: null, rationale: 'good fit', blocked: false,
-    posted: null, first_seen: ago(1), status: 'open', last_seen: '', closed_at: '', enrich: {},
+    posted: null, first_seen: ago(1), status: 'open', last_seen: '', closed_at: '', posted_age_days: null, stale: false, enrich: {},
     brief: '', description: '', contacts: [], ...over,
   }
 }

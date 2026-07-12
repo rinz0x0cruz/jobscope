@@ -28,6 +28,8 @@ function row(over: Partial<JobRow> & Pick<JobRow, 'id'>): JobRow {
     status: 'open',
     last_seen: '',
     closed_at: '',
+    posted_age_days: null,
+    stale: false,
     enrich: {},
     brief: '',
     description: '',

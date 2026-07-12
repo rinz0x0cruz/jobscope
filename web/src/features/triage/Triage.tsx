@@ -33,8 +33,10 @@ function cx(...classes: Array<string | false | null | undefined>): string {
 
 export function Triage({ queue, onOpen, query = '' }: TriageProps) {
   const [visible, setVisible] = useState(PAGE)
+  const [hideStale, setHideStale] = useState(false)
   const filtered = useMemo(() => filterTriage(queue, query), [queue, query])
-  const items = filtered.items
+  const staleCount = useMemo(() => filtered.items.filter((i) => i.stale).length, [filtered])
+  const items = hideStale ? filtered.items.filter((i) => !i.stale) : filtered.items
 
   if (items.length === 0) {
     return (
@@ -49,9 +51,26 @@ export function Triage({ queue, onOpen, query = '' }: TriageProps) {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <p className="mb-4 text-sm text-ink-3">
-        {items.length} role{items.length === 1 ? '' : 's'} to apply to, best fit first.
-      </p>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <p className="text-sm text-ink-3">
+          {items.length} role{items.length === 1 ? '' : 's'} to apply to, best fit first.
+        </p>
+        {staleCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setHideStale((v) => !v)}
+            aria-pressed={hideStale}
+            className={cx(
+              'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+              hideStale
+                ? 'border-brand bg-brand-weak text-brand'
+                : 'border-line text-ink-3 hover:border-line-strong',
+            )}
+          >
+            {hideStale ? 'Showing fresh only' : `Hide stale (${staleCount})`}
+          </button>
+        )}
+      </div>
 
       <ul className="space-y-1.5">
         {shown.map((item, idx) => {
@@ -123,6 +142,18 @@ function TriageRow({ item, onOpen }: { item: TriageItem; onOpen: (jobId: string)
             <span>· {item.score}</span>
             {item.ageDays != null && (
               <span>· {item.ageDays === 0 ? 'today' : `${item.ageDays}d ago`}</span>
+            )}
+            {item.stale && (
+              <span
+                className="inline-flex items-center rounded-full bg-inset px-1.5 py-0.5 text-[10px] font-medium text-ink-3"
+                title={
+                  item.postedAgeDays != null
+                    ? `Posted ${item.postedAgeDays}d ago \u2014 likely stale/ghost`
+                    : 'Likely stale/ghost'
+                }
+              >
+                stale
+              </span>
             )}
           </span>
         </span>
