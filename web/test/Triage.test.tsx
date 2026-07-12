@@ -16,6 +16,8 @@ function item(over: Partial<TriageItem> & Pick<TriageItem, 'jobId'>): TriageItem
     stale: false,
     remoteMismatch: false,
     sources: [],
+    salary: '',
+    hasReferral: false,
     brief: '',
     url: 'https://x',
     ...over,

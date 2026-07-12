@@ -34,9 +34,16 @@ function cx(...classes: Array<string | false | null | undefined>): string {
 export function Triage({ queue, onOpen, query = '' }: TriageProps) {
   const [visible, setVisible] = useState(PAGE)
   const [hideStale, setHideStale] = useState(false)
+  const [hideNoSalary, setHideNoSalary] = useState(false)
   const filtered = useMemo(() => filterTriage(queue, query), [queue, query])
   const staleCount = useMemo(() => filtered.items.filter((i) => i.stale).length, [filtered])
-  const items = hideStale ? filtered.items.filter((i) => !i.stale) : filtered.items
+  const noSalaryCount = useMemo(
+    () => filtered.items.filter((i) => !i.salary.trim()).length,
+    [filtered],
+  )
+  const items = filtered.items.filter(
+    (i) => (!hideStale || !i.stale) && (!hideNoSalary || i.salary.trim() !== ''),
+  )
 
   if (items.length === 0) {
     return (
@@ -55,21 +62,22 @@ export function Triage({ queue, onOpen, query = '' }: TriageProps) {
         <p className="text-sm text-ink-3">
           {items.length} role{items.length === 1 ? '' : 's'} to apply to, best fit first.
         </p>
-        {staleCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setHideStale((v) => !v)}
-            aria-pressed={hideStale}
-            className={cx(
-              'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
-              hideStale
-                ? 'border-brand bg-brand-weak text-brand'
-                : 'border-line text-ink-3 hover:border-line-strong',
-            )}
-          >
-            {hideStale ? 'Showing fresh only' : `Hide stale (${staleCount})`}
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {staleCount > 0 && (
+            <FilterToggle
+              active={hideStale}
+              onClick={() => setHideStale((v) => !v)}
+              label={hideStale ? 'Showing fresh only' : `Hide stale (${staleCount})`}
+            />
+          )}
+          {noSalaryCount > 0 && (
+            <FilterToggle
+              active={hideNoSalary}
+              onClick={() => setHideNoSalary((v) => !v)}
+              label={hideNoSalary ? 'With salary only' : `Hide no-salary (${noSalaryCount})`}
+            />
+          )}
+        </div>
       </div>
 
       <ul className="space-y-1.5">
@@ -104,6 +112,30 @@ export function Triage({ queue, onOpen, query = '' }: TriageProps) {
         </div>
       )}
     </div>
+  )
+}
+
+function FilterToggle({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cx(
+        'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+        active ? 'border-brand bg-brand-weak text-brand' : 'border-line text-ink-3 hover:border-line-strong',
+      )}
+    >
+      {label}
+    </button>
   )
 }
 
@@ -169,6 +201,16 @@ function TriageRow({ item, onOpen }: { item: TriageItem; onOpen: (jobId: string)
                 · also on {item.sources.slice(1).join(', ')}
               </span>
             )}
+            {item.hasReferral && (
+              <span
+                className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                style={{ color: 'var(--strong)', background: 'color-mix(in srgb, var(--strong) 14%, transparent)' }}
+                title="A referral path exists for this company"
+              >
+                referral
+              </span>
+            )}
+            {!item.salary.trim() && <span>· no salary</span>}
           </span>
         </span>
       </button>

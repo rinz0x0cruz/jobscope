@@ -21,6 +21,10 @@ export interface TriageItem {
   remoteMismatch: boolean
   /** Distinct source names this role appears under (>1 = cross-source duplicate). */
   sources: string[]
+  /** Posted salary text ('' when the listing omits it). */
+  salary: string
+  /** A referral path exists (contacts present) — worth prioritizing. */
+  hasReferral: boolean
   /** One-line reason this surfaced (rationale/brief), for a quick decision. */
   brief: string
   url: string
@@ -56,6 +60,8 @@ export function buildTriage(data: DashboardData, now = Date.now(), cap = 60): Tr
       stale: r.stale,
       remoteMismatch: r.remote_mismatch,
       sources: [...new Set(r.sources.map((s) => s.source))],
+      salary: r.salary,
+      hasReferral: (r.contacts?.length ?? 0) > 0,
       brief: (r.brief || r.rationale || '').trim(),
       url: r.url,
     }))

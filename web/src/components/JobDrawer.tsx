@@ -270,6 +270,15 @@ function DrawerBody({
                 remote?
               </span>
             )}
+            {job.contacts.length > 0 && (
+              <span
+                className="rounded-full px-1.5 py-0.5 text-[11px]"
+                style={{ color: 'var(--strong)', background: 'color-mix(in srgb, var(--strong) 14%, transparent)' }}
+                title="A referral path exists for this company"
+              >
+                referral
+              </span>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
