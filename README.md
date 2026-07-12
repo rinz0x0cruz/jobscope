@@ -55,9 +55,10 @@ python -m playwright install chromium
 
 ```bash
 python -m jobscope init                          # scaffold config.yaml + data/ + .env
-# add your resume at data/resume.md, edit config.yaml (search.terms / location)
-python -m jobscope resume import data/resume.md
-python -m jobscope scan                           # scrape jobs (JobSpy)
+# add your resume at data/resume.md
+python -m jobscope resume import data/resume.md   # parse it + seed a résumé-derived search profile
+python -m jobscope profile show                   # review/edit data/profile.yaml (terms/locations drive scan)
+python -m jobscope scan                           # scrape jobs from the profile (JobSpy)
 python -m jobscope match                          # rank by fit score
 python -m jobscope enrich                         # comp / stock / reddit / news / contacts (top N)
 python -m jobscope tailor <job_id>                # tailored resume + cover letter (PDF)
@@ -77,7 +78,8 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 |---|---|
 | `init` | Scaffold `config.yaml`, `data/`, `.env` |
 | `resume import <path> [--name N]` | Parse `.md`/`.json`/`.pdf`/`.txt` into a (named) base resume |
-| `scan` | Scrape jobs for your configured searches (JobSpy) |
+| `profile [build\|show] [--resume N] [--force]` | Editable résumé-derived search profile (terms/locations/remote) that drives `scan` |
+| `scan` | Scrape jobs for your searches — the résumé profile if present, else `config.yaml` (JobSpy) |
 | `match` | Fit scoring + tiers, **multi-resume selection**, and **filters** (clearance/sponsorship/block-list) |
 | `pipeline` | scan -> match -> enrich -> prep top picks -> digest (one shot) |
 | `enrich [--job ID]` | Comp, stock/IPO, Reddit, news, Glassdoor, referral contacts, **company brief** |
