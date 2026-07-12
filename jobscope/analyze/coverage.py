@@ -234,6 +234,19 @@ def _parse_verdicts(text: str | None) -> dict[int, dict]:
     return out
 
 
+def deterministic_pct(resume: Resume, job) -> float | None:
+    """No-AI JD coverage % for baking a per-row signal into the dashboard: the
+    weighted share of the JD's requirements the resume covers, or None when the JD
+    has no extractable requirements."""
+    if resume is None:
+        return None
+    reqs = extract_requirements(job)
+    if not reqs:
+        return None
+    results = _assess_deterministic(resume, reqs)
+    return round(100 * sum(_WEIGHT[r["status"]] for r in results) / len(results), 1)
+
+
 def coverage_report(cfg, store, resume: Resume, job) -> dict:
     """Per-requirement JD coverage with a weighted % and tailoring suggestions."""
     reqs = extract_requirements(job)

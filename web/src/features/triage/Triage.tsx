@@ -211,6 +211,11 @@ function TriageRow({ item, onOpen }: { item: TriageItem; onOpen: (jobId: string)
               </span>
             )}
             {!item.salary.trim() && <span>· no salary</span>}
+            {item.coveragePct != null && (
+              <span title="How much of the JD's requirements your résumé covers (deterministic)">
+                · covers {Math.round(item.coveragePct)}%
+              </span>
+            )}
           </span>
         </span>
       </button>

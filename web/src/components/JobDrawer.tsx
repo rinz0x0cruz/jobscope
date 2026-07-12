@@ -321,6 +321,20 @@ function DrawerBody({
             ))}
           </div>
         )}
+        {job.coverage_pct != null && (
+          <div className="mt-3">
+            <div className="mb-1 flex items-center justify-between text-[11px] text-mute">
+              <span>Résumé covers this JD</span>
+              <span className="tnum text-dim">{Math.round(job.coverage_pct)}%</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-border">
+              <div
+                className="h-full rounded-full bg-accent"
+                style={{ width: `${Math.max(0, Math.min(100, job.coverage_pct))}%` }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* scrollable sections */}

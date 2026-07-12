@@ -33,6 +33,7 @@ export function jobRow(over: Partial<JobRow> & Pick<JobRow, 'id'>): JobRow {
     stale: false,
     remote_mismatch: false,
     sources: [],
+    coverage_pct: null,
     enrich: {},
     brief: '',
     description: '',

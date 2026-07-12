@@ -25,6 +25,8 @@ export interface TriageItem {
   salary: string
   /** A referral path exists (contacts present) — worth prioritizing. */
   hasReferral: boolean
+  /** Deterministic résumé-vs-JD requirement coverage %, or null if no JD. */
+  coveragePct: number | null
   /** One-line reason this surfaced (rationale/brief), for a quick decision. */
   brief: string
   url: string
@@ -62,6 +64,7 @@ export function buildTriage(data: DashboardData, now = Date.now(), cap = 60): Tr
       sources: [...new Set(r.sources.map((s) => s.source))],
       salary: r.salary,
       hasReferral: (r.contacts?.length ?? 0) > 0,
+      coveragePct: r.coverage_pct,
       brief: (r.brief || r.rationale || '').trim(),
       url: r.url,
     }))

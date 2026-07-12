@@ -83,8 +83,16 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     if not (cfg.get("output", {}) or {}).get("include_skip"):
         jobs = [j for j in jobs if (j.tier or "Skip") != "Skip"]
     stale_days = int((cfg.get("filters", {}) or {}).get("stale_days", 45) or 0)
-    rows = _dedupe([_job_record(j, store.get_enrichment(j.company) if j.company else {}, store, stale_days)
-                    for j in jobs])
+    try:
+        resumes = dict(store.list_resumes())
+    except Exception:  # noqa: BLE001
+        resumes = {}
+    default_resume = next(iter(resumes.values()), None)
+    rows = _dedupe([
+        _job_record(j, store.get_enrichment(j.company) if j.company else {}, store, stale_days,
+                    resumes.get(j.resume_base) or default_resume)
+        for j in jobs
+    ])
     overview = _overview_data(cfg, store)
     apps = _application_records(store)
     profile = _profile_data(cfg, store)
@@ -345,11 +353,15 @@ def _dedupe(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [groups[k] for k in order]
 
 
-def _job_record(job, enr: dict, store, stale_days: int = 45) -> dict[str, Any]:
+def _job_record(job, enr: dict, store, stale_days: int = 45, resume=None) -> dict[str, Any]:
     salary = _fmt_salary(job)
     contacts = store.contacts_for(job.company) if job.company else []
     rationale = job.rationale or ""
     posted_age = _age_days(job.date_posted or job.first_seen or "")
+    coverage_pct = None
+    if resume is not None:
+        from jobscope.analyze import coverage as _cov
+        coverage_pct = _cov.deterministic_pct(resume, job)
     return {
         "id": job.id,
         "title": job.title,
@@ -379,6 +391,7 @@ def _job_record(job, enr: dict, store, stale_days: int = 45) -> dict[str, Any]:
         "stale": bool(stale_days and posted_age is not None and posted_age >= stale_days),
         "remote_mismatch": _remote_mismatch(job),
         "sources": [{"source": job.source, "url": job.url}],
+        "coverage_pct": coverage_pct,
         "enrich": _enrich_summary(enr),
         "brief": ((enr or {}).get("brief") or {}).get("text", "") if enr else "",
         "description": _jd_snapshot(job.description),

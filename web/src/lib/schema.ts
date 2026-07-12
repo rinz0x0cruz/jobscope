@@ -88,6 +88,7 @@ export interface JobRow {
   stale: boolean
   remote_mismatch: boolean
   sources: JobSource[]
+  coverage_pct: number | null
   enrich: EnrichSummary
   brief: string
   description: string

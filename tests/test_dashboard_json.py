@@ -131,7 +131,7 @@ _JOB_ROW = {
     "posted": (str, type(None)), "first_seen": str, "status": str,
     "last_seen": str, "closed_at": str,
     "posted_age_days": (int, type(None)), "stale": bool,
-    "remote_mismatch": bool, "sources": list,
+    "remote_mismatch": bool, "sources": list, "coverage_pct": (int, float, type(None)),
     "enrich": dict, "brief": str,
     "description": str, "contacts": list,
 }
