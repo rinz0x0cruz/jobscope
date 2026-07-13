@@ -507,7 +507,7 @@ def is_newsletter_domain(from_domain: str) -> bool:
 # never an application-status update -- so they are dropped before the funnel.
 _TRANSACTIONAL = re.compile(
     r"(?i)\b(?:verification code|verify your email|confirm your email(?: address)?|"
-    r"your (?:otp|one[- ]time|verification|security|login|access) code|"
+    r"(?:your )?(?:otp|one[- ]time|verification|security|login|access) code|"
     r"one[- ]time (?:password|passcode|code)|\bOTP\b|"
     r"password reset|reset your password|activate your account|account activation)\b")
 

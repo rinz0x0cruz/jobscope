@@ -118,8 +118,13 @@ def test_verification_code_is_transactional():
     assert mailrules.is_transactional("Verification Code - Accenture", "Your code is: 027236")
     assert mailrules.is_transactional("Verify your email address", "")
     assert mailrules.is_transactional("Reset your password", "")
+    # a leading "Security code ..." OTP (no "your" prefix) is transactional -> dropped
+    assert mailrules.is_transactional("Security code for your application to CloudSEK", "")
+    assert mailrules.is_transactional("Security code: 483920", "")
     assert not mailrules.is_transactional(
         "Interview invitation", "Please share your availability for a call.")
+    # a real security-role application must NOT be dropped as transactional
+    assert not mailrules.is_transactional("Application received for Security Engineer", "")
 
 
 def test_real_interview_still_classifies_as_interview():
