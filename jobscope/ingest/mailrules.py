@@ -92,6 +92,7 @@ NEWSLETTER_DOMAINS: frozenset[str] = frozenset({
     "convertkit-mail2.com",
     "thinkific.com",   # online-course platform: "Training & Assessment" enrollments read as an assessment
     "leetcode.com",    # coding-practice platform: contests / daily challenges / interview-prep promos read as assessment/interview
+    "educative.io",    # interactive-course platform: "Grokking the ... Interview" course promos read as interview/confirmation
     "eatclub.in",      # food delivery: "order confirmation" receipts read as lifecycle events
 })
 

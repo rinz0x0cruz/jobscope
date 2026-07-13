@@ -311,6 +311,8 @@ def test_is_newsletter_domain():
     assert mailrules.is_newsletter_domain("eatclub.in") is True               # food-delivery receipts
     assert mailrules.is_newsletter_domain("leetcode.com") is True             # coding-practice platform
     assert mailrules.is_newsletter_domain("email.leetcode.com") is True       # marketing subdomain
+    assert mailrules.is_newsletter_domain("educative.io") is True             # interactive-course platform
+    assert mailrules.is_newsletter_domain("email.educative.io") is True       # course-promo subdomain
     assert mailrules.is_newsletter_domain("greenhouse.io") is False           # ATS, not a newsletter
     assert mailrules.is_newsletter_domain("zscaler.com") is False             # employer
     assert mailrules.is_newsletter_domain("") is False
