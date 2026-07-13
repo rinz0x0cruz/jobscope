@@ -162,6 +162,8 @@ export interface Profile {
   locations: string[]
   remote: boolean
   top_skills: string[]
+  name: string
+  available: string[]
 }
 
 // A discovered HR/recruiting contact for an applied company.

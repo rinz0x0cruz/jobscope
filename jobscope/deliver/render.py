@@ -25,14 +25,18 @@ def _profile_data(cfg: dict, store) -> dict | None:
     exists, else built on the fly from the stored résumé. ``None`` with no résumé.
     """
     from jobscope.analyze import profile as _profile
+    available = _profile.list_profiles(cfg)
     prof = _profile.load(cfg)
-    if prof:
-        return prof
-    resumes = store.list_resumes()
-    if resumes:
+    if prof is None:
+        resumes = store.list_resumes()
+        if not resumes:
+            return None
         name, resume = resumes[0]
-        return _profile.build_profile(resume, cfg, name)
-    return None
+        prof = _profile.build_profile(resume, cfg, name)
+    prof = dict(prof)
+    prof["name"] = _profile.active_name(cfg) or str(prof.get("resume") or "default")
+    prof["available"] = available or [prof["name"]]
+    return prof
 
 
 _CONTACT_CONF_RANK = {"high": 0, "medium": 1, "low": 2}

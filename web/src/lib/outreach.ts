@@ -1,6 +1,8 @@
 // Client for the local `jobscope serve` outreach endpoint. On the public static
 // site these calls 404 (no backend), so the drawer panel simply never appears.
 
+import type { Profile } from '@/lib/schema'
+
 export interface OutreachPreview {
   ok: boolean
   error?: string
@@ -109,6 +111,23 @@ export async function applicationUpdate(
     body: JSON.stringify({ job_id: jobId, ...fields }),
   })
   return (await r.json()) as ApplicationUpdateResult
+}
+
+// Switch the active search profile (the one that drives `scan`). Local `serve`
+// only; returns the freshly-active profile so the UI can update in place.
+export interface ProfileUseResult {
+  ok: boolean
+  error?: string
+  profile?: Profile
+}
+
+export async function profileUse(name: string, token: string): Promise<ProfileUseResult> {
+  const r = await fetch(api('api/profile/use'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    body: JSON.stringify({ name }),
+  })
+  return (await r.json()) as ProfileUseResult
 }
 
 // Free-text company search: resolve the employer's domain, discover HR contacts,

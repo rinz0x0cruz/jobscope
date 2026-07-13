@@ -2,12 +2,14 @@
 // résumé-profile summary, and a session lock. Client-only — theme + score format
 // persist to localStorage; nothing here mutates the dashboard data.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Lock } from 'lucide-react'
+import { toast } from 'sonner'
 import { Badge, Button, Card, Chip, Segmented } from '@/ui'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
 import { connectToken, disconnectToken, hasGitHubToken, pullLatestData } from '@/lib/refresh'
+import { localServeToken, profileUse } from '@/lib/outreach'
 import { fmtGenerated } from '@/lib/format'
 import type { Profile } from '@/lib/schema'
 
@@ -38,6 +40,35 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
   const [theme, setTheme] = useState<'light' | 'dark'>(currentTheme)
   const { format, setFormat } = useScoreFormat()
   const [tokenConnected, setTokenConnected] = useState(hasGitHubToken)
+  const [prof, setProf] = useState<Profile | null>(profile)
+  const [serveToken, setServeToken] = useState<string | null>(null)
+  const [switching, setSwitching] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    localServeToken().then((t) => live && setServeToken(t))
+    return () => {
+      live = false
+    }
+  }, [])
+
+  const switchProfile = async (name: string) => {
+    if (!serveToken || !prof || name === prof.name) return
+    setSwitching(true)
+    try {
+      const res = await profileUse(name, serveToken)
+      if (res.ok && res.profile) {
+        setProf(res.profile)
+        toast.success(`Active profile: ${name}`)
+      } else {
+        toast.error(res.error || 'Could not switch profile')
+      }
+    } catch {
+      toast.error('Could not reach jobscope serve.')
+    } finally {
+      setSwitching(false)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
@@ -72,34 +103,52 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
         </div>
       </Card>
 
-      {profile && (
+      {prof && (
         <Card title="Résumé profile">
           <div className="space-y-3 text-sm">
+            {serveToken && prof.available.length > 1 && (
+              <Field label="Active profile">
+                <select
+                  value={prof.name}
+                  onChange={(e) => void switchProfile(e.target.value)}
+                  disabled={switching}
+                  aria-label="Active search profile"
+                  className="rounded-lg border border-line bg-inset px-2 py-1 text-[13px] text-ink outline-none focus:border-line-strong disabled:opacity-50"
+                >
+                  {prof.available.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-ink-3">drives your next scan</span>
+              </Field>
+            )}
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold text-ink">{profile.resume}</span>
-              {profile.seniority && <Badge tone="brand">{profile.seniority}</Badge>}
-              {profile.years_experience > 0 && (
-                <span className="text-ink-3">{profile.years_experience} yrs</span>
+              <span className="font-semibold text-ink">{prof.resume}</span>
+              {prof.seniority && <Badge tone="brand">{prof.seniority}</Badge>}
+              {prof.years_experience > 0 && (
+                <span className="text-ink-3">{prof.years_experience} yrs</span>
               )}
             </div>
-            {profile.search_terms.length > 0 && (
+            {prof.search_terms.length > 0 && (
               <Field label="Searching for">
-                {profile.search_terms.map((t) => (
+                {prof.search_terms.map((t) => (
                   <Chip key={t}>{t}</Chip>
                 ))}
               </Field>
             )}
-            {profile.locations.length > 0 && (
+            {prof.locations.length > 0 && (
               <Field label="Locations">
-                {profile.locations.map((l) => (
+                {prof.locations.map((l) => (
                   <Chip key={l}>{l}</Chip>
                 ))}
-                {profile.remote && <Chip>Remote</Chip>}
+                {prof.remote && <Chip>Remote</Chip>}
               </Field>
             )}
-            {profile.top_skills.length > 0 && (
+            {prof.top_skills.length > 0 && (
               <Field label="Top skills">
-                {profile.top_skills.slice(0, 12).map((s) => (
+                {prof.top_skills.slice(0, 12).map((s) => (
                   <Chip key={s}>{s}</Chip>
                 ))}
               </Field>
