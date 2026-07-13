@@ -179,6 +179,51 @@ def _resolve(entry: str) -> tuple[str, str, str] | None:
     return None
 
 
+_PROBE_ORDER = ("greenhouse", "lever", "ashby")
+
+
+def _slug_variants(name: str) -> list[str]:
+    """Plausible board slugs for a company name, most-likely first."""
+    low = (name or "").lower()
+    parts = low.split()
+    compact = re.sub(r"[^a-z0-9]+", "", low)
+    hyphen = re.sub(r"[^a-z0-9]+", "-", low).strip("-")
+    first = re.sub(r"[^a-z0-9]", "", parts[0]) if parts else ""
+    out: list[str] = []
+    for s in (compact, hyphen, first):
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def resolve_board(name: str, *, provider: str | None = None,
+                  slug: str | None = None) -> tuple[str, str, str] | None:
+    """Resolve a company name to ``(display_name, provider, board_slug)``.
+
+    Priority: an explicit ``provider`` + ``slug`` -> a ``Name|provider|slug`` override
+    embedded in ``name`` or the curated :data:`COMPANY_BOARDS` map (both via
+    :func:`_resolve`) -> a best-effort probe that guesses a slug and tries
+    Greenhouse / Lever / Ashby, keeping the first board that returns any jobs.
+    Returns ``None`` when nothing yields a live board.
+    """
+    display = (name or "").strip()
+    if not display:
+        return None
+    if provider and slug:
+        return display, provider.lower().strip(), slug.strip()
+    embedded = _resolve(display)
+    if embedded:
+        return embedded
+    for slug_guess in _slug_variants(display):
+        for prov in _PROBE_ORDER:
+            try:
+                if fetch_company(display, prov, slug_guess):
+                    return display, prov, slug_guess
+            except Exception:  # noqa: BLE001 - best-effort probe, a dead slug just yields nothing
+                continue
+    return None
+
+
 def _role_keywords(search: dict) -> set[str]:
     kws = {t.lower().strip() for t in (search.get("terms") or []) if t.strip()}
     kws |= {"software engineer", "backend", "product security", "application security",
