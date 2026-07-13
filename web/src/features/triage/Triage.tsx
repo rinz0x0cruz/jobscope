@@ -6,6 +6,7 @@
 import { useMemo, useState } from 'react'
 import { ExternalLink, MapPin } from 'lucide-react'
 import { Button } from '@/ui'
+import { CompanyScout } from '@/components/CompanyScout'
 import { filterTriage } from '@/lib/triage'
 import type { TriageItem, TriageQueue } from '@/lib/triage'
 import type { Tier } from '@/lib/schema'
@@ -45,14 +46,6 @@ export function Triage({ queue, onOpen, query = '' }: TriageProps) {
     (i) => (!hideStale || !i.stale) && (!hideNoSalary || i.salary.trim() !== ''),
   )
 
-  if (items.length === 0) {
-    return (
-      <div className="mx-auto max-w-2xl py-20 text-center text-sm text-ink-3">
-        {query ? 'No matches for that search.' : 'No new roles to apply to right now.'}
-      </div>
-    )
-  }
-
   const shown = items.slice(0, visible)
   const groups: { tier: Tier; items: TriageItem[] }[] = []
   for (const it of shown) {
@@ -63,7 +56,15 @@ export function Triage({ queue, onOpen, query = '' }: TriageProps) {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div className="mb-5 flex items-center justify-between gap-3">
+      <CompanyScout />
+
+      {items.length === 0 ? (
+        <p className="py-16 text-center text-sm text-ink-3">
+          {query ? 'No matches for that search.' : 'No new roles to apply to right now.'}
+        </p>
+      ) : (
+        <>
+          <div className="mb-5 flex items-center justify-between gap-3">
         <p className="text-sm text-ink-3">
           {items.length} role{items.length === 1 ? '' : 's'} to apply to, best fit first.
         </p>
@@ -112,6 +113,8 @@ export function Triage({ queue, onOpen, query = '' }: TriageProps) {
             Show {Math.min(PAGE, items.length - visible)} more
           </Button>
         </div>
+      )}
+        </>
       )}
     </div>
   )

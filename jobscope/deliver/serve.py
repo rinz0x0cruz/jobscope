@@ -297,6 +297,33 @@ def _build_server(cfg: dict, port: int):
             except Exception as exc:  # noqa: BLE001 - surface to the UI
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
+        def _scout(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except ValueError:
+                data = {}
+            company = str(data.get("company") or "").strip()
+            if not company:
+                self._send_json(400, {"ok": False, "error": "company required"})
+                return
+            try:
+                from jobscope.apply import scout as _scout
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    res = _scout.scout(
+                        cfg, store, company,
+                        provider=(data.get("provider") or None),
+                        slug=(data.get("slug") or None),
+                        save=bool(data.get("save")),
+                        limit=int(data.get("limit") or 40))
+                self._send_json(200, res)
+            except Exception as exc:  # noqa: BLE001 - surface to the UI
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
         # -- routes -------------------------------------------------------
         def do_GET(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0].split("#", 1)[0]
@@ -329,6 +356,9 @@ def _build_server(cfg: dict, port: int):
                 return
             if route == "/api/profile/use":
                 self._profile_use()
+                return
+            if route == "/api/scout":
+                self._scout()
                 return
             if route != "/api/refresh":
                 self.send_error(404)

@@ -67,6 +67,14 @@ def cmd_profile(args, cfg):
                            force=getattr(args, "force", False))
 
 
+def cmd_scout(args, cfg):
+    from ..apply import scout
+    with _store(args, cfg) as store:
+        return scout.run(cfg, store, args.company, provider=getattr(args, "provider", None),
+                         slug=getattr(args, "slug", None), save=getattr(args, "save", False),
+                         limit=getattr(args, "limit", 20))
+
+
 def cmd_scan(args, cfg):
     from ..ingest import scrape
     with _store(args, cfg) as store:
@@ -374,6 +382,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--force", action="store_true",
                     help="Overwrite an existing profile when building")
     sp.set_defaults(func=cmd_profile)
+
+    sp = sub.add_parser("scout",
+                        help="Scout a company's ATS board (Greenhouse/Lever/Ashby) and rank openings vs your active profile")
+    sp.add_argument("company", help="Company name (or 'Name|provider|slug' to force a board)")
+    sp.add_argument("--provider", default=None, help="ATS provider: greenhouse | lever | ashby")
+    sp.add_argument("--slug", default=None, help="Board slug (skips name resolution)")
+    sp.add_argument("--save", action="store_true", help="Save matching openings into your pipeline")
+    sp.add_argument("--limit", type=int, default=20, help="Max openings to show (default 20)")
+    sp.set_defaults(func=cmd_scout)
 
     sub.add_parser("scan", help="Scrape jobs for your searches").set_defaults(func=cmd_scan)
     sub.add_parser("match", help="Score jobs against your resume").set_defaults(func=cmd_match)
