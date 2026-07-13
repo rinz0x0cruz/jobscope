@@ -63,6 +63,7 @@ def cmd_profile(args, cfg):
     with _store(args, cfg) as store:
         return profile.run(cfg, store, action=getattr(args, "action", "show"),
                            resume_name=getattr(args, "resume", None),
+                           name=getattr(args, "name", None),
                            force=getattr(args, "force", False))
 
 
@@ -363,13 +364,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_resume)
 
     sp = sub.add_parser("profile",
-                        help="Build/show the editable résumé-derived search profile that drives scan")
-    sp.add_argument("action", nargs="?", choices=["build", "show"], default="show",
-                    help="build (from your résumé) or show (default)")
+                        help="Manage résumé-derived search profiles that drive scan (build/show/list/use)")
+    sp.add_argument("action", nargs="?", choices=["build", "show", "list", "use"], default="show",
+                    help="build (from a résumé), show (default), list all, or use <name> to switch")
+    sp.add_argument("name", nargs="?", default=None,
+                    help="Profile name -- the target for `use`, or a name for `build`")
     sp.add_argument("--resume", default=None, metavar="NAME",
                     help="Which base résumé to build from (default: your primary)")
     sp.add_argument("--force", action="store_true",
-                    help="Overwrite an existing profile.yaml when building")
+                    help="Overwrite an existing profile when building")
     sp.set_defaults(func=cmd_profile)
 
     sub.add_parser("scan", help="Scrape jobs for your searches").set_defaults(func=cmd_scan)

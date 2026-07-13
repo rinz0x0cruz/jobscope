@@ -41,9 +41,40 @@ _ROLE_HINTS: list[tuple[tuple[str, ...], str]] = [
 _MAX_TERMS = 6
 
 
-def _profile_path(cfg: dict) -> str:
+def _data_dir(cfg: dict) -> str:
     db = (cfg.get("output", {}) or {}).get("db_path", "data/jobscope.db")
-    return os.path.join(os.path.dirname(db) or ".", "profile.yaml")
+    return os.path.dirname(db) or "."
+
+
+def _profiles_dir(cfg: dict) -> str:
+    """Directory holding one YAML per named search profile (the multi-profile store)."""
+    return os.path.join(_data_dir(cfg), "profiles")
+
+
+def _legacy_path(cfg: dict) -> str:
+    """Pre-multi-profile single file, migrated into profiles/ on first access."""
+    return os.path.join(_data_dir(cfg), "profile.yaml")
+
+
+def _active_path(cfg: dict) -> str:
+    return os.path.join(_profiles_dir(cfg), ".active")
+
+
+_NAME_RE = re.compile(r"[^a-z0-9_-]+")
+
+
+def _slug(name: str) -> str:
+    s = _NAME_RE.sub("-", (name or "").strip().lower()).strip("-")
+    return s or "default"
+
+
+def _profile_file(cfg: dict, name: str) -> str:
+    return os.path.join(_profiles_dir(cfg), f"{_slug(name)}.yaml")
+
+
+def _profile_path(cfg: dict) -> str:
+    """Filesystem path of the ACTIVE profile (back-compat helper)."""
+    return _profile_file(cfg, active_name(cfg) or "default")
 
 
 def _broaden_title(title: str) -> str:
@@ -101,11 +132,12 @@ def build_profile(resume: Resume, cfg: dict, name: str) -> dict:
 def write_profile(path: str, prof: dict) -> str:
     import yaml
     header = (
-        f'# jobscope search profile -- built from résumé "{prof.get("resume", "default")}".\n'
-        "# `jobscope scan` fetches jobs from this file. Edit search_terms / locations /\n"
-        "# remote below, then re-run scan. Regenerate with `jobscope profile build --force`\n"
-        "# (overwrites your edits). `top_skills`/`seniority` mirror your résumé for\n"
-        "# reference -- matching reads the résumé itself, not this file.\n\n")
+        f'# jobscope search profile "{prof.get("resume", "default")}".\n'
+        "# `jobscope scan` fetches jobs from the ACTIVE profile. Edit search_terms /\n"
+        "# locations / remote below, then re-run scan. Keep several profiles side by side\n"
+        "# and switch with `jobscope profile use <name>` (`profile list` to see them).\n"
+        "# Regenerate with `profile build --force`. top_skills/seniority mirror your\n"
+        "# résumé for reference -- matching reads the résumé itself, not this file.\n\n")
     body = yaml.safe_dump(prof, sort_keys=False, allow_unicode=True, default_flow_style=False)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
@@ -113,9 +145,8 @@ def write_profile(path: str, prof: dict) -> str:
     return path
 
 
-def load(cfg: dict) -> dict | None:
-    """Return the stored search profile dict, or None if there isn't one."""
-    path = _profile_path(cfg)
+def _load_named(cfg: dict, name: str) -> dict | None:
+    path = _profile_file(cfg, name)
     if not os.path.exists(path):
         return None
     import yaml
@@ -124,12 +155,89 @@ def load(cfg: dict) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def load(cfg: dict) -> dict | None:
+    """Return the ACTIVE search profile dict, or None if there isn't one."""
+    _migrate_legacy(cfg)
+    name = active_name(cfg)
+    return _load_named(cfg, name) if name else None
+
+
+def _migrate_legacy(cfg: dict) -> None:
+    """Move a pre-multi-profile ``profile.yaml`` into ``profiles/<name>.yaml`` once,
+    so upgrading keeps your existing (possibly edited) profile as the active one."""
+    legacy = _legacy_path(cfg)
+    if not os.path.exists(legacy):
+        return
+    dirp = _profiles_dir(cfg)
+    if os.path.isdir(dirp) and any(f.endswith(".yaml") for f in os.listdir(dirp)):
+        return  # already on the multi-profile layout
+    name = "default"
+    try:
+        import yaml
+        with open(legacy, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        if isinstance(data, dict) and data.get("resume"):
+            name = _slug(str(data["resume"]))
+    except Exception:  # noqa: BLE001
+        pass
+    os.makedirs(dirp, exist_ok=True)
+    try:
+        os.replace(legacy, _profile_file(cfg, name))
+    except OSError:
+        return
+    _write_active(cfg, name)
+
+
+def list_profiles(cfg: dict) -> list[str]:
+    """All stored profile names, sorted (migrates a legacy single file first)."""
+    _migrate_legacy(cfg)
+    dirp = _profiles_dir(cfg)
+    if not os.path.isdir(dirp):
+        return []
+    return sorted(f[:-5] for f in os.listdir(dirp) if f.endswith(".yaml"))
+
+
+def active_name(cfg: dict) -> str | None:
+    """The active profile name: the ``.active`` pointer, else the first stored one."""
+    _migrate_legacy(cfg)
+    ap = _active_path(cfg)
+    if os.path.exists(ap):
+        try:
+            with open(ap, "r", encoding="utf-8") as fh:
+                n = _slug(fh.read())
+            if os.path.exists(_profile_file(cfg, n)):
+                return n
+        except Exception:  # noqa: BLE001
+            pass
+    names = list_profiles(cfg)
+    return names[0] if names else None
+
+
+def _write_active(cfg: dict, name: str) -> None:
+    os.makedirs(_profiles_dir(cfg), exist_ok=True)
+    with open(_active_path(cfg), "w", encoding="utf-8") as fh:
+        fh.write(_slug(name))
+
+
+def set_active(cfg: dict, name: str) -> bool:
+    """Switch the active profile. Returns False when ``name`` has no stored profile."""
+    if not os.path.exists(_profile_file(cfg, name)):
+        return False
+    _write_active(cfg, name)
+    return True
+
+
 def ensure_seeded(cfg: dict, resume: Resume, name: str) -> str | None:
-    """Seed profile.yaml from a résumé on first import; never clobber existing edits."""
-    path = _profile_path(cfg)
+    """Seed ``profiles/<name>.yaml`` the first time that résumé name is imported;
+    never clobbers an existing profile. Makes it active when nothing else is."""
+    _migrate_legacy(cfg)
+    path = _profile_file(cfg, name)
     if os.path.exists(path):
         return None
-    return write_profile(path, build_profile(resume, cfg, name))
+    write_profile(path, build_profile(resume, cfg, name))
+    if not os.path.exists(_active_path(cfg)):
+        _write_active(cfg, name)
+    return path
 
 
 def apply_to_search(search: dict, prof: dict) -> dict:
@@ -166,30 +274,68 @@ def render(prof: dict, path: str) -> str:
 
 
 def run(cfg: dict, store, *, action: str = "show",
-        resume_name: str | None = None, force: bool = False) -> int:
-    path = _profile_path(cfg)
+        resume_name: str | None = None, name: str | None = None,
+        force: bool = False) -> int:
+    _migrate_legacy(cfg)
+
+    if action == "list":
+        names = list_profiles(cfg)
+        if not names:
+            print("  no search profiles yet. Run `jobscope profile build` to create one.")
+            return 0
+        active = active_name(cfg)
+        print(f"  search profiles ({len(names)}):")
+        for n in names:
+            prof = _load_named(cfg, n) or {}
+            terms = prof.get("search_terms") or []
+            mark = "*" if n == active else " "
+            print(f"   {mark} {n:<16} {len(terms)} role(s): {', '.join(terms[:4]) or '(none)'}")
+        print("  switch the active one with `jobscope profile use <name>`.")
+        return 0
+
+    if action == "use":
+        target = name or resume_name
+        if not target:
+            print("  usage: jobscope profile use <name>   (`jobscope profile list` to see them)")
+            return 1
+        if set_active(cfg, target):
+            print(f"  active search profile -> {_slug(target)}   `jobscope scan` now uses it.")
+            return 0
+        print(f"  no profile named '{target}'. Run `jobscope profile list` to see options.")
+        return 1
 
     if action == "build":
         resume = store.get_resume(resume_name) if resume_name else store.get_resume()
         if resume is None:
             print("  no résumé found. Run `resume import <path>` first.")
             return 1
+        built_from = resume_name or _primary_name(store)
+        pname = _slug(name or built_from)
+        path = _profile_file(cfg, pname)
         if os.path.exists(path) and not force:
-            print(f"  profile already exists: {path}")
-            print("  edit it directly, or regenerate with `jobscope profile build --force`")
+            print(f"  profile '{pname}' already exists: {path}")
+            print("  edit it directly, regenerate with `--force`, or switch with `profile use`.")
             return 0
-        name = resume_name or _primary_name(store)
-        prof = build_profile(resume, cfg, name)
+        prof = build_profile(resume, cfg, built_from)
         write_profile(path, prof)
-        print(f"  built search profile -> {path}")
+        if not os.path.exists(_active_path(cfg)):
+            _write_active(cfg, pname)
+        print(f"  built search profile '{pname}' -> {path}")
         print(render(prof, path))
+        if active_name(cfg) != pname:
+            print(f"  make it active with `jobscope profile use {pname}`.")
         return 0
 
-    prof = load(cfg)
+    # show (default) -- the active profile, or a named one when `name` is given
+    target = name or active_name(cfg)
+    prof = _load_named(cfg, target) if target else None
     if prof is None:
-        print(f"  no search profile yet. Run `jobscope profile build` to create {path}")
+        print("  no search profile yet. Run `jobscope profile build` to create one.")
         return 1
-    print(render(prof, path))
+    print(render(prof, _profile_file(cfg, target)))
+    others = [n for n in list_profiles(cfg) if n != target]
+    if others:
+        print(f"  other profiles: {', '.join(others)}   (switch with `profile use <name>`)")
     return 0
 
 
