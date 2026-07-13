@@ -111,3 +111,54 @@ def test_run_build_show_force_and_errors():
         assert "# my edit" not in open(path, encoding="utf-8").read()
         assert profile.run(cfg, store, action="show") == 0
         store.close()
+
+
+def test_multi_profile_build_list_and_switch():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        store = Store(cfg["output"]["db_path"])
+        store.save_resume(_resume(), name="research")
+        store.save_resume(_resume(titles=["Security Consultant"]), name="consulting")
+        assert profile.run(cfg, store, action="build", resume_name="research") == 0
+        assert profile.run(cfg, store, action="build", resume_name="consulting") == 0
+        names = profile.list_profiles(cfg)
+        assert "research" in names and "consulting" in names and len(names) >= 2
+        # the first profile built stays active until you switch
+        assert profile.active_name(cfg) == "research"
+        assert profile.load(cfg)["resume"] == "research"
+        # switching changes what scan/load see
+        assert profile.run(cfg, store, action="use", name="consulting") == 0
+        assert profile.active_name(cfg) == "consulting"
+        assert profile.load(cfg)["resume"] == "consulting"
+        # an unknown name fails and leaves the active profile unchanged
+        assert profile.run(cfg, store, action="use", name="nope") == 1
+        assert profile.active_name(cfg) == "consulting"
+        # listing works and building a 3rd keeps the others
+        assert profile.run(cfg, store, action="list") == 0
+        store.close()
+
+
+def test_ensure_seeded_multiple_names_keeps_first_active():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        p1 = profile.ensure_seeded(cfg, _resume(), "research")
+        p2 = profile.ensure_seeded(cfg, _resume(titles=["Security Consultant"]), "consulting")
+        assert p1 and p2 and p1 != p2
+        assert set(profile.list_profiles(cfg)) == {"research", "consulting"}
+        assert profile.active_name(cfg) == "research"       # first seeded is active
+
+
+def test_legacy_single_profile_migrates_into_store():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        # simulate a pre-multi-profile install: one data/profile.yaml
+        legacy = profile._legacy_path(cfg)
+        os.makedirs(os.path.dirname(legacy), exist_ok=True)
+        profile.write_profile(legacy, profile.build_profile(_resume(), cfg, "research"))
+        assert os.path.exists(legacy)
+        # first access migrates it into profiles/research.yaml and makes it active
+        loaded = profile.load(cfg)
+        assert loaded is not None and loaded["resume"] == "research"
+        assert not os.path.exists(legacy)                   # moved, not copied
+        assert profile.list_profiles(cfg) == ["research"]
+        assert profile.active_name(cfg) == "research"
