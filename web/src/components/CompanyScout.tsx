@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react'
-import { ExternalLink, Loader2, Radar, Save } from 'lucide-react'
+import { ExternalLink, Loader2, Mail, Radar, Save, Send } from 'lucide-react'
 import { toast } from 'sonner'
-import { localServeToken } from '@/lib/outreach'
+import {
+  companyOutreachPreview,
+  companyOutreachSend,
+  localServeToken,
+  type CompanyOutreach,
+} from '@/lib/outreach'
 import { scoutCompany, type ScoutResponse } from '@/lib/scout'
 import { TIER_COLOR } from '@/lib/schema'
 
@@ -18,6 +23,12 @@ export function CompanyScout() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [res, setRes] = useState<ScoutResponse | null>(null)
+  const [reach, setReach] = useState<CompanyOutreach | null>(null)
+  const [reaching, setReaching] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [to, setTo] = useState('')
+  const [subject, setSubject] = useState('')
+  const [body, setBody] = useState('')
 
   useEffect(() => {
     let live = true
@@ -37,6 +48,7 @@ export function CompanyScout() {
     try {
       const r = await scoutCompany(name, token, { save, limit: 30 })
       setRes(r)
+      if (!save) setReach(null)
       if (!r.ok) toast.error(r.error || 'Scout failed')
       else if (save) toast.success(`Saved ${r.saved ?? 0} role${r.saved === 1 ? '' : 's'} to your pipeline`)
     } catch {
@@ -47,6 +59,47 @@ export function CompanyScout() {
     }
   }
 
+  const reachOut = async () => {
+    const name = res?.company
+    if (!name) return
+    setReaching(true)
+    try {
+      const r = await companyOutreachPreview(name, token)
+      setReach(r)
+      if (r.ok) {
+        setTo(r.candidates?.[0]?.email ?? '')
+        setSubject(r.subject ?? '')
+        setBody(r.body ?? '')
+      } else {
+        toast.error(r.error || 'No contacts found')
+      }
+    } catch {
+      toast.error('Could not reach jobscope serve.')
+    } finally {
+      setReaching(false)
+    }
+  }
+
+  const sendMail = async () => {
+    const name = res?.company
+    if (!name || !to.trim()) return
+    setSending(true)
+    try {
+      const r = await companyOutreachSend(name, token, { to, subject, body })
+      if (r.ok && r.sent) {
+        toast.success(`Emailed ${r.to}`)
+        setReach(null)
+      } else {
+        toast.error(r.error || 'Send failed')
+      }
+    } catch {
+      toast.error('Send failed')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const mailtoHref = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
   const matches = (res?.results ?? []).filter((r) => r.tier !== 'Skip')
 
   return (
@@ -87,16 +140,26 @@ export function CompanyScout() {
               <span className="text-ink-3">[{res.provider}/{res.slug}]</span> — {res.count} on board,{' '}
               <span className="text-ink-2">{res.matched} match</span> your profile
             </span>
-            {matches.length > 0 && (
+            <div className="flex shrink-0 items-center gap-2">
+              {matches.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void run(true)}
+                  disabled={saving}
+                  className="inline-flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-[11px] font-medium text-brand transition hover:border-brand disabled:opacity-50"
+                >
+                  {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save {matches.length} to pipeline
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => void run(true)}
-                disabled={saving}
-                className="inline-flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-[11px] font-medium text-brand transition hover:border-brand disabled:opacity-50"
+                onClick={() => void reachOut()}
+                disabled={reaching}
+                className="inline-flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-[11px] font-medium text-ink-2 transition hover:border-line-strong hover:text-ink disabled:opacity-50"
               >
-                {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save {matches.length} to pipeline
+                {reaching ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />} Reach out
               </button>
-            )}
+            </div>
           </div>
 
           {matches.length === 0 ? (
@@ -136,6 +199,86 @@ export function CompanyScout() {
                 </li>
               ))}
             </ul>
+          )}
+
+          {reach && reach.ok && (
+            <div className="mt-3 rounded-lg border border-line bg-inset/40 p-3">
+              <div className="mb-2 flex items-center gap-2 text-[12px] text-ink-3">
+                <Mail size={13} className="text-brand" aria-hidden="true" />
+                <span>
+                  Email HR at <span className="text-ink-2">{reach.company}</span>
+                  {reach.domain ? <span className="text-ink-3"> · {reach.domain}</span> : null}
+                </span>
+              </div>
+              {(reach.candidates?.length ?? 0) > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {reach.candidates!.map((c) => (
+                    <button
+                      key={c.email}
+                      type="button"
+                      onClick={() => setTo(c.email)}
+                      title={`${c.confidence} confidence \u00b7 ${c.source}${c.note ? ' \u2014 ' + c.note : ''}`}
+                      className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
+                        c.email === to
+                          ? 'border-brand bg-brand-weak text-brand'
+                          : 'border-line text-ink-2 hover:border-line-strong'
+                      }`}
+                    >
+                      {c.email}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-2">
+                <input
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  placeholder="recruiter@company.com"
+                  className="w-full rounded-lg border border-line bg-panel px-2 py-1.5 text-[13px] text-ink outline-none focus:border-line-strong"
+                />
+                <input
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="Subject"
+                  className="w-full rounded-lg border border-line bg-panel px-2 py-1.5 text-[13px] text-ink outline-none focus:border-line-strong"
+                />
+                <textarea
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  rows={5}
+                  className="w-full resize-y rounded-lg border border-line bg-panel px-2 py-1.5 text-[13px] leading-relaxed text-ink outline-none focus:border-line-strong"
+                />
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <a
+                  href={mailtoHref}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-panel px-3 py-1.5 text-[12px] font-medium text-ink transition hover:border-line-strong"
+                >
+                  <ExternalLink size={13} aria-hidden="true" /> Open in mail app
+                </a>
+                {reach.sendable && (
+                  <button
+                    type="button"
+                    onClick={() => void sendMail()}
+                    disabled={sending || !to.trim()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-inset px-3 py-1.5 text-[12px] font-medium text-brand transition hover:border-brand disabled:opacity-50"
+                  >
+                    {sending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} Send with résumé
+                  </button>
+                )}
+                {reach.resume ? (
+                  <span className="text-[11px] text-ink-3">attaches {reach.resume}</span>
+                ) : null}
+                {!reach.sendable ? (
+                  <span className="text-[11px] text-ink-3">sending is off — use your mail app</span>
+                ) : null}
+              </div>
+            </div>
+          )}
+          {reach && !reach.ok && (
+            <p className="mt-2 text-[12px]" style={{ color: 'var(--stretch)' }}>
+              {reach.error}
+            </p>
           )}
         </div>
       )}
