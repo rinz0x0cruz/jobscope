@@ -146,6 +146,9 @@ export interface Application {
   applied_at: string
   updated: string
   source: string
+  interview_at: string
+  salary_offered: string
+  offer_accepted: string
   timeline: ApplicationEvent[]
 }
 

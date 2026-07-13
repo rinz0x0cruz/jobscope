@@ -26,7 +26,7 @@ const TIER_COLOR: Record<Tier, string> = {
   Skip: 'var(--skip)',
 }
 
-type BoardView = 'table' | 'columns'
+type BoardView = 'table' | 'columns' | 'offers'
 
 /**
  * The Board surface: the applied pipeline as either a scannable table (default,
@@ -35,6 +35,12 @@ type BoardView = 'table' | 'columns'
 export function Board({ columns, onOpen }: BoardProps) {
   const [view, setView] = useState<BoardView>('table')
   const total = columns.reduce((n, col) => n + col.cards.length, 0)
+  // Roles with a recorded offer (offer stage, or comp/decision captured earlier),
+  // gathered across stages for the side-by-side compare view.
+  const offers = columns
+    .flatMap((col) => col.cards)
+    .filter((c) => c.stage === 'offer' || c.salaryOffered || c.offerAccepted)
+  const showOffers = view === 'offers' && offers.length > 0
   return (
     <div className="flex h-[calc(100dvh-7rem)] flex-col gap-3">
       <div className="flex shrink-0 items-center justify-between gap-3">
@@ -44,21 +50,88 @@ export function Board({ columns, onOpen }: BoardProps) {
         <Segmented
           ariaLabel="Board view"
           value={view}
-          onChange={(v) => setView(v === 'columns' ? 'columns' : 'table')}
+          onChange={(v) => setView(v as BoardView)}
           options={[
             { value: 'table', label: 'Table' },
             { value: 'columns', label: 'Columns' },
+            ...(offers.length ? [{ value: 'offers', label: 'Offers' }] : []),
           ]}
         />
       </div>
       <div className="min-h-0 flex-1">
-        {view === 'columns' ? (
+        {showOffers ? (
+          <OffersCompare offers={offers} onOpen={onOpen} />
+        ) : view === 'columns' ? (
           <BoardColumns columns={columns} onOpen={onOpen} />
         ) : (
           <BoardTable columns={columns} onOpen={onOpen} />
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Offer comparison (#9): every role with a recorded offer, side by side — comp,
+ * decision, next interview, and match tier — so competing offers are easy to weigh.
+ * Each card opens the drawer, where the offer details are edited (local `serve`).
+ */
+function OffersCompare({ offers, onOpen }: { offers: BoardCard[]; onOpen: (jobId: string) => void }) {
+  return (
+    <div className="flex h-full gap-3 overflow-x-auto overflow-y-hidden pb-1">
+      {offers.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          onClick={() => onOpen(o.id)}
+          aria-label={`${o.company} — ${o.title}`}
+          className="flex w-[80vw] flex-none flex-col gap-3 rounded-card border border-line bg-panel p-4 text-left outline-none transition-colors hover:bg-inset/60 focus-visible:bg-inset/60 sm:w-[300px]"
+        >
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-ink">{o.company}</div>
+            <div className="line-clamp-2 text-[12px] text-ink-3">{o.title}</div>
+          </div>
+          <OfferDecisionBadge decision={o.offerAccepted} />
+          <dl className="grid gap-2 text-[13px]">
+            <div>
+              <dt className="text-[11px] uppercase tracking-wide text-ink-3">Comp</dt>
+              <dd className="font-medium text-ink">{o.salaryOffered || '\u2014'}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] uppercase tracking-wide text-ink-3">Next interview</dt>
+              <dd className="text-ink-2">{o.interviewAt || '\u2014'}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] uppercase tracking-wide text-ink-3">Match</dt>
+              <dd className="text-ink-2">
+                {o.tier ? <span style={{ color: TIER_COLOR[o.tier] }}>{o.tier}</span> : '\u2014'}
+                {o.score != null ? ` \u00b7 ${o.score}` : ''}
+              </dd>
+            </div>
+          </dl>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/** Colored pill for an offer decision (accepted / declined / pending), or a muted
+ *  "No decision yet" when none is recorded. */
+function OfferDecisionBadge({ decision }: { decision?: string }) {
+  const map: Record<string, { label: string; color: string }> = {
+    accepted: { label: 'Accepted', color: 'var(--good)' },
+    declined: { label: 'Declined', color: 'var(--skip)' },
+    pending: { label: 'Pending', color: 'var(--stretch)' },
+  }
+  const m = map[(decision || '').toLowerCase()]
+  if (!m) return <span className="text-[11px] text-ink-3">No decision yet</span>
+  return (
+    <span
+      className="inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[11px] font-medium"
+      style={{ color: m.color, background: `color-mix(in srgb, ${m.color} 14%, transparent)` }}
+    >
+      {m.label}
+    </span>
   )
 }
 

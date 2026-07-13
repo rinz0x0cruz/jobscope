@@ -39,6 +39,10 @@ export interface BoardCard {
   /** Number of timeline emails on the application. */
   emails?: number
   url?: string
+  /** Offer tracking (#9): comp, decision, and next interview (all free text). */
+  salaryOffered?: string
+  offerAccepted?: string
+  interviewAt?: string
 }
 
 export interface BoardColumn {
@@ -103,6 +107,9 @@ export function buildBoard(data: DashboardData, now = Date.now()): BoardColumn[]
       outreach: outreachReady.has((app.company || '').toLowerCase()) || undefined,
       emails: (app.timeline ?? []).length,
       url: row?.url,
+      salaryOffered: app.salary_offered || undefined,
+      offerAccepted: app.offer_accepted || undefined,
+      interviewAt: app.interview_at || undefined,
     })
   }
 

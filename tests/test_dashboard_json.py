@@ -142,7 +142,9 @@ _OVERVIEW = {
 
 _APPLICATION = {
     "job_id": str, "company": str, "title": str, "status": str,
-    "applied_at": str, "updated": str, "source": str, "timeline": list,
+    "applied_at": str, "updated": str, "source": str,
+    "interview_at": str, "salary_offered": str, "offer_accepted": str,
+    "timeline": list,
 }
 
 _TIMELINE_EVENT = {

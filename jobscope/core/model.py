@@ -221,6 +221,9 @@ class Application:
     source: str = ""                                         # "" = manual/prep; "inbox" = discovered from email
     outreach_at: str = ""                                    # when a recruiter outreach was sent
     outreach_to: str = ""                                    # the address the outreach went to
+    interview_at: str = ""                                   # next interview datetime (ISO or free text)
+    salary_offered: str = ""                                 # comp on an offer (free text)
+    offer_accepted: str = ""                                 # "", "accepted", or "declined"
 
 
 @dataclass

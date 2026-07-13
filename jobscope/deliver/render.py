@@ -197,6 +197,9 @@ def _application_records(store) -> list[dict[str, Any]]:
             "applied_at": a.get("applied_at") or "",
             "updated": a.get("updated") or "",
             "source": a.get("source") or "",
+            "interview_at": a.get("interview_at") or "",
+            "salary_offered": a.get("salary_offered") or "",
+            "offer_accepted": a.get("offer_accepted") or "",
             "timeline": [{
                 "date": (e.get("date") or "")[:10],
                 "signal": e.get("signal") or "",

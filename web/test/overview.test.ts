@@ -50,6 +50,9 @@ function app(over: Partial<Application> & Pick<Application, 'job_id'>): Applicat
     applied_at: '2026-07-01T00:00:00Z',
     updated: '2026-07-01T00:00:00Z',
     source: '',
+    interview_at: '',
+    salary_offered: '',
+    offer_accepted: '',
     timeline: [],
     ...over,
   }

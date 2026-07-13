@@ -8,6 +8,7 @@ import { signalColor, statusColor, statusLabel } from '@/components/applications
 import { compLabel } from '@/lib/format'
 import { scoreToGrade } from '@/lib/gamification'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
+import { OfferEditor } from '@/components/OfferEditor'
 import { RecruiterOutreach } from '@/components/RecruiterOutreach'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -208,6 +209,7 @@ function ApplicationBody({ app }: { app: Application }) {
             <p className="text-[13px] text-mute">No emails linked to this application yet.</p>
           </Section>
         )}
+        <OfferEditor app={app} />
         <RecruiterOutreach jobId={app.job_id} followup />
       </div>
     </>

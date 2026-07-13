@@ -9,7 +9,7 @@ const daysAgo = (n: number) => new Date(NOW - n * 86_400_000).toISOString()
 const row = (p: Partial<JobRow>): JobRow =>
   ({ score: 0, tier: 'Skip', first_seen: '', ...p }) as JobRow
 const app = (p: Partial<Application>): Application =>
-  ({ status: 'applied', applied_at: '', updated: '', timeline: [], ...p }) as Application
+  ({ status: 'applied', applied_at: '', updated: '', interview_at: '', salary_offered: '', offer_accepted: '', timeline: [], ...p }) as Application
 
 describe('gamification: scoreToGrade', () => {
   it('maps score bands to A–F aligned with the tier cutoffs', () => {
