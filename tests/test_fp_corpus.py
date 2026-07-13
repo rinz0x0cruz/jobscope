@@ -56,6 +56,8 @@ DROP_CASES = [
      "You are now enrolled in PURSUIT - Volunteer Training & Assessment!", ""),
     ("leetcode-interview-promo", "LeetCode", "leetcode.com",
      "Ace your next interview with LeetCode's Interview Crash Course", ""),
+    ("educative-course-promo", "Educative", "email.educative.io",
+     "Grokking the API Design Interview", ""),
 ]
 
 # Failure modes 2 & 3 -- the employer must win over the ATS/relay platform.
