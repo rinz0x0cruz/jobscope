@@ -14,6 +14,19 @@ export interface TriageItem {
   location: string
   remote: boolean
   ageDays: number | null
+  /** Posted-date age; likely-stale/ghost when `stale` is set (see filters.stale_days). */
+  postedAgeDays: number | null
+  stale: boolean
+  /** Tagged remote but the JD reads onsite/hybrid (see render._remote_mismatch). */
+  remoteMismatch: boolean
+  /** Distinct source names this role appears under (>1 = cross-source duplicate). */
+  sources: string[]
+  /** Posted salary text ('' when the listing omits it). */
+  salary: string
+  /** A referral path exists (contacts present) — worth prioritizing. */
+  hasReferral: boolean
+  /** Deterministic résumé-vs-JD requirement coverage %, or null if no JD. */
+  coveragePct: number | null
   /** One-line reason this surfaced (rationale/brief), for a quick decision. */
   brief: string
   url: string
@@ -45,6 +58,13 @@ export function buildTriage(data: DashboardData, now = Date.now(), cap = 60): Tr
       location: r.location,
       remote: r.remote,
       ageDays: daysSince(r.first_seen, now),
+      postedAgeDays: r.posted_age_days,
+      stale: r.stale,
+      remoteMismatch: r.remote_mismatch,
+      sources: [...new Set(r.sources.map((s) => s.source))],
+      salary: r.salary,
+      hasReferral: (r.contacts?.length ?? 0) > 0,
+      coveragePct: r.coverage_pct,
       brief: (r.brief || r.rationale || '').trim(),
       url: r.url,
     }))

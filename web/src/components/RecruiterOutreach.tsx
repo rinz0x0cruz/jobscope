@@ -9,7 +9,7 @@ import { localServeToken, outreachPreview, outreachSend, type OutreachPreview } 
  * hidden. Resolves a contact, lets you review/edit the tailored email, and sends
  * it with your résumé through the same guardrails as the CLI.
  */
-export function RecruiterOutreach({ jobId }: { jobId: string }) {
+export function RecruiterOutreach({ jobId, followup = false }: { jobId: string; followup?: boolean }) {
   const [token, setToken] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -38,7 +38,7 @@ export function RecruiterOutreach({ jobId }: { jobId: string }) {
   const draftFor = async (addr?: string) => {
     setLoading(true)
     try {
-      const p = await outreachPreview(jobId, token, addr)
+      const p = await outreachPreview(jobId, token, addr, followup)
       setPreview(p)
       if (p.ok) {
         setTo(p.to || addr || '')
@@ -76,7 +76,7 @@ export function RecruiterOutreach({ jobId }: { jobId: string }) {
 
   return (
     <section className="border-t border-border px-5 py-4">
-      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-mute">Email recruiter</h3>
+      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-mute">{followup ? 'Follow up' : 'Email recruiter'}</h3>
 
       {!open ? (
         <button
@@ -84,7 +84,7 @@ export function RecruiterOutreach({ jobId }: { jobId: string }) {
           onClick={start}
           className="inline-flex items-center gap-1.5 rounded-[10px] border border-border bg-bg2 px-3 py-1.5 text-[13px] font-medium text-fg transition hover:border-border-h"
         >
-          <Mail size={14} /> Find contact &amp; draft email
+          <Mail size={14} /> {followup ? 'Draft follow-up' : 'Find contact & draft email'}
         </button>
       ) : loading ? (
         <div className="flex items-center gap-2 text-[13px] text-mute">

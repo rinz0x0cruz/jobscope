@@ -71,6 +71,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "block_title_keywords": [],
         "require_title_keywords": [],  # allow-list: if set, a title matching none is filtered to Skip
         "max_age_days": 0,
+        "stale_days": 45,  # badge (not drop) postings older than N days as likely-stale/ghost; 0 = off
         "max_years_experience": 0,
     },
     "enrich": {

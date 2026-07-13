@@ -12,6 +12,9 @@ function makeApp(): Application {
     applied_at: '2026-07-08T23:36:31Z',
     updated: '2026-07-10T11:00:40Z',
     source: 'gmail',
+    interview_at: '',
+    salary_offered: '',
+    offer_accepted: '',
     timeline: [
       {
         date: '2026-07-08',

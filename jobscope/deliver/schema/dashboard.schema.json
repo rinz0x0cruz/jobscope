@@ -72,7 +72,8 @@
         "id", "title", "company", "location", "remote", "remote_scope", "url",
         "source", "score", "tier", "base", "salary", "size", "funding",
         "country", "place", "industry", "rationale", "blocked", "posted",
-        "first_seen", "status", "last_seen", "closed_at", "enrich", "brief",
+        "first_seen", "status", "last_seen", "closed_at", "posted_age_days",
+        "stale", "remote_mismatch", "sources", "coverage_pct", "enrich", "brief",
         "description", "contacts"
       ],
       "properties": {
@@ -100,6 +101,11 @@
         "status": {"type": "string"},
         "last_seen": {"type": "string"},
         "closed_at": {"type": "string"},
+        "posted_age_days": {"type": ["integer", "null"]},
+        "stale": {"type": "boolean"},
+        "remote_mismatch": {"type": "boolean"},
+        "sources": {"type": "array", "items": {"type": "object", "required": ["source", "url"], "properties": {"source": {"type": "string"}, "url": {"type": "string"}}}},
+        "coverage_pct": {"type": ["number", "null"]},
         "enrich": {"$ref": "#/definitions/EnrichSummary"},
         "brief": {"type": "string"},
         "description": {"type": "string", "description": "Trimmed JD snapshot (issue #30); \"\" in the public build."},
@@ -184,7 +190,7 @@
       "additionalProperties": false,
       "required": [
         "job_id", "company", "title", "status", "applied_at", "updated",
-        "source", "timeline"
+        "source", "interview_at", "salary_offered", "offer_accepted", "timeline"
       ],
       "properties": {
         "job_id": {"type": "string"},
@@ -194,6 +200,9 @@
         "applied_at": {"type": "string"},
         "updated": {"type": "string"},
         "source": {"type": "string"},
+        "interview_at": {"type": "string"},
+        "salary_offered": {"type": "string"},
+        "offer_accepted": {"type": "string"},
         "timeline": {"type": "array", "items": {"$ref": "#/definitions/ApplicationEvent"}}
       }
     },

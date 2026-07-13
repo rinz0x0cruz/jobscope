@@ -8,6 +8,7 @@ import { signalColor, statusColor, statusLabel } from '@/components/applications
 import { compLabel } from '@/lib/format'
 import { scoreToGrade } from '@/lib/gamification'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
+import { OfferEditor } from '@/components/OfferEditor'
 import { RecruiterOutreach } from '@/components/RecruiterOutreach'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -208,6 +209,8 @@ function ApplicationBody({ app }: { app: Application }) {
             <p className="text-[13px] text-mute">No emails linked to this application yet.</p>
           </Section>
         )}
+        <OfferEditor app={app} />
+        <RecruiterOutreach jobId={app.job_id} followup />
       </div>
     </>
   )
@@ -253,6 +256,32 @@ function DrawerBody({
             {job.place && <span className="text-mute">· {job.place}</span>}
             {job.remote_scope && <span className="text-mute">· {job.remote_scope}</span>}
             <span className="text-mute">· {job.tier}</span>
+            {job.stale && (
+              <span
+                className="rounded-full bg-bg px-1.5 py-0.5 text-[11px] text-mute"
+                title={job.posted_age_days != null ? `Posted ${job.posted_age_days}d ago \u2014 likely stale` : 'Likely stale'}
+              >
+                stale
+              </span>
+            )}
+            {job.remote_mismatch && (
+              <span
+                className="rounded-full px-1.5 py-0.5 text-[11px]"
+                style={{ color: 'var(--hot)', background: 'color-mix(in srgb, var(--hot) 14%, transparent)' }}
+                title="Tagged remote, but the description mentions onsite/hybrid"
+              >
+                remote?
+              </span>
+            )}
+            {job.contacts.length > 0 && (
+              <span
+                className="rounded-full px-1.5 py-0.5 text-[11px]"
+                style={{ color: 'var(--strong)', background: 'color-mix(in srgb, var(--strong) 14%, transparent)' }}
+                title="A referral path exists for this company"
+              >
+                referral
+              </span>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -282,6 +311,33 @@ function DrawerBody({
         >
           Apply on {job.source || 'source'} <ExternalLink size={14} />
         </a>
+        {job.sources.length > 1 && (
+          <div className="mt-2 text-[12px] text-mute">
+            Also on{' '}
+            {job.sources.slice(1).map((s, i) => (
+              <span key={s.url}>
+                {i > 0 && ', '}
+                <a href={s.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                  {s.source}
+                </a>
+              </span>
+            ))}
+          </div>
+        )}
+        {job.coverage_pct != null && (
+          <div className="mt-3">
+            <div className="mb-1 flex items-center justify-between text-[11px] text-mute">
+              <span>Résumé covers this JD</span>
+              <span className="tnum text-dim">{Math.round(job.coverage_pct)}%</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-border">
+              <div
+                className="h-full rounded-full bg-accent"
+                style={{ width: `${Math.max(0, Math.min(100, job.coverage_pct))}%` }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* scrollable sections */}

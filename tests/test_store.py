@@ -57,6 +57,30 @@ def test_application_tracking():
     store.close()
 
 
+def test_offer_tracking():
+    store = _store()
+    j = Job(source="s", title="A", company="Acme", url="u1").ensure_id()
+    store.upsert_job(j)
+    store.set_application(Application(job_id=j.id, status="offer"))
+    # set_offer upserts interview/offer fields without disturbing status
+    store.set_offer(j.id, interview_at="2026-07-20 14:00",
+                    salary_offered="$185k + 15%", offer_accepted="pending")
+    app = store.get_application(j.id)
+    assert app["status"] == "offer"
+    assert app["interview_at"] == "2026-07-20 14:00"
+    assert app["salary_offered"] == "$185k + 15%"
+    assert app["offer_accepted"] == "pending"
+    # empty values never clobber saved ones; a non-empty value overwrites
+    store.set_offer(j.id, offer_accepted="accepted")
+    app = store.get_application(j.id)
+    assert app["offer_accepted"] == "accepted"
+    assert app["salary_offered"] == "$185k + 15%"      # untouched
+    # surfaced through applications() for the dashboard emit
+    row = store.applications()[0]
+    assert row["salary_offered"] == "$185k + 15%" and row["offer_accepted"] == "accepted"
+    store.close()
+
+
 def test_ai_cache():
     store = _store()
     assert store.ai_cache_get("missing") is None

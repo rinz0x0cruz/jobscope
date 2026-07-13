@@ -16,8 +16,8 @@ class ApplicationsMixin:
             """
             INSERT INTO applications (job_id, status, package_dir, resume_path,
                 cover_path, applied_at, notes, updated, company, title, source,
-                outreach_at, outreach_to)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                outreach_at, outreach_to, interview_at, salary_offered, offer_accepted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_id) DO UPDATE SET
                 status=excluded.status, package_dir=excluded.package_dir,
                 resume_path=excluded.resume_path, cover_path=excluded.cover_path,
@@ -26,13 +26,17 @@ class ApplicationsMixin:
                 title=COALESCE(NULLIF(excluded.title, ''), applications.title),
                 source=COALESCE(NULLIF(excluded.source, ''), applications.source),
                 outreach_at=COALESCE(NULLIF(excluded.outreach_at, ''), applications.outreach_at),
-                outreach_to=COALESCE(NULLIF(excluded.outreach_to, ''), applications.outreach_to)
+                outreach_to=COALESCE(NULLIF(excluded.outreach_to, ''), applications.outreach_to),
+                interview_at=COALESCE(NULLIF(excluded.interview_at, ''), applications.interview_at),
+                salary_offered=COALESCE(NULLIF(excluded.salary_offered, ''), applications.salary_offered),
+                offer_accepted=COALESCE(NULLIF(excluded.offer_accepted, ''), applications.offer_accepted)
             """,
             (app.job_id, app.status, app.package_dir, app.resume_path,
              app.cover_path, app.applied_at, app.notes, now_iso(),
              getattr(app, "company", ""), getattr(app, "title", ""),
              getattr(app, "source", ""), getattr(app, "outreach_at", ""),
-             getattr(app, "outreach_to", "")),
+             getattr(app, "outreach_to", ""), getattr(app, "interview_at", ""),
+             getattr(app, "salary_offered", ""), getattr(app, "offer_accepted", "")),
         )
         self.conn.commit()
 
@@ -65,6 +69,23 @@ class ApplicationsMixin:
             (job_id_, ts, to_addr, now_iso()))
         self.conn.commit()
 
+    def set_offer(self, job_id_: str, *, interview_at: str = "", salary_offered: str = "",
+                  offer_accepted: str = "") -> None:
+        """Upsert offer/interview fields on an application without touching its status.
+
+        Empty values never clobber existing ones (same guard as ``set_application``),
+        so a partial update from the dashboard only writes the fields it changed."""
+        self.conn.execute(
+            "INSERT INTO applications (job_id, status, interview_at, salary_offered, "
+            "offer_accepted, updated) VALUES (?, 'new', ?, ?, ?, ?) "
+            "ON CONFLICT(job_id) DO UPDATE SET "
+            "interview_at=COALESCE(NULLIF(excluded.interview_at, ''), applications.interview_at), "
+            "salary_offered=COALESCE(NULLIF(excluded.salary_offered, ''), applications.salary_offered), "
+            "offer_accepted=COALESCE(NULLIF(excluded.offer_accepted, ''), applications.offer_accepted), "
+            "updated=excluded.updated",
+            (job_id_, interview_at, salary_offered, offer_accepted, now_iso()))
+        self.conn.commit()
+
     def last_company_outreach(self, company: str) -> Optional[str]:
         """Most recent outreach_at across this company's applications (or None)."""
         if not company:
@@ -83,6 +104,7 @@ class ApplicationsMixin:
         rows = self.conn.execute(
             "SELECT a.job_id, a.status, a.package_dir, a.resume_path, a.cover_path, "
             "a.applied_at, a.notes, a.updated, a.source, "
+            "a.interview_at, a.salary_offered, a.offer_accepted, "
             "COALESCE(NULLIF(j.company, ''), a.company) AS company, "
             "COALESCE(NULLIF(j.title, ''), a.title) AS title, "
             "j.status AS job_status, j.closed_at "

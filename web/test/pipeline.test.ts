@@ -22,6 +22,9 @@ const app = (p: Partial<Application>): Application => ({
   applied_at: p.applied_at ?? '',
   updated: p.updated ?? '',
   source: p.source ?? 'inbox',
+  interview_at: p.interview_at ?? '',
+  salary_offered: p.salary_offered ?? '',
+  offer_accepted: p.offer_accepted ?? '',
   timeline: p.timeline ?? [],
 })
 const ev = (date: string, signal: string) => ({ date, signal, subject: '', from: '', summary: '' })

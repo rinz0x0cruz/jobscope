@@ -31,7 +31,7 @@ describe('unlockDashboard', () => {
     total: 1,
     rows: [{ id: 'j1', title: 'Security Engineer', description: 'Confidential JD text', rationale: 'strong fit' }],
     overview: { funnel: { applied: 2, interview: 1 }, gaps: [], considered: 0, targets: [] },
-    applications: [{ job_id: 'j1', company: 'Acme', title: 'Security Engineer', status: 'applied', applied_at: '', updated: '', source: '', timeline: [] }],
+    applications: [{ job_id: 'j1', company: 'Acme', title: 'Security Engineer', status: 'applied', applied_at: '', updated: '', source: '', interview_at: '', salary_offered: '', offer_accepted: '', timeline: [] }],
   }
 
   it('decrypts an inline blob back to the full un-redacted dashboard', async () => {

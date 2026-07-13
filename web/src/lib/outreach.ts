@@ -62,11 +62,11 @@ export function localServeToken(): Promise<string | null> {
   return tokenProbe
 }
 
-export async function outreachPreview(jobId: string, token: string, to?: string): Promise<OutreachPreview> {
+export async function outreachPreview(jobId: string, token: string, to?: string, followup?: boolean): Promise<OutreachPreview> {
   const r = await fetch(api('api/outreach'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
-    body: JSON.stringify({ job_id: jobId, ...(to ? { to } : {}) }),
+    body: JSON.stringify({ job_id: jobId, ...(to ? { to } : {}), ...(followup ? { followup: true } : {}) }),
   })
   return (await r.json()) as OutreachPreview
 }
@@ -82,6 +82,33 @@ export async function outreachSend(
     body: JSON.stringify({ job_id: jobId, send: true, ...payload }),
   })
   return (await r.json()) as OutreachSendResult
+}
+
+// Persist offer/interview fields on a tracked application. Local `serve` only
+// (the public static site has no backend, so the offer editor stays hidden).
+export interface OfferFields {
+  interview_at?: string
+  salary_offered?: string
+  offer_accepted?: string
+}
+
+export interface ApplicationUpdateResult {
+  ok: boolean
+  error?: string
+  updated?: { job_id: string; interview_at: string; salary_offered: string; offer_accepted: string }
+}
+
+export async function applicationUpdate(
+  jobId: string,
+  token: string,
+  fields: OfferFields,
+): Promise<ApplicationUpdateResult> {
+  const r = await fetch(api('api/application/update'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    body: JSON.stringify({ job_id: jobId, ...fields }),
+  })
+  return (await r.json()) as ApplicationUpdateResult
 }
 
 // Free-text company search: resolve the employer's domain, discover HR contacts,

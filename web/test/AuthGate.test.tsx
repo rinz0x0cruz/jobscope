@@ -22,7 +22,7 @@ function row(id: string): JobRow {
     id, title: 'Role', company: 'Acme', location: '', remote: false, remote_scope: '',
     url: '', source: '', score: 0, tier: 'Good', base: '', salary: '', size: '', funding: '',
     country: '', place: '', industry: null, rationale: '', blocked: false, posted: null,
-    first_seen: '', status: 'open', last_seen: '', closed_at: '', enrich: {}, brief: '',
+    first_seen: '', status: 'open', last_seen: '', closed_at: '', posted_age_days: null, stale: false, remote_mismatch: false, sources: [], coverage_pct: null, enrich: {}, brief: '',
     description: '', contacts: [],
   }
 }

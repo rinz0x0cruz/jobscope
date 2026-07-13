@@ -203,7 +203,8 @@ def _build_server(cfg: dict, port: int):
                             subject=str(data.get("subject") or ""),
                             body=str(data.get("body") or ""), force=bool(data.get("force")))
                     else:
-                        res = outreach.api_preview(cfg, store, job_id, to=(data.get("to") or None))
+                        res = outreach.api_preview(cfg, store, job_id, to=(data.get("to") or None),
+                                                   followup=bool(data.get("followup")))
                 self._send_json(200, res)
             except Exception as exc:  # noqa: BLE001 - surface to the UI
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
@@ -239,6 +240,37 @@ def _build_server(cfg: dict, port: int):
             except Exception as exc:  # noqa: BLE001 - surface to the UI
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
+        def _application_update(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except ValueError:
+                data = {}
+            job_id = str(data.get("job_id") or "").strip()
+            if not job_id:
+                self._send_json(400, {"ok": False, "error": "job_id required"})
+                return
+            try:
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    store.set_offer(
+                        job_id,
+                        interview_at=str(data.get("interview_at") or ""),
+                        salary_offered=str(data.get("salary_offered") or ""),
+                        offer_accepted=str(data.get("offer_accepted") or ""))
+                    app = store.get_application(job_id) or {}
+                self._send_json(200, {"ok": True, "updated": {
+                    "job_id": job_id,
+                    "interview_at": app.get("interview_at") or "",
+                    "salary_offered": app.get("salary_offered") or "",
+                    "offer_accepted": app.get("offer_accepted") or "",
+                }})
+            except Exception as exc:  # noqa: BLE001 - surface to the UI
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
         # -- routes -------------------------------------------------------
         def do_GET(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0].split("#", 1)[0]
@@ -265,6 +297,9 @@ def _build_server(cfg: dict, port: int):
                 return
             if route == "/api/company-outreach":
                 self._company_outreach()
+                return
+            if route == "/api/application/update":
+                self._application_update()
                 return
             if route != "/api/refresh":
                 self.send_error(404)

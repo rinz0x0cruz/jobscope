@@ -20,17 +20,22 @@
    generated utilities reference the CSS vars at runtime, so toggling the
    `.light` / `.dark` class re-themes everything without rebuilding classes. */
 @theme inline {
-  --color-bg: var(--bg);
-  --color-bg2: var(--bg2);
-  --color-card: var(--card);
-  --color-card-h: var(--card-h);
-  --color-border: var(--border);
-  --color-border-h: var(--border-h);
-  --color-fg: var(--fg);
-  --color-dim: var(--dim);
-  --color-mute: var(--mute);
-  --color-accent: var(--accent);
-  --color-accent-dim: var(--accent-dim);
+  /* Legacy drawer utilities: the JobDrawer / OfferEditor / RecruiterOutreach
+     panels are the only consumers of these v1 class names. Point them at the v2
+     warm-neutral tokens so the drawer matches the cockpit in BOTH themes. The
+     raw --bg/--fg/--accent vars are untouched, so the foundation aliases and the
+     focus ring keep their own values. */
+  --color-bg: var(--inset);
+  --color-bg2: var(--inset);
+  --color-card: var(--panel);
+  --color-card-h: var(--inset);
+  --color-border: var(--line);
+  --color-border-h: var(--line-strong);
+  --color-fg: var(--ink);
+  --color-dim: var(--ink-2);
+  --color-mute: var(--ink-3);
+  --color-accent: var(--brand-coral);
+  --color-accent-dim: var(--brand-weak);
   --color-strong: var(--strong);
   --color-good: var(--good);
   --color-stretch: var(--stretch);
