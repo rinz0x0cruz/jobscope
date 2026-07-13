@@ -271,6 +271,32 @@ def _build_server(cfg: dict, port: int):
             except Exception as exc:  # noqa: BLE001 - surface to the UI
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
+        def _profile_use(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except ValueError:
+                data = {}
+            name = str(data.get("name") or "").strip()
+            if not name:
+                self._send_json(400, {"ok": False, "error": "name required"})
+                return
+            try:
+                from jobscope.analyze import profile as _profile
+                from jobscope.core.store import Store
+                from jobscope.deliver import render
+                if not _profile.set_active(cfg, name):
+                    self._send_json(404, {"ok": False, "error": f"no profile named '{name}'"})
+                    return
+                with Store(cfg["output"]["db_path"]) as store:
+                    prof = render._profile_data(cfg, store)
+                self._send_json(200, {"ok": True, "profile": prof})
+            except Exception as exc:  # noqa: BLE001 - surface to the UI
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
         # -- routes -------------------------------------------------------
         def do_GET(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0].split("#", 1)[0]
@@ -300,6 +326,9 @@ def _build_server(cfg: dict, port: int):
                 return
             if route == "/api/application/update":
                 self._application_update()
+                return
+            if route == "/api/profile/use":
+                self._profile_use()
                 return
             if route != "/api/refresh":
                 self.send_error(404)

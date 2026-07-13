@@ -53,7 +53,7 @@
     "Profile": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["resume", "seniority", "years_experience", "search_terms", "locations", "remote", "top_skills"],
+      "required": ["resume", "seniority", "years_experience", "search_terms", "locations", "remote", "top_skills", "name", "available"],
       "properties": {
         "resume": {"type": "string"},
         "seniority": {"type": "string"},
@@ -61,7 +61,9 @@
         "search_terms": {"type": "array", "items": {"type": "string"}},
         "locations": {"type": "array", "items": {"type": "string"}},
         "remote": {"type": "boolean"},
-        "top_skills": {"type": "array", "items": {"type": "string"}}
+        "top_skills": {"type": "array", "items": {"type": "string"}},
+        "name": {"type": "string"},
+        "available": {"type": "array", "items": {"type": "string"}}
       }
     },
     "Tier": {"type": "string", "enum": ["Strong", "Good", "Stretch", "Skip"]},

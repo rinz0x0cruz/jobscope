@@ -154,6 +154,7 @@ _TIMELINE_EVENT = {
 _PROFILE = {
     "resume": str, "seniority": str, "years_experience": (int, float),
     "search_terms": list, "locations": list, "remote": bool, "top_skills": list,
+    "name": str, "available": list,
 }
 
 _COMPANY_CONTACT = {

@@ -13,6 +13,8 @@ const profile: Profile = {
   locations: ['Remote', 'Berlin'],
   remote: true,
   top_skills: ['Python', 'Threat Modeling'],
+  name: 'security-consulting',
+  available: ['security-consulting'],
 }
 
 function renderSettings(over: Partial<SettingsProps> = {}) {
