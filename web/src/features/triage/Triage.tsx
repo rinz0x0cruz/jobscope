@@ -54,11 +54,16 @@ export function Triage({ queue, onOpen, query = '' }: TriageProps) {
   }
 
   const shown = items.slice(0, visible)
-  let lastTier: Tier | null = null
+  const groups: { tier: Tier; items: TriageItem[] }[] = []
+  for (const it of shown) {
+    const last = groups[groups.length - 1]
+    if (last && last.tier === it.tier) last.items.push(it)
+    else groups.push({ tier: it.tier, items: [it] })
+  }
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <div className="mx-auto max-w-6xl">
+      <div className="mb-5 flex items-center justify-between gap-3">
         <p className="text-sm text-ink-3">
           {items.length} role{items.length === 1 ? '' : 's'} to apply to, best fit first.
         </p>
@@ -80,29 +85,26 @@ export function Triage({ queue, onOpen, query = '' }: TriageProps) {
         </div>
       </div>
 
-      <ul className="space-y-1.5">
-        {shown.map((item, idx) => {
-          const header = item.tier !== lastTier ? item.tier : null
-          lastTier = item.tier
-          return (
-            <li key={item.jobId}>
-              {header && (
-                <div
-                  className={cx(
-                    'mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider',
-                    idx > 0 && 'mt-5',
-                  )}
-                  style={{ color: TIER_COLOR[header] }}
-                >
-                  <span>{header}</span>
-                  <span className="text-ink-3">{items.filter((i) => i.tier === header).length}</span>
-                </div>
-              )}
-              <TriageRow item={item} onOpen={onOpen} />
-            </li>
-          )
-        })}
-      </ul>
+      <div className="space-y-7">
+        {groups.map((group) => (
+          <section key={group.tier}>
+            <div
+              className="mb-2.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider"
+              style={{ color: TIER_COLOR[group.tier] }}
+            >
+              <span>{group.tier}</span>
+              <span className="text-ink-3">{items.filter((i) => i.tier === group.tier).length}</span>
+            </div>
+            <ul className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+              {group.items.map((item) => (
+                <li key={item.jobId}>
+                  <TriageRow item={item} onOpen={onOpen} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
 
       {visible < items.length && (
         <div className="mt-5 flex justify-center">
@@ -141,30 +143,35 @@ function FilterToggle({
 
 function TriageRow({ item, onOpen }: { item: TriageItem; onOpen: (jobId: string) => void }) {
   return (
-    <div className="group flex items-stretch gap-3 rounded-card border border-line bg-panel pr-2 transition-colors hover:border-line-strong">
+    <div className="group relative flex h-full flex-col overflow-hidden rounded-card border border-line bg-panel transition-colors hover:border-line-strong">
+      <span
+        aria-hidden="true"
+        className="absolute inset-y-0 left-0 w-1"
+        style={{ background: TIER_COLOR[item.tier] }}
+      />
       <button
         type="button"
         onClick={() => onOpen(item.jobId)}
         aria-label={`${item.company} — ${item.title}`}
-        className="flex min-w-0 flex-1 items-stretch gap-3 py-2.5 pl-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-brand"
+        className="flex min-w-0 flex-1 flex-col gap-2 py-3 pl-4 pr-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
       >
-        <span
-          aria-hidden="true"
-          className="w-1 shrink-0 rounded-full"
-          style={{ background: TIER_COLOR[item.tier] }}
-        />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            <span className="truncate text-[13px] font-semibold text-ink">{item.company}</span>
-            <span
-              className="shrink-0 text-[10px] font-semibold uppercase tracking-wide"
-              style={{ color: TIER_COLOR[item.tier] }}
-            >
-              {item.tier}
+        <span className="flex items-start justify-between gap-2">
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[14px] font-semibold leading-snug text-ink">
+              {item.title || item.company}
             </span>
+            {item.title && (
+              <span className="mt-0.5 block truncate text-[12px] text-ink-2">{item.company}</span>
+            )}
           </span>
-          <span className="mt-0.5 block truncate text-[12px] text-ink-2">{item.title}</span>
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-ink-3">
+          <span
+            className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide"
+            style={{ color: TIER_COLOR[item.tier] }}
+          >
+            {item.tier}
+          </span>
+        </span>
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-ink-3">
             {item.location && (
               <span className="inline-flex items-center gap-1">
                 <MapPin size={11} aria-hidden="true" />
@@ -217,7 +224,6 @@ function TriageRow({ item, onOpen }: { item: TriageItem; onOpen: (jobId: string)
               </span>
             )}
           </span>
-        </span>
       </button>
 
       {item.url && (
@@ -225,7 +231,7 @@ function TriageRow({ item, onOpen }: { item: TriageItem; onOpen: (jobId: string)
           href={item.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="my-2 inline-flex shrink-0 items-center gap-1 self-center rounded-card px-2.5 py-1.5 text-[12px] font-medium text-brand outline-none transition-colors hover:bg-brand-weak focus-visible:ring-2 focus-visible:ring-brand"
+          className="mb-3 ml-4 inline-flex w-fit items-center gap-1 rounded-card border border-line px-2.5 py-1.5 text-[12px] font-medium text-brand outline-none transition-colors hover:border-brand hover:bg-brand-weak focus-visible:ring-2 focus-visible:ring-brand"
         >
           <ExternalLink size={13} aria-hidden="true" />
           Apply

@@ -74,7 +74,7 @@ export function OfferEditor({ app }: { app: Application }) {
           <input
             value={salary}
             onChange={(e) => setSalary(e.target.value)}
-            placeholder="$185k + 15% bonus"
+            placeholder="₹28 LPA + 15% bonus"
             className="mt-0.5 w-full rounded-lg border border-border bg-bg px-2 py-1.5 text-[13px] text-fg outline-none focus:border-border-h"
           />
         </label>

@@ -214,7 +214,7 @@ function BoardTable({ columns, onOpen }: BoardProps) {
       <table className="w-full border-collapse text-sm">
         <thead className="sticky top-0 z-10 bg-inset">
           <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3">
-            <th className="px-3 py-2.5 font-semibold">Company</th>
+            <th className="px-3 py-2.5 font-semibold">Role</th>
             <th className="px-3 py-2.5 font-semibold">Stage</th>
             <th className="whitespace-nowrap px-3 py-2.5 font-semibold">Applied</th>
             <th className="px-3 py-2.5 font-semibold">Signals</th>
@@ -237,8 +237,8 @@ function BoardTable({ columns, onOpen }: BoardProps) {
               className="cursor-pointer bg-panel outline-none transition-colors hover:bg-inset/60 focus-visible:bg-inset/60"
             >
               <td className="px-3 py-2.5">
-                <div className="font-semibold text-ink">{r.company}</div>
-                <div className="line-clamp-1 text-[12px] text-ink-3">{r.title}</div>
+                <div className="font-semibold text-ink">{r.title || r.company}</div>
+                {r.title && <div className="line-clamp-1 text-[12px] text-ink-3">{r.company}</div>}
               </td>
               <td className="px-3 py-2.5">
                 <span
@@ -396,7 +396,7 @@ function BoardCardButton({ card, onOpen }: BoardCardButtonProps) {
 
       <div className="flex items-baseline justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-[13px] font-semibold text-ink">{card.company}</span>
+          <span className="truncate text-[13px] font-semibold text-ink">{card.title || card.company}</span>
         </span>
         {card.tier && (
           <span
@@ -408,7 +408,9 @@ function BoardCardButton({ card, onOpen }: BoardCardButtonProps) {
         )}
       </div>
 
-      <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-ink-2">{card.title}</p>
+      {card.title && (
+        <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-ink-2">{card.company}</p>
+      )}
 
       {meta.length > 0 && (
         <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-ink-3">
