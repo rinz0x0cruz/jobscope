@@ -94,6 +94,9 @@ NEWSLETTER_DOMAINS: frozenset[str] = frozenset({
     "leetcode.com",    # coding-practice platform: contests / daily challenges / interview-prep promos read as assessment/interview
     "educative.io",    # interactive-course platform: "Grokking the ... Interview" course promos read as interview/confirmation
     "eatclub.in",      # food delivery: "order confirmation" receipts read as lifecycle events
+    "github.com",      # code-host notifications: PR/CI/issue mail ("run failed", "review requested") read as interview/assessment
+    "gitlab.com",      # code-host notifications: pipeline / merge-request mail collides with lifecycle keywords
+    "bitbucket.org",   # code-host notifications: pipeline / pull-request mail collides with lifecycle keywords
 })
 
 # --- Weighted signal keywords -----------------------------------------------
@@ -227,6 +230,25 @@ def _strip_conditional(text: str) -> str:
     return _CONDITIONAL_CLAUSE.sub(" ", text or "")
 
 
+# Security-role job descriptions literally name the WORK as "<domain> assessment(s)"
+# ("gap assessments", "security/risk/vulnerability/maturity/compliance assessments"),
+# which the bare \bassessments?\b assessment cue misreads as a candidate coding test.
+# These JD phrases are stripped before the assessment signal is scored, so a recruiter
+# "regarding your interest in ... gap assessments role" is not mistaken for an
+# assessment stage. A genuine test invite -- "complete your assessment", "coding /
+# online / competency assessment" -- uses none of these qualifiers and is untouched.
+_JD_ASSESSMENT = re.compile(
+    r"(?i)\b(?:gap|risk|maturity|vulnerability|compliance|penetration|pen|threat|"
+    r"security|cyber|self|needs|readiness|control|controls|posture|audit)\s+"
+    r"(?:gap\s+)?assessments?\b")
+
+
+def _strip_jd_assessment(text: str) -> str:
+    """Drop security-JD "<domain> assessment(s)" phrases so a role description does
+    not score as a candidate assessment stage."""
+    return _JD_ASSESSMENT.sub(" ", text or "")
+
+
 # Signals that on their own mark an email as job-related even from an unknown
 # sender domain (a recruiter cold-email from a random domain is intentionally
 # NOT enough -- too noisy -- unless the domain is a known ATS/board).
@@ -250,8 +272,8 @@ _STATUS_RANK = {"new": 0, "prepared": 1, "applied": 2, "interview": 3, "offer": 
 _COMPANY_SUFFIXES = re.compile(
     r"\b(?:inc|inc\.|llc|ltd|ltd\.|limited|corp|corp\.|corporation|co|co\.|"
     r"gmbh|plc|sa|ag|bv|pvt|private|technologies|technology|labs|software|"
-    r"solutions|systems|group|holdings|team|talent|recruiting|recruitment|"
-    r"careers|hr|people|hiring)\b", re.I)
+    r"solutions|systems|group|holdings|team|talent|acquisitions?|recruiting|"
+    r"recruitment|careers|hr|people|hiring)\b", re.I)
 
 # ATS/HR platform names that get appended to a sender display ("NCR Voyix Workday",
 # "Acme Greenhouse") -- strip a trailing platform token so the employer remains.
@@ -423,6 +445,12 @@ def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool,
     stripped_body = _strip_conditional(body)
     scores["rejection"] = score_signals(subject, stripped_body)["rejection"]
     scores["interview"] = score_signals(subject, stripped_body)["interview"]
+    # Security-role JDs literally describe the job as "gap / security / risk
+    # assessments", so re-score the assessment signal with those JD phrases removed
+    # (a real test invite -- "complete your assessment", "coding assessment" -- is
+    # untouched, since it uses none of those domain qualifiers).
+    scores["assessment"] = score_signals(
+        _strip_jd_assessment(subject), _strip_jd_assessment(stripped_body))["assessment"]
     direct_interview = _interview_is_direct(subject, stripped_body)
     # 1. Terminal signals are decisive from anywhere (rarely boilerplate); the
     #    rejection must survive de-conditionalization to count here.
@@ -684,10 +712,17 @@ def _clean(s: str) -> str:
 
 
 def _valid_company(c: str) -> bool:
-    """Reject empty/too-short tokens and known body filler ("us", "this time")."""
+    """Reject empty/too-short tokens and known body filler ("us", "this time"),
+    plus job-req numbers and long role/JD phrases wrongly captured as a company
+    ("the 124720 Security Analyst Level 2 - SIEM & SOAR")."""
     key = normalize_company(c)
-    return (bool(key) and len(key) > 1
-            and key not in _COMPANY_STOP and key not in _NOREPLY_LOCALPARTS)
+    if not key or len(key) <= 1 or key in _COMPANY_STOP or key in _NOREPLY_LOCALPARTS:
+        return False
+    if re.search(r"\d{4,}", c):        # a 4+ digit run is a job-req number, not a company
+        return False
+    if len(key.split()) > 5:           # long phrases are a role / JD line, not a company
+        return False
+    return True
 
 
 def _pick(s: str) -> str:

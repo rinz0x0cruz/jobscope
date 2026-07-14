@@ -4,7 +4,7 @@ import os
 import tempfile
 
 from jobscope.core.config import load_config
-from jobscope.core.model import MailEvent
+from jobscope.core.model import Application, MailEvent
 from jobscope.core.store import Store
 from jobscope.ingest import reconcile
 
@@ -140,4 +140,63 @@ def test_reclassify_end_to_end_fixes_stuck_interview_and_drops_otp():
         statuses = {a["job_id"]: a["status"] for a in store.applications()}
         assert statuses.get("mail:acc") == "applied"          # was stuck at "interview"
         assert not any(e["signal"] == "assessment" for e in store.mail_events())
+        store.close()
+
+
+def test_reclassify_downgrades_jd_assessment_to_other_with_snippet():
+    # A recruiter mail whose only "assessment" was a security-JD phrase ("gap
+    # assessments") re-scores to "other"; with the body in hand, the demote is trusted.
+    assert reconcile.reclassify_signal(
+        {"subject": "Regarding your interest in SecOps maturity gap assessments role",
+         "snippet": "Thanks for sharing your CV and for showing interest in this role.",
+         "signal": "assessment",
+         "from_domain": "connectedcareers.services.global.ntt"}) == "other"
+
+
+def test_reclassify_keeps_stuck_assessment_without_snippet():
+    # No stored body -> an "other" re-score is not trusted, so a stuck signal stays
+    # (a real assessment whose cue lived in a dropped body must never vanish).
+    assert reconcile.reclassify_signal(
+        {"subject": "Regarding your interest in SecOps maturity gap assessments role",
+         "snippet": "", "signal": "assessment"}) == "assessment"
+
+
+def test_recompute_deletes_orphaned_mail_app():
+    # A "mail:" app whose events were all dropped (newsletter/OTP) must not linger
+    # as a ghost funnel card (LeetCode / Educative course blasts, GitHub CI mail).
+    with tempfile.TemporaryDirectory() as tmp:
+        _, store = _store(tmp)
+        store.set_application(Application(job_id="mail:ghost", status="interview",
+                                         company="LeetCode", source="inbox"))
+        reconcile.recompute(store)   # no events exist for mail:ghost
+        assert not any(a["job_id"] == "mail:ghost" for a in store.applications())
+        store.close()
+
+
+def test_recompute_keeps_non_mail_app_without_events():
+    # A scraped/manual app (non-"mail:" id) is NOT email-derived, so it survives a
+    # recompute even with no mail events linked to it.
+    with tempfile.TemporaryDirectory() as tmp:
+        _, store = _store(tmp)
+        store.set_application(Application(job_id="gh:acme:123", status="applied",
+                                         company="Acme"))
+        reconcile.recompute(store)
+        assert any(a["job_id"] == "gh:acme:123" for a in store.applications())
+        store.close()
+
+
+def test_reclassify_reparses_stale_company():
+    # A company an older rule mangled ("IBM Acquisition") heals to the re-parsed
+    # sender name, and the rebuilt app carries the corrected "IBM".
+    with tempfile.TemporaryDirectory() as tmp:
+        _, store = _store(tmp)
+        ev = MailEvent(
+            account="me@x.com", uid="9",
+            subject="Action Required:IBM Assessments for completion - 124835 Security Consultant",
+            signal="assessment", company="IBM Acquisition", role="", date="2026-07-10",
+            job_id="mail:ibm", from_name="IBM Talent Acquisition", from_domain="ibm.com",
+            snippet="Dear Mohit. Complete IBM's recorded competency assessment.").ensure_id()
+        store.upsert_mail_event(ev)
+        reconcile.reclassify(store)
+        assert store.get_application("mail:ibm")["company"] == "IBM"
         store.close()

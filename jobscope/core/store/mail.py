@@ -40,9 +40,10 @@ class MailMixin:
         return [dict(r) for r in rows]
 
     def update_mail_event(self, event_id: str, *, signal: Optional[str] = None,
-                          job_id: Optional[str] = None) -> None:
-        """Patch a stored event's classified signal and/or linked job_id in place
-        (the event id is stable, derived from account|message_id)."""
+                          job_id: Optional[str] = None, company: Optional[str] = None,
+                          role: Optional[str] = None) -> None:
+        """Patch a stored event's classified signal, linked job_id, and/or re-parsed
+        company/role in place (the event id is stable, derived from account|message_id)."""
         sets: list[str] = []
         params: list[Any] = []
         if signal is not None:
@@ -51,6 +52,12 @@ class MailMixin:
         if job_id is not None:
             sets.append("job_id = ?")
             params.append(job_id)
+        if company is not None:
+            sets.append("company = ?")
+            params.append(company)
+        if role is not None:
+            sets.append("role = ?")
+            params.append(role)
         if not sets:
             return
         params.append(event_id)

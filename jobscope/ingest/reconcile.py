@@ -98,6 +98,7 @@ def recompute(store) -> dict:
             store.delete_application(jid)
 
     n_instances = 0
+    written: set[str] = set()
     for base, evs in groups.items():
         evs.sort(key=lambda e: (e.get("date") or "", e.get("first_seen") or ""))
         for idx, inst in enumerate(split_instances(evs)):
@@ -108,7 +109,16 @@ def recompute(store) -> dict:
             status = fold_status(inst)
             if status:
                 _write_status(store, jid, base, status, inst)
+                written.add(base)
                 n_instances += 1
+    # Drop orphaned email-derived apps: a "mail:" row whose events were all dropped
+    # (newsletter/transactional) or now fold to no funnel status -- so a LeetCode /
+    # Educative course blast or a GitHub CI email never lingers as a ghost card.
+    for a in store.applications():
+        jid = a.get("job_id") or ""
+        base = jid.split("#", 1)[0]
+        if base.startswith("mail:") and base not in written:
+            store.delete_application(jid)
     return {"groups": len(groups), "instances": n_instances}
 
 
@@ -117,6 +127,16 @@ def _write_status(store, jid: str, base: str, status: str, inst: list[dict]) -> 
     applied_at = existing.get("applied_at") or ""
     if status in ("applied", "interview", "offer") and not applied_at:
         applied_at = _first(inst, "date") or now_iso()
+    # Email-derived ("mail:") apps take their company/role from the (re-parsed)
+    # events, so a healed name propagates; a scraped-job app keeps its authoritative
+    # scraped company and only backfills from events when it has none.
+    ev_company, ev_role = _first(inst, "company"), _first(inst, "role")
+    if base.startswith("mail:"):
+        company = ev_company or existing.get("company", "")
+        title = ev_role or existing.get("title", "")
+    else:
+        company = existing.get("company") or ev_company
+        title = existing.get("title") or ev_role
     store.set_application(Application(
         job_id=jid,
         status=status,
@@ -125,8 +145,8 @@ def _write_status(store, jid: str, base: str, status: str, inst: list[dict]) -> 
         cover_path=existing.get("cover_path", ""),
         applied_at=applied_at,
         notes=existing.get("notes", ""),
-        company=existing.get("company") or _first(inst, "company"),
-        title=existing.get("title") or _first(inst, "role"),
+        company=company,
+        title=title,
         source=existing.get("source", "") or "email",
         updated=now_iso(),
     ))
@@ -149,11 +169,16 @@ def reclassify_signal(ev: dict) -> str | None:
     sig = ev.get("signal") or ""
     if sig in ("interview", "assessment"):
         new = mailrules.classify_scored(subject, snippet)[0]
-        # Only downgrade to a CLEAR acknowledgment/terminal -- never to "other" --
-        # so a real interview with a generic subject (whose cue was in a body we no
-        # longer store) is never wrongly dropped from the funnel.
+        # Downgrade to a CLEAR acknowledgment/terminal whenever the re-score says so.
         if new in ("confirmation", "rejection"):
             return new
+        # A re-score to "other" is only trusted when we still have the body (a stored
+        # snippet): then a JD-phrase false assessment ("...gap assessments role") or a
+        # bare-mention interview is confidently demoted out of the funnel. Without a
+        # snippet we stay conservative -- a real interview whose cue lived in a body we
+        # no longer store must never be silently dropped.
+        if new == "other" and (snippet or "").strip():
+            return "other"
     return sig
 
 
@@ -165,9 +190,24 @@ def reclassify(store) -> dict:
         if new is None:
             store.delete_mail_event(ev["id"])
             dropped += 1
-        elif new != (ev.get("signal") or ""):
-            store.update_mail_event(ev["id"], signal=new)
-            changed += 1
+            continue
+        updates: dict[str, str] = {}
+        if new != (ev.get("signal") or ""):
+            updates["signal"] = new
+        # Re-parse company/role from the stored headers so names that older rules
+        # mangled ("IBM Talent Acquisition" -> "IBM Acquisition"; a subject glued in
+        # as the company) heal in place on the next pass.
+        co, ro = mailrules.parse_company_role(
+            ev.get("from_name") or "", ev.get("from_domain") or "",
+            ev.get("subject") or "", ev.get("snippet") or "")
+        if co and co != (ev.get("company") or ""):
+            updates["company"] = co
+        if ro and ro != (ev.get("role") or ""):
+            updates["role"] = ro
+        if updates:
+            store.update_mail_event(ev["id"], **updates)
+            if "signal" in updates:
+                changed += 1
     stats: dict[str, Any] = recompute(store)
     stats.update(reclassified=changed, dropped=dropped)
     return stats

@@ -46,6 +46,11 @@ _BODY_MIMECAST = (
     "Hi Mohit, Thank you for taking the time to apply for the R6521 Associate "
     "Threat Response Analyst role. https://mimecast.wd5.myworkdayjobs.com/Mimecast-Careers"
 )
+_BODY_IBM_124720 = (
+    "IBM Careers Dear Mohit Thank you for applying to the 124720 Security Analyst "
+    "Level 2 - SIEM & SOAR position. You're invited to complete IBM's recorded "
+    "competency interview."
+)
 
 # Failure mode 1 -- dropped by sender domain regardless of any strong signal.
 #   id, from_name, from_domain, subject, body
@@ -58,6 +63,8 @@ DROP_CASES = [
      "Ace your next interview with LeetCode's Interview Crash Course", ""),
     ("educative-course-promo", "Educative", "email.educative.io",
      "Grokking the API Design Interview", ""),
+    ("github-ci-run-notification", "Rinzler", "github.com",
+     "[rinz0x0cruz/jobscope] PR run failed: ci", ""),
 ]
 
 # Failure modes 2 & 3 -- the employer must win over the ATS/relay platform.
@@ -69,6 +76,12 @@ COMPANY_CASES = [
      "Thank You for Your Application!", "", "NCR Voyix"),
     ("mimecast-workday-tenant-url", "", "myworkday.com",
      "Thanks for your application!", _BODY_MIMECAST, "Mimecast"),
+    ("ibm-talent-acquisition-display", "IBM Talent Acquisition", "ibm.com",
+     "Action Required:IBM Assessments for completion - 124835 Security Consultant-SOC(XSIAM)",
+     "", "IBM"),
+    ("ibm-reqnum-role-is-not-company", "IBM Talent Acquisition", "ibm.com",
+     "Action Required:IBM Assessments for completion - 124720 Security Analyst Level 2 - SIEM & SOAR",
+     _BODY_IBM_124720, "IBM"),
 ]
 
 # Anchors -- genuine application mail that must never be dropped or mis-named.
@@ -140,6 +153,11 @@ SIGNAL_CASES = [
      "Engineer role on our team.", "recruiter"),
     ("content-interview-tips-not-funnel", "5 tips to ace your next interview",
      "Prepare for your upcoming interview with these tips from our blog.", "other"),
+    # -- security-role JD phrase "<domain> assessments" is NOT a candidate assessment --
+    ("jd-gap-assessments-is-not-assessment",
+     "Regarding your interest in Security Consultant - SOC / SecOps maturity gap assessments role with NTT DATA",
+     "Thanks for sharing your CV with us and for showing interest in this role. Kindly share your CV.",
+     "other"),
 ]
 
 _PLATFORM_NAMES = {"successfactors", "workday", "myworkday", "greenhouse", "lever",
