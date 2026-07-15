@@ -36,7 +36,7 @@ def test_doctor_reports_missing_required_inbox_secret(tmp_path):
     Store(cfg["output"]["db_path"]).close()
     cfg["inbox"]["enabled"] = True
     cfg["inbox"]["accounts"] = [{
-        "email": "me@example.com", "password_env": "MISSING_PASSWORD",
+        "email": "me@example.com", "password_env": "MISSING_PASSWORD",  # pragma: allowlist secret
     }]
 
     checks = doctor.inspect(
