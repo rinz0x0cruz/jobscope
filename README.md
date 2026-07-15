@@ -320,10 +320,12 @@ SMTP for email summaries.
 
 AI is optional. When enabled, jobscope talks to any OpenAI-compatible endpoint:
 
-- **Groq** (default) — fast, generous free tier
-- **Google Gemini** free tier, **OpenRouter** free models, or **Ollama** (fully local)
+- **OpenRouter** (default) — pinned Nemotron Ultra with exact Gemma/Super fallbacks
+- **Groq**, **Google Gemini**, or **Ollama** (fully local)
 
 Set `ai.enabled: true` and `JOBSCOPE_AI_API_KEY` in `.env`.
+Free model availability changes over time; Quorum never selects the random
+`openrouter/free` router, and production model changes remain manually reviewed.
 
 ### Multi-model deliberation (quorum) + seniority tie-breaker
 
