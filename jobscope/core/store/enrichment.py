@@ -48,6 +48,44 @@ class EnrichmentMixin:
         out["updated"] = row["updated"]
         return out
 
+    # ---- versioned per-job analysis -----------------------------------
+    def save_job_analysis(self, job_id: str, *, resume_base: str = "",
+                          version: int, comp: Any = None,
+                          brief: Any = None) -> None:
+        existing = self.get_job_analysis(job_id, resume_base=resume_base, version=version)
+        comp_data = comp if comp is not None else existing.get("comp")
+        brief_data = brief if brief is not None else existing.get("brief")
+        self.conn.execute(
+            """
+            INSERT INTO job_analysis
+                (job_id, resume_base, version, comp_json, brief_json, updated)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(job_id, resume_base, version) DO UPDATE SET
+                comp_json=excluded.comp_json, brief_json=excluded.brief_json,
+                updated=excluded.updated
+            """,
+            (job_id, resume_base or "", version, json.dumps(comp_data),
+             json.dumps(brief_data), now_iso()),
+        )
+        self.conn.commit()
+
+    def get_job_analysis(self, job_id: str, *, resume_base: str = "",
+                         version: int) -> dict[str, Any]:
+        row = self.conn.execute(
+            "SELECT * FROM job_analysis "
+            "WHERE job_id = ? AND resume_base = ? AND version = ?",
+            (job_id, resume_base or "", version),
+        ).fetchone()
+        if not row:
+            return {}
+        return {
+            "comp": json.loads(row["comp_json"]) if row["comp_json"] else None,
+            "brief": json.loads(row["brief_json"]) if row["brief_json"] else None,
+            "version": row["version"],
+            "resume_base": row["resume_base"],
+            "updated": row["updated"],
+        }
+
     # ---- contacts -------------------------------------------------------
     def save_contacts(self, contacts: Iterable[Any]) -> None:
         for c in contacts:

@@ -13,7 +13,8 @@ Pages. This document describes what data it holds, how it's protected, and how t
 | Referral contacts (names, public profile links) | `data/jobscope.db` | public-data leads only |
 | Application funnel + email events (recruiter name/domain, subject) | `data/jobscope.db` | see *Data minimization* |
 | Secrets (Gmail app password, API keys) | OS keychain **or** `.env` | never in `config.yaml`, never committed |
-| Published dashboard | `gh-pages` branch → GitHub Pages | **redacted** (see *Publication*) |
+| Published dashboard | `gh-pages` branch → GitHub Pages | empty locked shell + encrypted full payload (see *Publication*) |
+| Cloud refresh database | private `data` branch | current + last-known-good JSDB v1 AES-GCM ciphertext |
 
 Everything under `data/`, plus `.env` and `config.*`, is **gitignored** and never leaves your
 machine — except the redacted dashboard you explicitly publish.
@@ -62,19 +63,23 @@ machine — except the redacted dashboard you explicitly publish.
   jobscope purge --applications         # delete the tracked application funnel
   ```
 
-## Publication (the public dashboard is redacted)
+## Publication (the public dashboard is locked)
 
-- `jobscope dashboard --public` / `--emit-json --public` produces a **redacted** payload that strips:
-  referral contacts, score rationale, résumé-variant labels, archived job descriptions, the application
-  funnel, your search targets, and **all applications**. Only public-safe job info + fit scores remain.
-- The `scripts/publish.*` scripts always emit with `--public`, so an unredacted build cannot reach
-  `gh-pages`. Two tests lock this in: `test_public_build_data_redacts_all_pii` and
-  `test_public_json_has_no_pii_markers` (`tests/test_dashboard_json.py`).
+- `jobscope dashboard --public` / `--emit-json --public` produces an **empty, schema-valid shell**:
+  no job rows, referral contacts, score rationale, résumé data, descriptions, funnel, search targets,
+  or applications are present. The encrypted full payload is the only source of dashboard data.
+- The `scripts/publish.*` scripts always emit with `--public`, build from isolated temporary
+  inputs/output under a shared process lock, and run `jobscope.deliver.publish_artifact` before
+  touching `gh-pages`. The gate validates the empty shell, encrypted envelope, ciphertext hash,
+  private-field absence, and writes `deployment-manifest.json` with SHA-256 hashes.
 - **Whole-site unlock (opt-in, `-Encrypted`):** the *full* un-redacted dashboard is additionally published
   as a single **AES-256-GCM** blob (PBKDF2-SHA256, 210k iterations) in a separate, lazily-fetched
   `site.enc.json`. It is useless without your passphrase, which is entered **only in the browser** and never
   sent anywhere; decryption and the swap to un-redacted data happen client-side. The plaintext un-redacted
   payload never leaves your machine.
+- The cloud SQLite snapshot is separately encrypted as versioned JSDB AES-256-GCM. Restore and
+  save fail closed, retain one validated fallback generation, validate SQLite before use, and use
+  a guarded `force-with-lease` update. See [OPERATIONS.md](OPERATIONS.md) for recovery and rotation.
 
 ## Recruiter outreach (opt-in, not a mailer)
 
@@ -103,6 +108,7 @@ one-at-a-time action — never a bulk mailer:
 3. Keep `inbox.store_snippets: false` (the default); run `jobscope purge` periodically.
 4. Keep `data/` and `.env` owner-only; don't sync them to a shared/cloud drive unencrypted.
 5. Never commit `.env`, `config.yaml`, or `data/` (all gitignored); let the pre-commit/CI secret scan run.
+6. Run `jobscope doctor` before enabling schedules and after rotating keys or changing config.
 
 ## Deferred (not implemented)
 

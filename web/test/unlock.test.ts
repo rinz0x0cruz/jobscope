@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
 import { webcrypto } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { spawnSync } from 'node:child_process'
 import type { EncBlob } from '@/lib/schema'
 import { isEncPointer, unlockDashboard } from '@/lib/unlock'
 
@@ -48,8 +53,44 @@ describe('unlockDashboard', () => {
     await expect(unlockDashboard(blob, 'wrong-passphrase')).rejects.toBeTruthy()
   })
 
+  it('decrypts an envelope produced by build-secure-apps.mjs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jobscope-unlock-'))
+    try {
+      const dashboardPath = join(dir, 'dashboard.json')
+      const encryptedPath = join(dir, 'site.enc.json')
+      writeFileSync(dashboardPath, JSON.stringify(FULL))
+      const script = fileURLToPath(new URL('../../scripts/build-secure-apps.mjs', import.meta.url))
+      const template = fileURLToPath(new URL('../../scripts/apps-template.html', import.meta.url))
+      const result = spawnSync(
+        process.execPath,
+        [script, dashboardPath, template, '-', encryptedPath],
+        { input: 'node-to-browser-passphrase', encoding: 'utf8' },
+      )
+      expect(result.status, result.stderr).toBe(0)
+      const blob = JSON.parse(readFileSync(encryptedPath, 'utf8')) as EncBlob
+
+      const out = await unlockDashboard(blob, 'node-to-browser-passphrase')
+
+      expect(out.rows[0].description).toBe('Confidential JD text')
+      expect(out.applications).toHaveLength(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects unsupported envelope metadata before key derivation', async () => {
+    const blob = await makeBlob(FULL, 'right-passphrase')
+    await expect(unlockDashboard({ ...blob, v: 2 }, 'right-passphrase')).rejects.toThrow(
+      'unsupported encrypted payload version',
+    )
+    await expect(
+      unlockDashboard({ ...blob, kdf: 'PBKDF2-SHA1' }, 'right-passphrase'),
+    ).rejects.toThrow('unsupported encrypted payload KDF')
+  })
+
   it('detects a lazy pointer vs an inline blob', () => {
     expect(isEncPointer({ v: 1, url: 'site.enc.json' })).toBe(true)
+    expect(isEncPointer({ v: 2, url: 'site.enc.json' })).toBe(false)
     expect(isEncPointer({ v: 1, kdf: 'PBKDF2-SHA256', iter: 1, salt: 'a', iv: 'b', ct: 'c' })).toBe(false)
   })
 })

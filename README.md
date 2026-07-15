@@ -47,7 +47,7 @@ Chromium runtime used for PDF rendering and assisted apply:
 ```bash
 python -m venv .venv
 . .venv/bin/activate           # Windows: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements.lock
 python -m playwright install chromium
 ```
 
@@ -94,6 +94,7 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Sync Gmail over read-only IMAP and auto-advance the funnel from application emails |
 | `export [--format json\|csv]` | Export ranked jobs |
 | `selftest` | Offline self-tests (no network, no keys) |
+| `doctor` | Offline config, SQLite, secret-reference, toolchain, refresh, and source-health checks |
 
 ## Inbox: auto-track applications from Gmail
 
@@ -227,6 +228,13 @@ can come from `$env:JOBSCOPE_APPS_PASSPHRASE` (never committed).
 
 > GitHub Pages is **public**. Only the redacted dashboard — and, with `-Encrypted`, an
 > AES-256-GCM-encrypted applications blob (useless without your passphrase) — is published.
+
+Publication builds are process-locked and isolated in a temporary directory. Before
+anything reaches `gh-pages`, the scripts validate the empty public shell, encrypted
+envelope, ciphertext hash, private-data absence, and a deployment manifest. Run the
+same gate without pushing with `scripts/publish.ps1 -Encrypted -VerifyOnly -Force` or
+`scripts/publish.sh --encrypted --verify-only --force`. See [OPERATIONS.md](OPERATIONS.md)
+for encrypted snapshot recovery, key rotation, failed-stage repair, and rollback.
 
 ## Multi-resume matching
 

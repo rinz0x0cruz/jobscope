@@ -11,7 +11,7 @@ Write-Host "==> Upgrading pip"
 python -m pip install --upgrade pip
 
 Write-Host "==> Installing dependencies"
-pip install -r requirements.txt
+pip install -r requirements.lock
 
 Write-Host "==> Installing Chromium (Playwright) for PDF + assisted apply"
 python -m playwright install chromium

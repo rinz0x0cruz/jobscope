@@ -112,6 +112,49 @@ def test_meta_roundtrip():
     store.close()
 
 
+def test_source_health_upserts_current_state():
+    store = _store()
+    store.set_source_health(
+        "ats:Acme", provider="greenhouse", slug="acme", status="error",
+        attempts=3, status_code=503, detail="temporary failure",
+    )
+    store.set_source_health(
+        "ats:Acme", provider="greenhouse", slug="acme", status="ok",
+        item_count=12, attempts=1, status_code=200,
+    )
+
+    rows = store.source_health("ats:Acme")
+
+    assert len(rows) == 1
+    assert rows[0]["status"] == "ok" and rows[0]["item_count"] == 12
+    assert rows[0]["attempts"] == 1 and rows[0]["status_code"] == 200
+    assert rows[0]["checked_at"]
+    store.close()
+
+
+def test_job_analysis_is_versioned_by_job_and_resume():
+    store = _store()
+    store.save_job_analysis(
+        "job-1", resume_base="research", version=1,
+        comp={"range": "$100k", "source": "posting"},
+        brief={"text": "role one"},
+    )
+    store.save_job_analysis(
+        "job-2", resume_base="consulting", version=1,
+        comp={"range": "$200k", "source": "posting"},
+        brief={"text": "role two"},
+    )
+
+    first = store.get_job_analysis("job-1", resume_base="research", version=1)
+    second = store.get_job_analysis("job-2", resume_base="consulting", version=1)
+
+    assert first["comp"]["range"] == "$100k" and first["brief"]["text"] == "role one"
+    assert second["comp"]["range"] == "$200k" and second["brief"]["text"] == "role two"
+    assert store.get_job_analysis("job-1", resume_base="consulting", version=1) == {}
+    assert store.get_job_analysis("job-1", resume_base="research", version=2) == {}
+    store.close()
+
+
 def test_resume_base_persists():
     store = _store()
     j = Job(source="s", title="A", company="A", url="u1").ensure_id()

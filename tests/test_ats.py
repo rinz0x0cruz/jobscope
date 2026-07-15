@@ -55,6 +55,20 @@ def _fake_get_json(url, **_kw):
     return None
 
 
+def _patch_json(monkeypatch, fetch=_fake_get_json):
+    def get_json_result(url, **kwargs):
+        data = fetch(url, **kwargs)
+        return ats.httpx.HttpResult(
+            ok=data is not None,
+            status_code=200 if data is not None else None,
+            attempts=1,
+            data=data,
+            error="mock request failed" if data is None else "",
+        )
+
+    monkeypatch.setattr(ats.httpx, "get_json_result", get_json_result)
+
+
 def _cfg(tmp, **search_over):
     cfg = load_config(None)
     cfg["output"]["db_path"] = os.path.join(tmp, "s.db")
@@ -70,7 +84,7 @@ def test_resolve_known_and_explicit_override():
 
 
 def test_greenhouse_run_filters_by_location_and_role(monkeypatch):
-    monkeypatch.setattr(ats.httpx, "get_json", _fake_get_json)
+    _patch_json(monkeypatch)
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp, terms=["security engineer", "detection engineer"],
                    country_indeed="India", is_remote=True, companies=["databricks"])
@@ -84,7 +98,7 @@ def test_greenhouse_run_filters_by_location_and_role(monkeypatch):
 
 
 def test_description_html_is_stripped_and_unescaped(monkeypatch):
-    monkeypatch.setattr(ats.httpx, "get_json", _fake_get_json)
+    _patch_json(monkeypatch)
     jobs = ats.fetch_company("Databricks", "greenhouse", "databricks")
     ir = next(j for j in jobs if j.title.startswith("Senior Security"))
     assert ir.description == "Detect & respond to threats."
@@ -93,7 +107,7 @@ def test_description_html_is_stripped_and_unescaped(monkeypatch):
 
 
 def test_lever_remote_kept_even_when_city_named(monkeypatch):
-    monkeypatch.setattr(ats.httpx, "get_json", _fake_get_json)
+    _patch_json(monkeypatch)
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp, terms=["application security engineer"],
                    country_indeed="India", is_remote=True, companies=["Acme|lever|acme"])
@@ -107,15 +121,52 @@ def test_lever_remote_kept_even_when_city_named(monkeypatch):
 
 
 def test_ashby_remote_flag(monkeypatch):
-    monkeypatch.setattr(ats.httpx, "get_json", _fake_get_json)
+    _patch_json(monkeypatch)
     jobs = ats.fetch_company("Acme", "ashby", "acme")
     assert len(jobs) == 1
     assert jobs[0].is_remote is True
     assert jobs[0].title == "Product Security Engineer"
 
 
+def test_board_fetch_result_distinguishes_empty_error_and_invalid(monkeypatch):
+    _patch_json(monkeypatch, lambda *_a, **_k: {"jobs": []})
+    empty = ats.fetch_company_result("Acme", "greenhouse", "acme")
+    assert empty.status == ats.BoardStatus.EMPTY
+    assert empty.successful and empty.jobs == []
+
+    _patch_json(monkeypatch, lambda *_a, **_k: None)
+    failed = ats.fetch_company_result("Acme", "greenhouse", "acme")
+    assert failed.status == ats.BoardStatus.ERROR
+    assert not failed.successful and "mock request failed after 1 attempt" in failed.detail
+
+    _patch_json(monkeypatch, lambda *_a, **_k: {"unexpected": []})
+    invalid = ats.fetch_company_result("Acme", "greenhouse", "acme")
+    assert invalid.status == ats.BoardStatus.INVALID
+    assert not invalid.successful and "jobs list" in invalid.detail
+
+
+def test_board_fetch_result_preserves_partial_jobs(monkeypatch):
+    _patch_json(
+        monkeypatch,
+        lambda *_a, **_k: {"jobs": [GREENHOUSE["jobs"][0], "malformed"]},
+    )
+
+    result = ats.fetch_company_result("Acme", "greenhouse", "acme")
+
+    assert result.status == ats.BoardStatus.PARTIAL
+    assert result.successful and len(result.jobs) == 1
+    assert result.detail == "1 malformed posting(s)"
+
+
+def test_board_fetch_result_rejects_unsupported_provider():
+    result = ats.fetch_company_result("Acme", "workday", "acme")
+
+    assert result.status == ats.BoardStatus.UNSUPPORTED
+    assert not result.successful and result.jobs == []
+
+
 def test_unknown_company_is_skipped(monkeypatch):
-    monkeypatch.setattr(ats.httpx, "get_json", _fake_get_json)
+    _patch_json(monkeypatch)
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp, companies=["totally-unknown-co"])
         store = Store(cfg["output"]["db_path"])
@@ -124,7 +175,7 @@ def test_unknown_company_is_skipped(monkeypatch):
 
 
 def test_no_companies_is_noop(monkeypatch):
-    monkeypatch.setattr(ats.httpx, "get_json", _fake_get_json)
+    _patch_json(monkeypatch)
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp, companies=[])
         store = Store(cfg["output"]["db_path"])
@@ -169,8 +220,8 @@ _BOARD2 = {"jobs": [
 
 def test_taken_down_when_missing_from_board(monkeypatch):
     state = {"data": {"jobs": list(_BOARD2["jobs"])}}
-    monkeypatch.setattr(ats.httpx, "get_json",
-                        lambda url, **_k: state["data"] if "greenhouse" in url else None)
+    _patch_json(monkeypatch,
+                lambda url, **_k: state["data"] if "greenhouse" in url else None)
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp, terms=["security engineer", "detection engineer"],
                    country_indeed="India", is_remote=True, companies=["databricks"])
@@ -188,8 +239,8 @@ def test_taken_down_when_missing_from_board(monkeypatch):
 
 def test_failed_fetch_does_not_close(monkeypatch):
     state = {"data": {"jobs": _BOARD2["jobs"][:1]}}
-    monkeypatch.setattr(ats.httpx, "get_json",
-                        lambda url, **_k: state["data"] if "greenhouse" in url else None)
+    _patch_json(monkeypatch,
+                lambda url, **_k: state["data"] if "greenhouse" in url else None)
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp, terms=["security engineer"], country_indeed="India",
                    is_remote=True, companies=["databricks"])
@@ -229,7 +280,7 @@ def test_mk_sets_remote_scope_and_leaves_raw_flag_none():
 
 
 def test_ashby_provider_derives_remote_scope(monkeypatch):
-    monkeypatch.setattr(ats.httpx, "get_json", _fake_get_json)
+    _patch_json(monkeypatch)
     jobs = ats.fetch_company("Acme", "ashby", "acme")        # location "Remote - India", isRemote
     assert jobs[0].remote_scope == "India"
     assert jobs[0].raw_is_remote is None

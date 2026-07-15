@@ -14,6 +14,7 @@ import textwrap
 
 from jobscope.analyze import coverage
 from jobscope.apply import referrals
+from jobscope import enrich as enrichment
 
 
 def prep_sheet(cfg: dict, store, job, resume) -> dict:
@@ -27,7 +28,7 @@ def prep_sheet(cfg: dict, store, job, resume) -> dict:
         topics = [r["text"] for r in reqs]
 
     strengths = analysis["matched"][:6]
-    enr = store.get_enrichment(job.company) if job.company else {}
+    enr = enrichment.for_job(store, job)
     brief = (enr or {}).get("brief") or {}
     app = store.get_application(job.id) or {}
     return {

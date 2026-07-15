@@ -19,6 +19,8 @@ import os
 import secrets
 import threading
 import webbrowser
+from dataclasses import asdict, dataclass
+from typing import Callable
 
 # Single-process refresh state, shared between the request threads and the
 # background worker. Writes are small dict.update() calls (atomic under the GIL);
@@ -32,6 +34,34 @@ _STATE: dict[str, str] = {
     "finished": "",
     "last_date": "",     # YYYY-MM-DD of the last successful refresh
 }
+
+
+@dataclass(frozen=True, slots=True)
+class StageResult:
+    name: str
+    required: bool
+    status: str
+    detail: str = ""
+
+
+def _run_stage(name: str, *, required: bool, action: Callable[[], object],
+               nonzero_is_failure: bool = False) -> StageResult:
+    try:
+        value = action()
+        if nonzero_is_failure and value not in (0, None):
+            raise RuntimeError(f"returned nonzero status {value}")
+        detail = str(value) if value not in (None, 0, "") else ""
+        return StageResult(name, required, "ok", detail)
+    except Exception as exc:
+        if required:
+            raise RuntimeError(f"required stage '{name}' failed: {exc}") from exc
+        return StageResult(name, required, "degraded", str(exc)[:300])
+
+
+def _require_digest(result) -> int:
+    if not result.sent:
+        raise RuntimeError(result.detail)
+    return result.attempted
 
 
 def _now() -> str:
@@ -415,14 +445,14 @@ def run(cfg: dict, port: int = 8799, open_browser: bool = False) -> int:
 def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
                     on_step=None) -> dict:
     """Run the shared refresh pipeline: (optional scan) -> inbox -> match ->
-    render -> publish.
+    publish -> local render.
 
     Guarded to run at most once per calendar day unless ``force``. Append-only:
     the inbox sync is incremental (UID watermark) and mail events dedupe, so a
     same-day rerun never double-counts. ``on_step(name, message)`` is called
-    before each phase. Raises on failure; returns a dict with ``state`` (``done``
-    or ``skipped``), ``message`` and ``last_date``. Used by both the serve button
-    and the ``refresh`` CLI command / scheduled task.
+    before each phase. Required stages raise on failure; optional stages are
+    reported as degraded. The success marker is written only after publication
+    and the local rebuild finish.
     """
     from jobscope.core.store import Store
 
@@ -438,33 +468,79 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
         if not force and (store.meta_get("refresh:last_date", "") or "") == today:
             step("skipped", "Already refreshed today.")
             return {"state": "skipped", "message": "Already refreshed today.",
-                    "last_date": today}
-        if want_scan:
-            step("scan", "Scanning job boards\u2026")
-            from jobscope.ingest import scrape
-            scrape.run(cfg, store)
-        step("inbox", f"Syncing Gmail (last {days} days)\u2026")
-        from jobscope.ingest import inbox
-        since = (_dt.date.today() - _dt.timedelta(days=days)).isoformat()
-        inbox.run(cfg, store, since=since)
-        step("match", "Scoring matches\u2026")
-        from jobscope.analyze import match
-        match.run(cfg, store)
-        # Email a digest of newly-matched roles (no-op unless email.enabled;
-        # email.send swallows SMTP errors, so this never aborts the refresh).
-        from jobscope.apply import track as _track
-        _track.send_digest(cfg, store)
+                    "last_date": today, "stages": []}
+
+        stages: list[StageResult] = []
+        current_stage = ""
+        note = ""
+        try:
+            if want_scan:
+                step("scan", "Scanning job boards\u2026")
+                from jobscope.ingest import scrape
+                stages.append(_run_stage(
+                    "scan", required=False,
+                    action=lambda: scrape.run(cfg, store),
+                    nonzero_is_failure=True,
+                ))
+
+            step("inbox", f"Syncing Gmail (last {days} days)\u2026")
+            from jobscope.ingest import inbox
+            since = (_dt.date.today() - _dt.timedelta(days=days)).isoformat()
+            current_stage = "inbox"
+            stages.append(_run_stage(
+                "inbox", required=True,
+                action=lambda: inbox.run(cfg, store, since=since),
+                nonzero_is_failure=True,
+            ))
+
+            step("match", "Scoring matches\u2026")
+            from jobscope.analyze import match
+            current_stage = "match"
+            stages.append(_run_stage(
+                "match", required=True,
+                action=lambda: match.run(cfg, store),
+                nonzero_is_failure=True,
+            ))
+
+            from jobscope.apply import track as _track
+            stages.append(_run_stage(
+                "digest", required=False,
+                action=lambda: _require_digest(_track.send_digest_result(cfg, store)),
+            ))
+
+            # Publish first (it builds the public artifact), then restore web/dist
+            # to the local un-redacted dashboard. Both are required for completion.
+            step("publish", "Publishing to GitHub Pages\u2026")
+            current_stage = "publish"
+
+            def publish() -> None:
+                nonlocal note
+                note = _publish(cfg)
+
+            stages.append(_run_stage("publish", required=True, action=publish))
+
+            step("render", "Rebuilding local dashboard\u2026")
+            current_stage = "render"
+            stages.append(_run_stage(
+                "render", required=True,
+                action=lambda: _build_local_spa(cfg, store),
+            ))
+        except Exception:
+            store.meta_set("refresh:last_failure", _now())
+            store.meta_set("refresh:last_failed_stage", current_stage or "unknown")
+            store.log_run(f"refresh:{current_stage or 'unknown'}", 0, "error")
+            raise
+
+        degraded = any(stage.status == "degraded" for stage in stages)
         store.meta_set("refresh:last_date", today)
-        store.log_run("refresh", 0, "ok")
-        # Publish the redacted/encrypted PUBLIC site first (this rebuilds web/dist
-        # for the push), then rebuild the LOCAL un-redacted SPA so the localhost
-        # dashboard keeps its full Applications board and reflects the new data.
-        step("publish", "Publishing to GitHub Pages\u2026")
-        note = _publish(cfg)
-        step("render", "Rebuilding local dashboard\u2026")
-        _build_local_spa(cfg, store)
-    return {"state": "done", "message": "Refreshed & published." + note,
-            "last_date": today}
+        store.meta_set("refresh:last_failure", "")
+        store.meta_set("refresh:last_failed_stage", "")
+        store.log_run("refresh", 0, "degraded" if degraded else "ok")
+
+    message = ("Refreshed & published with optional-stage warnings."
+               if degraded else "Refreshed & published.") + note
+    return {"state": "done", "message": message, "last_date": today,
+            "degraded": degraded, "stages": [asdict(stage) for stage in stages]}
 
 
 def _run_refresh(cfg: dict, force: bool, full_scan: bool) -> None:
@@ -529,18 +605,22 @@ def _has_apps_passphrase() -> bool:
     return bool(_apps_passphrase())
 
 
+def apps_passphrase_available() -> bool:
+    """Return publication-passphrase readiness without exposing its value."""
+    return _has_apps_passphrase()
+
+
 def _publish(cfg: dict) -> str:
-    """Build + push the redacted (and, when a passphrase is available, encrypted)
-    site via the publish script -- ``publish.ps1`` on Windows, ``publish.sh`` on
-    POSIX. Returns a short status note."""
+    """Build, verify, and push the mandatory encrypted whole-site artifact."""
     import shutil
     import subprocess
 
     root = _repo_root()
     scripts = os.path.join(root, "scripts")
     have_pass = _has_apps_passphrase()
-    note = "" if have_pass else (
-        " (applications page skipped \u2014 set JOBSCOPE_APPS_PASSPHRASE in the keychain)")
+    if not have_pass:
+        raise RuntimeError(
+            "JOBSCOPE_APPS_PASSPHRASE is required for whole-site publication")
     env = None
 
     if os.name == "nt":
@@ -548,18 +628,15 @@ def _publish(cfg: dict) -> str:
         if not os.path.exists(ps1):
             raise RuntimeError("scripts/publish.ps1 not found.")
         shell = "pwsh" if shutil.which("pwsh") else "powershell"
-        args = [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "-Force"]
-        if have_pass:
-            args.append("-Encrypted")  # publish.ps1 resolves env -> keychain itself
+        args = [shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1,
+                "-Force", "-Encrypted"]
     else:
         sh = os.path.join(scripts, "publish.sh")
         if not os.path.exists(sh):
             raise RuntimeError("scripts/publish.sh not found.")
-        args = [shutil.which("bash") or "bash", sh, "--force"]
-        if have_pass:
-            args.append("--encrypted")
-            # publish.sh reads the passphrase from the env; hand it the resolved value.
-            env = {**os.environ, "JOBSCOPE_APPS_PASSPHRASE": _apps_passphrase()}
+        args = [shutil.which("bash") or "bash", sh, "--force", "--encrypted"]
+        # publish.sh reads the passphrase from the env; hand it the resolved value.
+        env = {**os.environ, "JOBSCOPE_APPS_PASSPHRASE": _apps_passphrase()}
 
     # stdin=DEVNULL so a missing passphrase fails fast instead of blocking on a prompt.
     proc = subprocess.run(args, cwd=root, stdin=subprocess.DEVNULL, env=env,
@@ -567,4 +644,4 @@ def _publish(cfg: dict) -> str:
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-4:]
         raise RuntimeError("publish failed: " + " / ".join(t.strip() for t in tail)[:300])
-    return note
+    return ""

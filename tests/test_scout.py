@@ -33,6 +33,20 @@ def _gh_board(*titles):
         for i, t in enumerate(titles)]}
 
 
+def _patch_json(monkeypatch, fetch):
+    def get_json_result(url, **kwargs):
+        data = fetch(url, **kwargs)
+        return ats.httpx.HttpResult(
+            ok=data is not None,
+            status_code=200 if data is not None else None,
+            attempts=1,
+            data=data,
+            error="mock request failed" if data is None else "",
+        )
+
+    monkeypatch.setattr(ats.httpx, "get_json_result", get_json_result)
+
+
 def test_resolve_board_known_map_needs_no_network(monkeypatch):
     calls = {"n": 0}
 
@@ -40,7 +54,7 @@ def test_resolve_board_known_map_needs_no_network(monkeypatch):
         calls["n"] += 1
         return None
 
-    monkeypatch.setattr(ats.httpx, "get_json", _boom)
+    _patch_json(monkeypatch, _boom)
     assert ats.resolve_board("Rubrik") == ("Rubrik", "greenhouse", "rubrik")
     assert calls["n"] == 0                                   # curated slug -> no fetch
 
@@ -57,13 +71,13 @@ def test_resolve_board_probe_picks_provider_with_jobs(monkeypatch):
                      "hostedUrl": "https://l/1", "descriptionPlain": "x", "createdAt": 0}]
         return {"jobs": []}                                  # greenhouse empty -> probe moves on
 
-    monkeypatch.setattr(ats.httpx, "get_json", _get_json)
+    _patch_json(monkeypatch, _get_json)
     resolved = ats.resolve_board("Zzznewco")                 # not in COMPANY_BOARDS
     assert resolved is not None and resolved[1] == "lever"
 
 
 def test_resolve_board_none_when_no_board(monkeypatch):
-    monkeypatch.setattr(ats.httpx, "get_json", lambda *a, **k: None)
+    _patch_json(monkeypatch, lambda *a, **k: None)
     assert ats.resolve_board("Zzznope") is None
 
 
@@ -72,8 +86,8 @@ def test_scout_scores_and_ranks(monkeypatch):
         cfg = _cfg(tmp)
         store = Store(cfg["output"]["db_path"])
         store.save_resume(_resume(), name="research")
-        monkeypatch.setattr(ats.httpx, "get_json",
-                            lambda *a, **k: _gh_board("Application Security Engineer", "Sales Manager"))
+        _patch_json(monkeypatch,
+                lambda *a, **k: _gh_board("Application Security Engineer", "Sales Manager"))
         res = scout.scout(cfg, store, "Rubrik", save=False, limit=10)
         assert res["ok"] and res["provider"] == "greenhouse"
         assert res["count"] == 2 and len(res["results"]) == 2
@@ -87,8 +101,8 @@ def test_scout_save_upserts_matches(monkeypatch):
         cfg = _cfg(tmp)
         store = Store(cfg["output"]["db_path"])
         store.save_resume(_resume(), name="research")
-        monkeypatch.setattr(ats.httpx, "get_json",
-                            lambda *a, **k: _gh_board("Application Security Engineer"))
+        _patch_json(monkeypatch,
+                lambda *a, **k: _gh_board("Application Security Engineer"))
         res = scout.scout(cfg, store, "Rubrik", save=True, limit=10)
         assert res["ok"]
         # if it matched the profile, saving upserted it into the store
@@ -97,11 +111,24 @@ def test_scout_save_upserts_matches(monkeypatch):
         store.close()
 
 
+def test_scout_surfaces_board_fetch_failure(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        store = Store(cfg["output"]["db_path"])
+        _patch_json(monkeypatch, lambda *_a, **_k: None)
+
+        res = scout.scout(cfg, store, "Rubrik")
+
+        assert not res["ok"]
+        assert "could not fetch the greenhouse board (error)" in res["error"]
+        store.close()
+
+
 def test_scout_no_resume_errors(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
         store = Store(cfg["output"]["db_path"])
-        monkeypatch.setattr(ats.httpx, "get_json", lambda *a, **k: _gh_board("Security Engineer"))
+        _patch_json(monkeypatch, lambda *a, **k: _gh_board("Security Engineer"))
         res = scout.scout(cfg, store, "Rubrik")
         assert not res["ok"] and "resume import" in res["error"]
         store.close()
@@ -112,7 +139,7 @@ def test_scout_unknown_company_needs_slug(monkeypatch):
         cfg = _cfg(tmp)
         store = Store(cfg["output"]["db_path"])
         store.save_resume(_resume(), name="research")
-        monkeypatch.setattr(ats.httpx, "get_json", lambda *a, **k: None)   # no board anywhere
+        _patch_json(monkeypatch, lambda *a, **k: None)   # no board anywhere
         res = scout.scout(cfg, store, "Zzznope")
         assert not res["ok"] and res.get("needs_slug")
         store.close()

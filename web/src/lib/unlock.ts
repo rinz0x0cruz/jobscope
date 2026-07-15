@@ -6,7 +6,23 @@ export const UNLOCK_KEY = 'jobscope:site'
 
 /** The baked marker is a lazy pointer (published build) rather than an inline blob. */
 export function isEncPointer(ref: EncRef): ref is { v: number; url: string } {
-  return typeof (ref as { url?: unknown }).url === 'string'
+  return ref.v === 1 && typeof (ref as { url?: unknown }).url === 'string'
+}
+
+function validateBlob(value: unknown): EncBlob {
+  if (!value || typeof value !== 'object') throw new Error('invalid encrypted payload')
+  const blob = value as Partial<EncBlob>
+  if (blob.v !== 1) throw new Error(`unsupported encrypted payload version: ${String(blob.v)}`)
+  if (blob.kdf !== 'PBKDF2-SHA256') throw new Error(`unsupported encrypted payload KDF: ${String(blob.kdf)}`)
+  if (!Number.isInteger(blob.iter) || (blob.iter ?? 0) < 210_000) {
+    throw new Error('invalid encrypted payload iteration count')
+  }
+  for (const field of ['salt', 'iv', 'ct'] as const) {
+    if (typeof blob[field] !== 'string' || !blob[field]) {
+      throw new Error(`invalid encrypted payload field: ${field}`)
+    }
+  }
+  return blob as EncBlob
 }
 
 function b64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
@@ -18,11 +34,11 @@ function b64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
 
 /** Resolve the ciphertext: fetch it if the baked marker is a lazy pointer. */
 async function resolveBlob(ref: EncRef): Promise<EncBlob> {
-  if (!isEncPointer(ref)) return ref
+  if (!isEncPointer(ref)) return validateBlob(ref)
   const url = new URL(ref.url, document.baseURI).href
   const res = await fetch(url, { cache: 'no-store' })
   if (!res.ok) throw new Error(`encrypted payload fetch failed (${res.status})`)
-  return (await res.json()) as EncBlob
+  return validateBlob(await res.json())
 }
 
 /**

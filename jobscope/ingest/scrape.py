@@ -102,6 +102,11 @@ def _scan_profile(scrape_jobs, s: dict, store, label: str,
             df = scrape_jobs(**kwargs)
             if df is None or len(df) == 0:
                 print(f"  [{term}] 0 results")
+                store.log_run(f"scan:{label}:{term}", 0, "empty")
+                store.set_source_health(
+                    f"jobspy:{label}:{term}", provider="jobspy", slug=term,
+                    status="empty", item_count=0, attempts=1,
+                )
                 continue
             new_here = 0
             for _, row in df.iterrows():
@@ -115,11 +120,24 @@ def _scan_profile(scrape_jobs, s: dict, store, label: str,
                 if store.upsert_job(job):
                     new_here += 1
             new_total += new_here
-            print(f"  [{term}] {len(df)} results ({new_here} new)")
-            store.log_run(f"scan:{label}:{term}", len(df), "ok")
+            saturated = len(df) >= int(s.get("results_wanted") or 0) > 0
+            status = "saturated" if saturated else "ok"
+            cap_note = ", result cap reached" if saturated else ""
+            print(f"  [{term}] {len(df)} results ({new_here} new{cap_note})")
+            store.log_run(f"scan:{label}:{term}", len(df), status)
+            store.set_source_health(
+                f"jobspy:{label}:{term}", provider="jobspy", slug=term,
+                status=status, item_count=len(df), attempts=1,
+                detail=("results_wanted cap reached; additional results may exist"
+                        if saturated else ""),
+            )
         except Exception as e:  # noqa: BLE001 - keep scanning other terms
             print(f"  [{term}] error: {e}")
             store.log_run(f"scan:{label}:{term}", 0, "error")
+            store.set_source_health(
+                f"jobspy:{label}:{term}", provider="jobspy", slug=term,
+                status="error", item_count=0, attempts=1, detail=str(e),
+            )
     return new_total, seen_total, dropped_total
 
 

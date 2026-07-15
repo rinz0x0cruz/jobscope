@@ -14,6 +14,8 @@ from __future__ import annotations
 import datetime as _dt
 import html as _html
 import re
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from jobscope.core import geo, httpx
@@ -75,6 +77,31 @@ COMPANY_BOARDS: dict[str, tuple[str, str]] = {
 }
 
 
+class BoardStatus(StrEnum):
+    OK = "ok"
+    EMPTY = "empty"
+    PARTIAL = "partial"
+    INVALID = "invalid"
+    ERROR = "error"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass(slots=True)
+class BoardFetchResult:
+    company: str
+    provider: str
+    slug: str
+    status: BoardStatus
+    jobs: list[Job] = field(default_factory=list)
+    detail: str = ""
+    attempts: int = 0
+    status_code: int | None = None
+
+    @property
+    def successful(self) -> bool:
+        return self.status in {BoardStatus.OK, BoardStatus.EMPTY, BoardStatus.PARTIAL}
+
+
 def _strip_html(s: str) -> str:
     s = s or ""
     # Drop the CONTENTS of <style>/<script> blocks and HTML comments before
@@ -110,57 +137,157 @@ def _mk(company: str, title: str, location: str, url: str, desc: str, date_poste
     return job.ensure_id()
 
 
-def _greenhouse(company: str, slug: str) -> list[Job]:
-    data = httpx.get_json(f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
-                          params={"content": "true"})
-    jobs = (data or {}).get("jobs") or []
-    out = []
-    for j in jobs:
-        loc = ((j.get("location") or {}).get("name") or "")
-        out.append(_mk(company, j.get("title", ""), loc, j.get("absolute_url", ""),
-                       _strip_html(j.get("content", "")), str(j.get("updated_at", ""))))
-    return out
+def _load_json(url: str, *, params: dict) -> tuple[Any | None, str, int, int | None]:
+    result = httpx.get_json_result(url, params=params)
+    if not result.ok:
+        status = f"HTTP {result.status_code}" if result.status_code is not None else "network error"
+        attempt_word = "attempt" if result.attempts == 1 else "attempts"
+        detail = result.error or status
+        return None, f"{detail} after {result.attempts} {attempt_word}", result.attempts, result.status_code
+    return result.data, "", result.attempts, result.status_code
 
 
-def _lever(company: str, slug: str) -> list[Job]:
-    data = httpx.get_json(f"https://api.lever.co/v0/postings/{slug}", params={"mode": "json"})
-    out = []
-    for j in (data or []):
-        cats = j.get("categories") or {}
-        loc = cats.get("location") or ""
-        wt = (j.get("workplaceType") or "").lower()
-        desc = j.get("descriptionPlain") or _strip_html(j.get("description", ""))
-        job = _mk(company, j.get("text", ""), loc, j.get("hostedUrl", ""),
-                  desc, _ms_to_date(j.get("createdAt")))
-        if wt == "remote":
-            job.is_remote = True
-            job.remote_scope = derive_remote_scope(job.location, job.title, True)
-        out.append(job)
-    return out
+def _finish_result(company: str, provider: str, slug: str, jobs: list[Job],
+                   malformed: int = 0, *, attempts: int = 0,
+                   status_code: int | None = None) -> BoardFetchResult:
+    if malformed:
+        status = BoardStatus.PARTIAL if jobs else BoardStatus.INVALID
+        detail = f"{malformed} malformed posting(s)"
+    else:
+        status = BoardStatus.OK if jobs else BoardStatus.EMPTY
+        detail = ""
+    return BoardFetchResult(
+        company, provider, slug, status, jobs, detail, attempts, status_code)
 
 
-def _ashby(company: str, slug: str) -> list[Job]:
-    data = httpx.get_json(f"https://api.ashbyhq.com/posting-api/job-board/{slug}",
-                          params={"includeCompensation": "false"})
-    jobs = (data or {}).get("jobs") or []
-    out = []
-    for j in jobs:
-        loc = j.get("location") or ""
-        job = _mk(company, j.get("title", ""), loc, j.get("jobUrl", ""),
-                  _strip_html(j.get("descriptionHtml", "")), "")
-        if j.get("isRemote"):
-            job.is_remote = True
-            job.remote_scope = derive_remote_scope(job.location, job.title, True)
-        out.append(job)
-    return out
+def _greenhouse(company: str, slug: str) -> BoardFetchResult:
+    data, error, attempts, status_code = _load_json(
+        f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
+        params={"content": "true"},
+    )
+    if error:
+        return BoardFetchResult(
+            company, "greenhouse", slug, BoardStatus.ERROR, detail=error,
+            attempts=attempts, status_code=status_code)
+    if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
+        return BoardFetchResult(
+            company, "greenhouse", slug, BoardStatus.INVALID,
+            detail="response does not contain a jobs list", attempts=attempts,
+            status_code=status_code,
+        )
+    out: list[Job] = []
+    malformed = 0
+    for posting in data["jobs"]:
+        try:
+            loc = ((posting.get("location") or {}).get("name") or "")
+            out.append(_mk(
+                company, posting.get("title", ""), loc,
+                posting.get("absolute_url", ""),
+                _strip_html(posting.get("content", "")),
+                str(posting.get("updated_at", "")),
+            ))
+        except (AttributeError, TypeError, ValueError):
+            malformed += 1
+    return _finish_result(
+        company, "greenhouse", slug, out, malformed,
+        attempts=attempts, status_code=status_code)
+
+
+def _lever(company: str, slug: str) -> BoardFetchResult:
+    data, error, attempts, status_code = _load_json(
+        f"https://api.lever.co/v0/postings/{slug}", params={"mode": "json"})
+    if error:
+        return BoardFetchResult(
+            company, "lever", slug, BoardStatus.ERROR, detail=error,
+            attempts=attempts, status_code=status_code)
+    if not isinstance(data, list):
+        return BoardFetchResult(
+            company, "lever", slug, BoardStatus.INVALID,
+            detail="response is not a postings list", attempts=attempts,
+            status_code=status_code,
+        )
+    out: list[Job] = []
+    malformed = 0
+    for posting in data:
+        try:
+            cats = posting.get("categories") or {}
+            loc = cats.get("location") or ""
+            workplace_type = (posting.get("workplaceType") or "").lower()
+            desc = posting.get("descriptionPlain") or _strip_html(
+                posting.get("description", ""))
+            job = _mk(
+                company, posting.get("text", ""), loc,
+                posting.get("hostedUrl", ""), desc,
+                _ms_to_date(posting.get("createdAt")),
+            )
+            if workplace_type == "remote":
+                job.is_remote = True
+                job.remote_scope = derive_remote_scope(job.location, job.title, True)
+            out.append(job)
+        except (AttributeError, TypeError, ValueError):
+            malformed += 1
+    return _finish_result(
+        company, "lever", slug, out, malformed,
+        attempts=attempts, status_code=status_code)
+
+
+def _ashby(company: str, slug: str) -> BoardFetchResult:
+    data, error, attempts, status_code = _load_json(
+        f"https://api.ashbyhq.com/posting-api/job-board/{slug}",
+        params={"includeCompensation": "false"},
+    )
+    if error:
+        return BoardFetchResult(
+            company, "ashby", slug, BoardStatus.ERROR, detail=error,
+            attempts=attempts, status_code=status_code)
+    if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
+        return BoardFetchResult(
+            company, "ashby", slug, BoardStatus.INVALID,
+            detail="response does not contain a jobs list", attempts=attempts,
+            status_code=status_code,
+        )
+    out: list[Job] = []
+    malformed = 0
+    for posting in data["jobs"]:
+        try:
+            loc = posting.get("location") or ""
+            job = _mk(
+                company, posting.get("title", ""), loc,
+                posting.get("jobUrl", ""),
+                _strip_html(posting.get("descriptionHtml", "")), "",
+            )
+            if posting.get("isRemote"):
+                job.is_remote = True
+                job.remote_scope = derive_remote_scope(job.location, job.title, True)
+            out.append(job)
+        except (AttributeError, TypeError, ValueError):
+            malformed += 1
+    return _finish_result(
+        company, "ashby", slug, out, malformed,
+        attempts=attempts, status_code=status_code)
 
 
 _FETCHERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby}
 
 
-def fetch_company(company: str, provider: str, slug: str) -> list[Job]:
+def fetch_company_result(company: str, provider: str, slug: str) -> BoardFetchResult:
+    provider = (provider or "").lower().strip()
     fn = _FETCHERS.get(provider)
-    return fn(company, slug) if fn else []
+    if fn is None:
+        return BoardFetchResult(
+            company, provider, slug, BoardStatus.UNSUPPORTED,
+            detail=f"unsupported ATS provider: {provider or '<empty>'}",
+        )
+    return fn(company, slug)
+
+
+def fetch_company(company: str, provider: str, slug: str) -> list[Job]:
+    """Compatibility wrapper returning only parsed jobs.
+
+    New orchestration code should use :func:`fetch_company_result` so a valid
+    empty board is not confused with a failed request.
+    """
+    return fetch_company_result(company, provider, slug).jobs
 
 
 def _resolve(entry: str) -> tuple[str, str, str] | None:
@@ -216,11 +343,9 @@ def resolve_board(name: str, *, provider: str | None = None,
         return embedded
     for slug_guess in _slug_variants(display):
         for prov in _PROBE_ORDER:
-            try:
-                if fetch_company(display, prov, slug_guess):
-                    return display, prov, slug_guess
-            except Exception:  # noqa: BLE001 - best-effort probe, a dead slug just yields nothing
-                continue
+            result = fetch_company_result(display, prov, slug_guess)
+            if result.successful and result.jobs:
+                return display, prov, slug_guess
     return None
 
 
@@ -276,27 +401,37 @@ def run(cfg: dict, store) -> int:
         resolved = _resolve(entry)
         if not resolved:
             print(f"  [{entry}] unknown company (add to companies.COMPANY_BOARDS or use Name|provider|slug)")
+            store.log_run(f"ats:{entry}", 0, BoardStatus.UNSUPPORTED.value)
             continue
         name, provider, slug = resolved
-        try:
-            board = fetch_company(name, provider, slug)
-        except Exception:  # noqa: BLE001 - best-effort, never break the scan
-            board = []
+        result = fetch_company_result(name, provider, slug)
+        board = result.jobs
+        store.set_source_health(
+            f"ats:{name}", provider=provider, slug=slug,
+            status=result.status.value, item_count=len(board),
+            attempts=result.attempts, status_code=result.status_code,
+            detail=result.detail,
+        )
+        if not result.successful:
+            print(f"  [{name}] {result.status.value}: {result.detail}")
+            store.log_run(f"ats:{name}", 0, result.status.value)
+            continue
         kept = [j for j in board if _matches(j, locs, roles, want_remote, home, geo_on)]
         new_here = 0
         for job in kept:
             if job.title and job.company and store.upsert_job(job):
                 new_here += 1
         new_total += new_here
-        # The board is the full source of truth: anything we stored before that
-        # is no longer listed has been taken down. Only reconcile on a real fetch
-        # (non-empty board) so a transient failure never mass-closes a company.
+        # Only a complete, non-empty board is authoritative enough to close jobs.
+        # Empty and partial results remain observable but deliberately non-destructive.
         closed_here = 0
-        if board:
+        if result.status == BoardStatus.OK and board:
             closed_here = store.reconcile_open("ats", name, {j.url for j in board})
             closed_total += closed_here
         tail = f", {closed_here} taken down" if closed_here else ""
-        print(f"  [{name}] {len(board)} on board / {len(kept)} matched ({new_here} new{tail})")
-        store.log_run(f"ats:{name}", len(kept), "ok")
+        health = f", {result.status.value}: {result.detail}" if result.detail else ""
+        print(f"  [{name}] {len(board)} on board / {len(kept)} matched "
+              f"({new_here} new{tail}{health})")
+        store.log_run(f"ats:{name}", len(kept), result.status.value)
     print(f"  ATS complete: {new_total} new, {closed_total} taken down from {len(entries)} companies")
     return new_total

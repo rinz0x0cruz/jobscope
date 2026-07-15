@@ -4,8 +4,8 @@
 # repository Secrets -- see the SETUP block at the bottom of this file.
 #
 # Privacy model: the SQLite DB (your mail + application history) is kept AES-256-GCM
-# encrypted on the private, force-updated `data` branch -- only the latest encrypted
-# blob is ever stored, and it's useless without JOBSCOPE_DB_KEY. Only the redacted
+# encrypted on the private `data` branch -- the latest and one last-known-good
+# encrypted blob are stored, and both are useless without JOBSCOPE_DB_KEY. Only the redacted
 # dashboard + the passphrase-encrypted applications blob are published to gh-pages,
 # exactly like the local publish. AI is left off here (deterministic scoring).
 
@@ -45,8 +45,9 @@ jobs:
           JOBSCOPE_CONFIG: ${{ secrets.JOBSCOPE_CONFIG }}
           JOBSCOPE_DB_KEY: ${{ secrets.JOBSCOPE_DB_KEY }}
           JOBSCOPE_GMAIL_APP_PW: ${{ secrets.JOBSCOPE_GMAIL_APP_PW }}
+          JOBSCOPE_APPS_PASSPHRASE: ${{ secrets.JOBSCOPE_APPS_PASSPHRASE }}
         run: |
-          if [ -z "$JOBSCOPE_CONFIG" ] || [ -z "$JOBSCOPE_DB_KEY" ] || [ -z "$JOBSCOPE_GMAIL_APP_PW" ]; then
+          if [ -z "$JOBSCOPE_CONFIG" ] || [ -z "$JOBSCOPE_DB_KEY" ] || [ -z "$JOBSCOPE_GMAIL_APP_PW" ] || [ -z "$JOBSCOPE_APPS_PASSPHRASE" ]; then
             echo "::notice::Cloud refresh is not configured yet (missing secrets) -- skipping. See the SETUP block in .github/workflows/refresh.yml."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
@@ -67,7 +68,7 @@ jobs:
 
       - name: Install Python deps
         if: steps.guard.outputs.ready == 'true'
-        run: pip install --upgrade pip pyyaml requests feedparser markdown keyring
+        run: python -m pip install --requirement requirements.lock
 
       - name: Write config (from secret -- contains no passwords)
         if: steps.guard.outputs.ready == 'true'
@@ -78,19 +79,43 @@ jobs:
           printf '%s' "$JOBSCOPE_CONFIG" > config.yaml
 
       - name: Restore encrypted DB from the `data` branch
+        id: restore
         if: steps.guard.outputs.ready == 'true'
         env:
           JOBSCOPE_DB_KEY: ${{ secrets.JOBSCOPE_DB_KEY }}
         run: |
-          if git fetch --depth 1 origin data 2>/dev/null; then
-            git show FETCH_HEAD:jobscope.db.enc > data/jobscope.db.enc 2>/dev/null || true
-            if [ -s data/jobscope.db.enc ]; then
-              node scripts/crypt-file.mjs decrypt data/jobscope.db.enc data/jobscope.db
-              echo "restored DB from the data branch"
-            fi
-          else
-            echo "::warning::No data branch yet -- starting from an empty DB. Seed it once to keep your history (see SETUP)."
+          set -euo pipefail
+          data_ref="$(git ls-remote --heads origin refs/heads/data)"
+          if [ -z "$data_ref" ]; then
+            echo "::error::No data branch exists. Seed it with scripts/seed-cloud-db.ps1 before running cloud refresh."
+            exit 1
           fi
+
+          git fetch --no-tags --depth 1 origin refs/heads/data
+          data_sha="$(git rev-parse FETCH_HEAD)"
+          git show "$data_sha:jobscope.db.enc" > data/jobscope.db.enc 2>/dev/null || rm -f data/jobscope.db.enc
+          git show "$data_sha:jobscope.db.previous.enc" > data/jobscope.db.previous.enc 2>/dev/null || rm -f data/jobscope.db.previous.enc
+
+          restore_snapshot() {
+            encrypted_path="$1"
+            rm -f data/jobscope.db
+            [ -s "$encrypted_path" ] || return 1
+            node scripts/crypt-file.mjs decrypt "$encrypted_path" data/jobscope.db || return 1
+            python -m jobscope.core.snapshot data/jobscope.db || return 1
+            cp "$encrypted_path" data/jobscope.db.restored.enc
+          }
+
+          if restore_snapshot data/jobscope.db.enc; then
+            echo "restored current DB snapshot from data@$data_sha"
+          elif restore_snapshot data/jobscope.db.previous.enc; then
+            echo "::warning::Current DB snapshot is invalid; restored the last-known-good generation from data@$data_sha"
+          else
+            rm -f data/jobscope.db
+            echo "::error::Neither encrypted DB generation restored as a valid Jobscope database. Refusing to create a replacement database."
+            exit 1
+          fi
+
+          echo "data_sha=$data_sha" >> "$GITHUB_OUTPUT"
 
       - name: Sync inbox + rescore (AI off)
         if: steps.guard.outputs.ready == 'true'
@@ -120,18 +145,31 @@ jobs:
         env:
           JOBSCOPE_DB_KEY: ${{ secrets.JOBSCOPE_DB_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESTORED_DATA_SHA: ${{ steps.restore.outputs.data_sha }}
         run: |
+          set -euo pipefail
+          python -m jobscope.core.snapshot data/jobscope.db
           node scripts/crypt-file.mjs encrypt data/jobscope.db data/jobscope.db.enc
+          verify_db="$(mktemp)"
+          trap 'rm -f "$verify_db"' EXIT
+          node scripts/crypt-file.mjs decrypt data/jobscope.db.enc "$verify_db"
+          python -m jobscope.core.snapshot "$verify_db"
+          cmp --silent data/jobscope.db "$verify_db"
+
           tmp="$(mktemp -d)"
           cp data/jobscope.db.enc "$tmp/jobscope.db.enc"
+          cp data/jobscope.db.restored.enc "$tmp/jobscope.db.previous.enc"
           cd "$tmp"
           git init -q
           git checkout -q -b data
-          git add jobscope.db.enc
+          git add jobscope.db.enc jobscope.db.previous.enc
           git -c user.name="github-actions[bot]" \
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit -q -m "chore: encrypted db snapshot $(date -u +%FT%TZ)"
-          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
+            git push -q \
+              --force-with-lease="refs/heads/data:${RESTORED_DATA_SHA}" \
+              "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+              data:refs/heads/data
 
       - name: Install web deps
         if: steps.guard.outputs.ready == 'true'

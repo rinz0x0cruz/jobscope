@@ -6,6 +6,7 @@ from jobscope.apply import interview
 from jobscope.core.config import load_config
 from jobscope.core.model import Contact, Job, Resume
 from jobscope.core.store import Store
+from jobscope.enrich import ANALYSIS_VERSION
 
 
 JD = """Responsibilities:
@@ -106,8 +107,10 @@ def test_brief_and_referrals_surface_when_present():
         store.upsert_job(job)
         store.save_contacts([Contact(id="c1", company="Acme", name="Dev", source="github",
                                      profile_url="https://github.com/dev", outreach="Hi Dev")])
-        store.save_enrichment("Acme", brief={"text": "Acme is pre-IPO. Risks: comp opaque.",
-                                              "ai": False})
+        store.save_job_analysis(
+            job.id, resume_base="", version=ANALYSIS_VERSION,
+            brief={"text": "Acme is pre-IPO. Risks: comp opaque.", "ai": False},
+        )
         text = interview.render_sheet(job, interview.prep_sheet(cfg, store, job, _resume()))
         assert "company brief:" in text and "pre-IPO" in text
         assert "1 profile(s)" in text

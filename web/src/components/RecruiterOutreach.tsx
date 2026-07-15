@@ -27,12 +27,6 @@ export function RecruiterOutreach({ jobId, followup = false }: { jobId: string; 
     }
   }, [])
 
-  // reset when the drawer switches to a different job
-  useEffect(() => {
-    setOpen(false)
-    setPreview(null)
-  }, [jobId])
-
   if (!token) return null
 
   const draftFor = async (addr?: string) => {

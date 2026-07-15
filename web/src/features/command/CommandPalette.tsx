@@ -2,7 +2,7 @@
 // jobs to open in the drawer. Built on Radix Dialog (focus trap + a11y) wrapping
 // cmdk (list/keyboard nav) with fuse.js for the job search. Token-driven styling.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Command } from 'cmdk'
 import Fuse from 'fuse.js'
@@ -56,11 +56,6 @@ export function CommandPalette({
   onLock,
 }: CommandPaletteProps) {
   const [q, setQ] = useState('')
-
-  // Reset the query whenever the palette closes so it reopens clean.
-  useEffect(() => {
-    if (!open) setQ('')
-  }, [open])
 
   const fuse = useMemo(
     () => new Fuse(rows, { keys: ['company', 'title', 'location'], threshold: 0.4, ignoreLocation: true }),

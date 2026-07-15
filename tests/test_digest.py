@@ -102,6 +102,8 @@ def test_failed_send_leaves_marker_for_retry(monkeypatch):
         n = track.send_digest({"email": {"enabled": True}}, store)
         assert n == 1                                                    # attempted
         assert store.meta_get("digest:last") == "2000-01-01T00:00:00Z"   # NOT advanced -> retried
+        result = track.send_digest_result({"email": {"enabled": True}}, store)
+        assert result.attempted == 1 and result.sent is False
         store.close()
 
 

@@ -38,6 +38,7 @@ def _install_fake_jobspy(calls, rows_for):
 def _cfg(tmp, **search_over):
     cfg = load_config(None)
     cfg["output"]["db_path"] = os.path.join(tmp, "s.db")
+    cfg["search"]["companies"] = []
     cfg["search"].update(search_over)
     return cfg
 
@@ -86,6 +87,37 @@ def test_scrape_backward_compatible_without_profiles():
             scrape.run(cfg, store)
             assert len(calls) == 1                       # single search from the base
             assert calls[0]["location"] == cfg["search"]["location"]
+            health = store.source_health("jobspy:Remote:x")[0]
+            assert health["status"] == "empty" and health["item_count"] == 0
+            store.close()
+    finally:
+        sys.modules.pop("jobspy", None)
+
+
+def test_scrape_records_saturated_result_cap():
+    calls = []
+
+    def rows_for(_kwargs):
+        return [
+            {
+                "site": "linkedin", "title": f"Security Engineer {index}",
+                "company": "Acme", "location": "Remote",
+                "job_url": f"https://example.test/{index}", "is_remote": True,
+            }
+            for index in range(2)
+        ]
+
+    _install_fake_jobspy(calls, rows_for)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = _cfg(tmp, terms=["security"], profiles=[], results_wanted=2)
+            store = Store(cfg["output"]["db_path"])
+
+            scrape.run(cfg, store)
+
+            health = store.source_health("jobspy:Remote:security")[0]
+            assert health["status"] == "saturated" and health["item_count"] == 2
+            assert "additional results may exist" in health["detail"]
             store.close()
     finally:
         sys.modules.pop("jobspy", None)

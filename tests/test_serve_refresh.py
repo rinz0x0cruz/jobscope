@@ -138,6 +138,87 @@ def test_full_scan_toggle(monkeypatch):
         assert calls["scrape"] == 1
 
 
+@pytest.mark.parametrize("failed_stage", ["publish", "render"])
+def test_publish_or_render_failure_does_not_stamp_success(monkeypatch, failed_stage):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        _patch_pipeline(monkeypatch)
+
+        def fail(*_args, **_kwargs):
+            raise RuntimeError(f"{failed_stage} exploded")
+
+        if failed_stage == "publish":
+            monkeypatch.setattr(serve, "_publish", fail)
+        else:
+            monkeypatch.setattr(serve, "_build_local_spa", fail)
+
+        with pytest.raises(RuntimeError, match=f"required stage '{failed_stage}' failed"):
+            serve.perform_refresh(cfg, force=True)
+
+        with Store(cfg["output"]["db_path"]) as store:
+            assert store.meta_get("refresh:last_date") is None
+            assert store.meta_get("refresh:last_failure")
+            assert store.meta_get("refresh:last_failed_stage") == failed_stage
+
+
+@pytest.mark.parametrize("failed_stage", ["inbox", "match"])
+def test_nonzero_required_stage_aborts_refresh(monkeypatch, failed_stage):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        calls = _patch_pipeline(monkeypatch)
+        module = inbox_mod if failed_stage == "inbox" else match_mod
+        monkeypatch.setattr(module, "run", lambda *_a, **_k: 1)
+
+        with pytest.raises(RuntimeError, match=f"required stage '{failed_stage}' failed"):
+            serve.perform_refresh(cfg, force=True)
+
+        assert calls["publish"] == 0 and calls["render"] == 0
+        with Store(cfg["output"]["db_path"]) as store:
+            assert store.meta_get("refresh:last_date") is None
+            assert store.meta_get("refresh:last_failed_stage") == failed_stage
+
+
+def test_optional_scan_failure_completes_degraded(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        calls = _patch_pipeline(monkeypatch)
+        monkeypatch.setattr(scrape_mod, "run", lambda *_a, **_k: 1)
+
+        res = serve.perform_refresh(cfg, force=True, full_scan=True)
+
+        assert res["state"] == "done" and res["degraded"] is True
+        stages = {stage["name"]: stage for stage in res["stages"]}
+        assert stages["scan"]["required"] is False
+        assert stages["scan"]["status"] == "degraded"
+        assert calls["publish"] == 1 and calls["render"] == 1
+        with Store(cfg["output"]["db_path"]) as store:
+            assert store.meta_get("refresh:last_date") == dt.date.today().isoformat()
+
+
+def test_digest_delivery_failure_completes_degraded(monkeypatch):
+    from jobscope.apply import track
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        calls = _patch_pipeline(monkeypatch)
+        monkeypatch.setattr(
+            track, "send_digest_result",
+            lambda *_a, **_k: track.DigestResult(2, False, "SMTP unavailable"),
+        )
+
+        res = serve.perform_refresh(cfg, force=True)
+
+        stages = {stage["name"]: stage for stage in res["stages"]}
+        assert res["degraded"] is True
+        assert stages["digest"]["status"] == "degraded"
+        assert "SMTP unavailable" in stages["digest"]["detail"]
+        assert calls["publish"] == 1 and calls["render"] == 1
+
+
 # ---- endpoints / CSRF guard -------------------------------------------------
 
 def _serve_bg(cfg):
@@ -328,3 +409,10 @@ def test_publish_selects_platform_script(monkeypatch):
     else:
         assert "publish.sh" in joined and "--force" in joined and "--encrypted" in joined
     assert note == ""
+
+
+def test_publish_requires_whole_site_passphrase(monkeypatch):
+    monkeypatch.setattr(serve, "_apps_passphrase", lambda: "")
+
+    with pytest.raises(RuntimeError, match="required for whole-site publication"):
+        serve._publish({})

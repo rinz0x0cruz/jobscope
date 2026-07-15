@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -18,10 +21,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install (core deps only; browser not needed for tests)
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyyaml requests feedparser markdown pytest ruff
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Set up Node for crypto compatibility tests
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+      - name: Install locked Python dependencies
+        run: python -m pip install --requirement requirements.lock
       - name: Lint (ruff)
         run: ruff check .
       - name: Offline selftest
@@ -44,10 +51,45 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Install
         run: npm ci
-      # Vitest only imports the pure lib/UI modules, not the gitignored baked
-      # dashboard.json, so the UX suite runs without emitting data first.
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
       - name: UX tests (Vitest)
         run: npm test
+      - name: Build locked dashboard shell
+        shell: bash
+        run: |
+          fixture="$RUNNER_TEMP/dashboard.public.json"
+          node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({generated:"ci",total:0,rows:[],overview:{funnel:{},gaps:[],considered:0,targets:[]},applications:[],profile:null,applied_outreach:[]}))' "$fixture"
+          JOBSCOPE_DASHBOARD_JSON="$fixture" \
+          JOBSCOPE_ENCRYPTED_JSON=none \
+          npm run build
+
+  publish-artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --requirement requirements.lock
+          cd web
+          npm ci
+      - name: Build and verify isolated encrypted artifact
+        run: |
+          export JOBSCOPE_APPS_PASSPHRASE="ci-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash scripts/publish.sh --encrypted --verify-only --force
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -57,7 +99,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install detect-secrets
-        run: python -m pip install --upgrade pip detect-secrets
+        run: python -m pip install detect-secrets==1.5.0
       - name: Scan tracked files for committed secrets
         run: detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
 

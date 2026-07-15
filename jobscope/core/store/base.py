@@ -58,6 +58,15 @@ CREATE TABLE IF NOT EXISTS enrichment (
     brief_json TEXT,
     updated TEXT
 );
+CREATE TABLE IF NOT EXISTS job_analysis (
+    job_id TEXT NOT NULL,
+    resume_base TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL,
+    comp_json TEXT,
+    brief_json TEXT,
+    updated TEXT,
+    PRIMARY KEY (job_id, resume_base, version)
+);
 CREATE TABLE IF NOT EXISTS contacts (
     id TEXT PRIMARY KEY,
     company TEXT,
@@ -115,6 +124,17 @@ CREATE TABLE IF NOT EXISTS runs (
     action TEXT,
     count INTEGER,
     status TEXT
+);
+CREATE TABLE IF NOT EXISTS source_health (
+    source TEXT PRIMARY KEY,
+    provider TEXT,
+    slug TEXT,
+    status TEXT NOT NULL,
+    item_count INTEGER DEFAULT 0,
+    attempts INTEGER DEFAULT 0,
+    status_code INTEGER,
+    detail TEXT,
+    checked_at TEXT
 );
 CREATE TABLE IF NOT EXISTS mail_events (
     id TEXT PRIMARY KEY,

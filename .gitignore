@@ -19,6 +19,7 @@ data/*
 
 # dashboard publish clone (transient; created by scripts/publish.*)
 /.dashboard-repo/
+/.jobscope-publish.lock/
 
 # designated-publisher marker (one machine pushes; written by register-publish-task.ps1)
 .publish-primary

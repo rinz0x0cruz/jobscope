@@ -209,8 +209,11 @@ function ApplicationBody({ app }: { app: Application }) {
             <p className="text-[13px] text-mute">No emails linked to this application yet.</p>
           </Section>
         )}
-        <OfferEditor app={app} />
-        <RecruiterOutreach jobId={app.job_id} followup />
+        <OfferEditor
+          key={`${app.job_id}:${app.interview_at}:${app.salary_offered}:${app.offer_accepted}`}
+          app={app}
+        />
+        <RecruiterOutreach key={`${app.job_id}:followup`} jobId={app.job_id} followup />
       </div>
     </>
   )
@@ -345,7 +348,7 @@ function DrawerBody({
         {application && application.timeline.length > 0 && (
           <EmailTimeline events={application.timeline} />
         )}
-        <RecruiterOutreach jobId={job.id} />
+        <RecruiterOutreach key={job.id} jobId={job.id} />
         {job.description && <JobDescription text={job.description} />}
 
         {job.brief && (

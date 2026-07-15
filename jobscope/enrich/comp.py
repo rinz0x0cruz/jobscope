@@ -1,8 +1,8 @@
 """Compensation enrichment.
 
-Primary signal is the posting's own salary (JobSpy parses this for many boards).
-We also hand back a Levels.fyi search link for deeper, crowd-sourced numbers.
-Kept deterministic and honest -- no fragile scraping by default.
+Company enrichment stores Levels.fyi lookup links. A posting's own salary is
+kept separately as per-job analysis so one role can never contaminate another
+role at the same company. Kept deterministic and honest -- no fragile scraping.
 """
 from __future__ import annotations
 
@@ -15,21 +15,26 @@ from .registry import source
 @source(section="comp", config_key="compensation",
         call=lambda fn, ctx: fn(ctx.company, ctx.job))
 def enrich(company: str, job) -> Optional[dict[str, Any]]:
-    out: dict[str, Any] = {
+    return {
         "levels_fyi": f"https://www.levels.fyi/companies/{_slug(company)}/salaries",
         "levels_search": f"https://www.levels.fyi/?search={quote_plus(company)}",
     }
+
+
+def posting(job) -> dict[str, Any]:
+    """Return compensation stated by this exact posting, with provenance."""
     lo, hi = job.salary_min, job.salary_max
-    if lo or hi:
-        out.update({
-            "min": lo,
-            "max": hi,
-            "interval": job.salary_interval or "yearly",
-            "currency": job.currency or "USD",
-            "source": "posting",
-            "range": _fmt(lo, hi, job.currency, job.salary_interval),
-        })
-    return out
+    if not (lo or hi):
+        return {}
+    return {
+        "min": lo,
+        "max": hi,
+        "interval": job.salary_interval or "yearly",
+        "currency": job.currency or "USD",
+        "source": "posting",
+        "source_url": job.url or "",
+        "range": _fmt(lo, hi, job.currency, job.salary_interval),
+    }
 
 
 def _fmt(lo: Optional[float], hi: Optional[float], currency: str, interval: str) -> str:

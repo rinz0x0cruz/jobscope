@@ -37,3 +37,31 @@ class MetaMixin:
             (now_iso(), action, count, status),
         )
         self.conn.commit()
+
+    def set_source_health(self, source: str, *, provider: str, slug: str,
+                          status: str, item_count: int = 0, attempts: int = 0,
+                          status_code: int | None = None, detail: str = "") -> None:
+        self.conn.execute(
+            "INSERT INTO source_health "
+            "(source, provider, slug, status, item_count, attempts, status_code, detail, checked_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(source) DO UPDATE SET "
+            "provider=excluded.provider, slug=excluded.slug, status=excluded.status, "
+            "item_count=excluded.item_count, attempts=excluded.attempts, "
+            "status_code=excluded.status_code, detail=excluded.detail, "
+            "checked_at=excluded.checked_at",
+            (source, provider, slug, status, item_count, attempts, status_code,
+             (detail or "")[:500], now_iso()),
+        )
+        self.conn.commit()
+
+    def source_health(self, source: str | None = None) -> list[dict]:
+        if source is None:
+            rows = self.conn.execute(
+                "SELECT * FROM source_health ORDER BY source"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM source_health WHERE source = ?", (source,)
+            ).fetchall()
+        return [dict(row) for row in rows]

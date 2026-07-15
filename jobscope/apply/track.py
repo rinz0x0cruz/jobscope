@@ -3,10 +3,18 @@ from __future__ import annotations
 
 import datetime as _dt
 import html as _html
+from dataclasses import dataclass
 from typing import Optional
 
 from jobscope.core.model import STATUSES, Application
 from jobscope.core.store import now_iso
+
+
+@dataclass(frozen=True, slots=True)
+class DigestResult:
+    attempted: int
+    sent: bool
+    detail: str = ""
 
 
 def run(store, set_expr: Optional[str] = None, cfg: Optional[dict] = None,
@@ -89,7 +97,7 @@ def run_new(store) -> int:
     return 0
 
 
-def send_digest(cfg: dict, store) -> int:
+def send_digest_result(cfg: dict, store) -> DigestResult:
     """Email a digest of newly-matched Strong/Good roles since the last digest.
 
     Deterministic and opt-in: a no-op unless ``email.enabled``. The very first
@@ -98,24 +106,32 @@ def send_digest(cfg: dict, store) -> int:
     marker, then advances it once the send succeeds. A transient send failure
     leaves the marker untouched, so the same roles are retried next run. Reuses
     the ``email.*`` config, so it adds no new config keys. Returns the number of
-    roles sent (0 when disabled, first-run, or nothing new).
+    roles attempted and whether delivery completed. Disabled/baseline/no-new paths
+    are successful no-ops.
     """
     if not (cfg.get("email", {}) or {}).get("enabled"):
-        return 0
+        return DigestResult(0, True, "disabled")
     last = store.meta_get("digest:last")
     if not last:
         store.meta_set("digest:last", now_iso())   # baseline; skip the initial flood
-        return 0
+        return DigestResult(0, True, "baseline")
     fresh = [j for j in store.jobs(order_by_score=True)
              if j.tier in ("Strong", "Good") and j.first_seen and j.first_seen > last][:25]
     if not fresh:
-        return 0
+        return DigestResult(0, True, "no new matches")
     from jobscope.deliver import email as _email
     subject = f"jobscope: {len(fresh)} new match{'es' if len(fresh) != 1 else ''}"
     text, html = _digest_body(fresh)
-    if _email.send(cfg, subject, text, html):
+    sent = _email.send(cfg, subject, text, html)
+    if sent:
         store.meta_set("digest:last", now_iso())
-    return len(fresh)
+    return DigestResult(
+        len(fresh), sent, "sent" if sent else "SMTP delivery failed; marker retained")
+
+
+def send_digest(cfg: dict, store) -> int:
+    """Compatibility wrapper returning the number of roles attempted."""
+    return send_digest_result(cfg, store).attempted
 
 
 def _digest_body(jobs: list) -> tuple[str, str]:

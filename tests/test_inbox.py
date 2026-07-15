@@ -34,12 +34,14 @@ class FakeIMAP:
     mailbox: dict[int, bytes] = {}
     mailboxes: dict[str, dict[int, bytes]] = {}
     instances: list["FakeIMAP"] = []
+    uidvalidity: int | None = 1
 
     def __init__(self, host, port):
         self.host, self.port = host, port
         self.selected = None
         self.readonly = None
         self.logged_out = False
+        self.uid_calls = []
         self._cur = FakeIMAP.mailbox
         FakeIMAP.instances.append(self)
 
@@ -60,6 +62,7 @@ class FakeIMAP:
         return ("OK", [str(len(self._cur)).encode()])
 
     def uid(self, command, *args):
+        self.uid_calls.append((command.lower(), args))
         cmd = command.lower()
         if cmd == "search":
             ids = b" ".join(str(u).encode() for u in sorted(self._cur))
@@ -72,9 +75,22 @@ class FakeIMAP:
             return ("OK", [(f"{uid} (UID {uid})".encode(), raw)])
         return ("OK", [None])
 
+    def response(self, name):
+        if name.upper() == "UIDVALIDITY":
+            value = FakeIMAP.uidvalidity
+        elif name.upper() == "UIDNEXT":
+            value = max(self._cur, default=0) + 1
+        else:
+            value = None
+        return (name.upper(), [str(value).encode()] if value is not None else [None])
+
     def logout(self):
         self.logged_out = True
         return ("BYE", [b"bye"])
+
+
+def setup_function():
+    FakeIMAP.uidvalidity = 1
 
 
 def _cfg(monkeypatch):
@@ -595,6 +611,7 @@ def _load_mailbox():
     }
     FakeIMAP.mailboxes = {}
     FakeIMAP.instances = []
+    FakeIMAP.uidvalidity = 1
 
 
 def test_inbox_end_to_end(monkeypatch):
@@ -630,6 +647,7 @@ def test_inbox_is_incremental_and_idempotent(monkeypatch):
 
     inbox.run(cfg, store)
     assert len(store.mail_events()) == 3
+    assert store.meta_get("inbox:me@gmail.com:uidvalidity") == "1"
 
     # A second normal run advances past the UID watermark -> nothing new.
     inbox.run(cfg, store)
@@ -639,6 +657,191 @@ def test_inbox_is_incremental_and_idempotent(monkeypatch):
     # row count stable (it updates signals in place rather than inserting).
     inbox.run(cfg, store, backfill=True)
     assert len(store.mail_events()) == 3
+    store.close()
+
+
+def test_inbox_reconnects_after_transient_abort(monkeypatch):
+    _load_mailbox()
+
+    class FlakyIMAP(FakeIMAP):
+        def uid(self, command, *args):
+            if command.lower() == "search" and len(FakeIMAP.instances) == 1:
+                raise inbox.imaplib.IMAP4.abort("connection reset")
+            return super().uid(command, *args)
+
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FlakyIMAP)
+    monkeypatch.setattr(inbox.time, "sleep", lambda _seconds: None)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+
+    inbox.run(cfg, store)
+
+    assert len(FakeIMAP.instances) == 2
+    assert len(store.mail_events()) == 3
+    health = store.source_health("inbox:me@gmail.com")[0]
+    assert health["status"] == "recovered" and health["attempts"] == 2
+    store.close()
+
+
+def test_failed_uid_search_does_not_advance_watermark(monkeypatch):
+    _load_mailbox()
+
+    class SearchFailureIMAP(FakeIMAP):
+        def uid(self, command, *args):
+            if command.lower() == "search":
+                return ("NO", [b"temporary failure"])
+            return super().uid(command, *args)
+
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", SearchFailureIMAP)
+    monkeypatch.setattr(inbox.time, "sleep", lambda _seconds: None)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+    cfg["inbox"]["imap_attempts"] = 1
+
+    assert inbox.run(cfg, store) == 1
+    assert store.meta_get("inbox:me@gmail.com:last_uid") is None
+    assert store.meta_get("inbox:me@gmail.com:uidvalidity") is None
+    store.close()
+
+
+def test_failed_message_fetch_replays_without_advancing_watermark(monkeypatch):
+    _load_mailbox()
+
+    class FetchFailureIMAP(FakeIMAP):
+        fail = True
+
+        def uid(self, command, *args):
+            if command.lower() == "fetch" and self.fail:
+                return ("NO", [b"temporary failure"])
+            return super().uid(command, *args)
+
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FetchFailureIMAP)
+    monkeypatch.setattr(inbox.time, "sleep", lambda _seconds: None)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+    cfg["inbox"]["imap_attempts"] = 1
+
+    assert inbox.run(cfg, store) == 1
+    assert store.meta_get("inbox:me@gmail.com:last_uid") is None
+    FetchFailureIMAP.fail = False
+    assert inbox.run(cfg, store) == 0
+    assert len(store.mail_events()) == 3
+    assert store.meta_get("inbox:me@gmail.com:last_uid") == "4"
+    store.close()
+
+
+def test_classification_reads_beyond_legacy_1500_chars(monkeypatch):
+    filler = "status update " * 150
+    FakeIMAP.mailbox = {
+        1: _raw(
+            "Acme Recruiting <no-reply@greenhouse.io>", "Application update",
+            filler + " We are pleased to offer you the Security Engineer position.",
+            "<long-offer@greenhouse.io>",
+        ),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+
+    inbox.run(cfg, store)
+
+    assert store.mail_events()[0]["signal"] == "offer"
+    assert store.mail_events()[0]["snippet"] == ""
+    store.close()
+
+
+def test_uidvalidity_change_uses_bounded_recovery(monkeypatch):
+    _load_mailbox()
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+    cfg["inbox"]["uid_recovery_days"] = 14
+    inbox.run(cfg, store)
+
+    FakeIMAP.uidvalidity = 2
+    FakeIMAP.mailbox = {
+        1: _raw("Acme <no-reply@greenhouse.io>", "Thank you for applying to Acme",
+                "We received your application.", "<new-epoch@greenhouse.io>"),
+    }
+    inbox.run(cfg, store)
+
+    assert store.meta_get("inbox:me@gmail.com:uidvalidity") == "2"
+    assert store.meta_get("inbox:me@gmail.com:last_uid") == "1"
+    health = store.source_health("inbox:me@gmail.com:INBOX")[0]
+    assert health["status"] == "recovered"
+    assert "last 14 day(s)" in health["detail"]
+    search_args = FakeIMAP.instances[-1].uid_calls[0][1]
+    assert "SINCE" in search_args
+    store.close()
+
+
+def test_uidvalidity_change_recovers_empty_folder_without_uidnext(monkeypatch):
+    _load_mailbox()
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+    inbox.run(cfg, store)
+
+    class NoUidNextIMAP(FakeIMAP):
+        def response(self, name):
+            if name.upper() == "UIDNEXT":
+                return ("UIDNEXT", [None])
+            return super().response(name)
+
+    FakeIMAP.uidvalidity = 2
+    FakeIMAP.mailbox = {}
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", NoUidNextIMAP)
+
+    assert inbox.run(cfg, store) == 0
+    assert store.meta_get("inbox:me@gmail.com:uidvalidity") == "2"
+    assert store.meta_get("inbox:me@gmail.com:last_uid") == "0"
+
+    FakeIMAP.mailbox = {
+        1: _raw("Acme <no-reply@greenhouse.io>", "Thank you for applying to Acme",
+                "We received your application.", "<after-empty@greenhouse.io>"),
+    }
+    assert inbox.run(cfg, store) == 0
+    assert any(event["message_id"] == "<after-empty@greenhouse.io>"
+               for event in store.mail_events())
+    store.close()
+
+
+def test_raised_imap_fetch_error_does_not_advance_watermark(monkeypatch):
+    _load_mailbox()
+
+    class RaisedFetchFailureIMAP(FakeIMAP):
+        def uid(self, command, *args):
+            if command.lower() == "fetch":
+                raise inbox.imaplib.IMAP4.error("server unavailable")
+            return super().uid(command, *args)
+
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", RaisedFetchFailureIMAP)
+    monkeypatch.setattr(inbox.time, "sleep", lambda _seconds: None)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+    cfg["inbox"]["imap_attempts"] = 1
+
+    assert inbox.run(cfg, store) == 1
+    assert store.meta_get("inbox:me@gmail.com:last_uid") is None
+    assert store.meta_get("inbox:me@gmail.com:uidvalidity") is None
+    store.close()
+
+
+def test_missing_uidvalidity_does_not_advance_watermark(monkeypatch):
+    _load_mailbox()
+    FakeIMAP.uidvalidity = None
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+
+    assert inbox.run(cfg, store) == 1
+
+    assert store.mail_events() == []
+    assert store.meta_get("inbox:me@gmail.com:last_uid") is None
+    health = store.source_health("inbox:me@gmail.com:INBOX")[0]
+    assert health["status"] == "error"
     store.close()
 
 
@@ -752,6 +955,7 @@ def test_uid_marker_inbox_uses_legacy_key():
     # INBOX keeps the pre-multi-folder key so existing watermarks stay valid.
     assert inbox._uid_marker("me@x.com", "INBOX") == "inbox:me@x.com:last_uid"
     assert inbox._uid_marker("me@x.com", "[Gmail]/Spam") == "inbox:me@x.com:[Gmail]/Spam:last_uid"
+    assert inbox._uidvalidity_marker("me@x.com", "INBOX") == "inbox:me@x.com:uidvalidity"
 
 
 def test_inbox_scans_spam_folder_when_enabled(monkeypatch):

@@ -7,7 +7,7 @@ import { ShellV2 } from '@/app/ShellV2'
 // index.html anti-FOUC script sets the same class from the 'jobscope-theme' key;
 // this keeps dev (uncached HTML) in sync and defaults to light when unset.
 if (typeof document !== 'undefined') {
-  let stored: string | null = null
+  let stored: string | null
   try {
     stored = localStorage.getItem('jobscope-theme')
   } catch {

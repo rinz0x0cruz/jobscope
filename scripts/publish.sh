@@ -7,10 +7,11 @@
 # publishes web/dist. main is never touched and your database/config never leave your
 # machine. Requires Node.js/npm. Commits use the rinz0x0cruz identity.
 #
-# Usage: scripts/publish.sh [--refresh] [--no-scan] [--encrypted] [--force] [repo-url] [branch]
+# Usage: scripts/publish.sh [--refresh] [--no-scan] [--encrypted] [--force] [--verify-only] [repo-url] [branch]
 #   --refresh    rerun scan -> match -> inbox first (fresh data on the published site)
 #   --no-scan    with --refresh, skip the slow job scan (rescore + inbox only)
 #   --encrypted  REQUIRED: bake the AES-256-GCM encrypted full dashboard the site unlocks with your passphrase (in-browser)
+#   --verify-only build and validate an isolated artifact, but do not update gh-pages
 #   defaults: https://github.com/rinz0x0cruz/jobscope.git  gh-pages
 set -euo pipefail
 
@@ -20,6 +21,7 @@ FORCE="${JOBSCOPE_PUBLISH_FORCE:-}"
 REFRESH=""
 NOSCAN=""
 ENCRYPTED=""
+VERIFY_ONLY=""
 POSITIONAL=()
 for arg in "$@"; do
     case "$arg" in
@@ -27,6 +29,7 @@ for arg in "$@"; do
         --refresh) REFRESH=1 ;;
         --no-scan) NOSCAN=1 ;;
         --encrypted) ENCRYPTED=1 ;;
+        --verify-only) VERIFY_ONLY=1 ;;
         *) POSITIONAL+=("$arg") ;;
     esac
 done
@@ -38,8 +41,14 @@ BRANCH="${2:-gh-pages}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-PY="$REPO_ROOT/.venv/bin/python"
-[ -x "$PY" ] || PY="python3"
+if [ -f "$REPO_ROOT/.venv/bin/python" ]; then
+    PY="$REPO_ROOT/.venv/bin/python"
+elif [ -f "$REPO_ROOT/.venv/Scripts/python.exe" ]; then
+    PY="$REPO_ROOT/.venv/Scripts/python.exe"
+else
+    PY="$(command -v python3 || command -v python || true)"
+fi
+[ -n "$PY" ] || { echo "error: Python not found (run setup first)" >&2; exit 1; }
 export PYTHONPATH=.
 
 # Whole-app auth: the public build ships NO data -- only the passphrase-encrypted blob
@@ -54,6 +63,41 @@ if [ -z "${ENCRYPTED:-}" ]; then
     } >&2
     exit 2
 fi
+
+# One publisher per checkout. A lock left by a dead process on this host is
+# reclaimed; a live or foreign-host lock is never disturbed.
+LOCK_DIR="$REPO_ROOT/.jobscope-publish.lock"
+HOST_NAME="$(hostname)"
+acquire_lock() {
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        printf '%s\n%s\n' "$$" "$HOST_NAME" > "$LOCK_DIR/owner"
+        return 0
+    fi
+    owner_pid="$(sed -n '1p' "$LOCK_DIR/owner" 2>/dev/null || true)"
+    owner_host="$(sed -n '2p' "$LOCK_DIR/owner" 2>/dev/null || true)"
+    if [ "$owner_host" = "$HOST_NAME" ] && [ -n "$owner_pid" ] \
+            && ! kill -0 "$owner_pid" 2>/dev/null; then
+        rm -rf "$LOCK_DIR"
+        mkdir "$LOCK_DIR"
+        printf '%s\n%s\n' "$$" "$HOST_NAME" > "$LOCK_DIR/owner"
+        return 0
+    fi
+    echo "error: another publisher holds $LOCK_DIR (pid=${owner_pid:-?}, host=${owner_host:-?})" >&2
+    return 1
+}
+acquire_lock
+
+STAGE_DIR=""
+cleanup() {
+    if [ -n "$STAGE_DIR" ]; then
+        rm -rf "$STAGE_DIR"
+    fi
+    rm -rf "$LOCK_DIR"
+}
+trap cleanup EXIT INT TERM
+STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/jobscope-publish.XXXXXX")"
+mkdir -p "$STAGE_DIR/data" "$STAGE_DIR/dist"
+export JOBSCOPE_EMIT_DIR="$STAGE_DIR/data"
 
 # 0. Optional data refresh: rerun the pipeline so the published site reflects the latest
 #    jobs and application emails. --refresh runs scan -> match -> inbox first; --no-scan
@@ -73,9 +117,8 @@ fi
 echo "==> Emitting the locked (empty) public dashboard JSON (jobscope dashboard --emit-json --public)"
 "$PY" -m jobscope dashboard --emit-json --public
 
-PUBLIC_JSON="$REPO_ROOT/data/dashboard.public.json"
+PUBLIC_JSON="$STAGE_DIR/data/dashboard.public.json"
 [ -f "$PUBLIC_JSON" ] || { echo "expected payload not found: $PUBLIC_JSON" >&2; exit 1; }
-cp "$PUBLIC_JSON" "$REPO_ROOT/web/src/data/dashboard.json"
 
 # 1b. Optional: encrypt the FULL un-redacted dashboard for the whole-site unlock.
 #     The heavy ciphertext ships as a separate lazily-fetched file (dist/site.enc.json);
@@ -83,13 +126,13 @@ cp "$PUBLIC_JSON" "$REPO_ROOT/web/src/data/dashboard.json"
 #     redacted build stays lean. Clear stale artifacts first so a plain redacted publish
 #     can't ship one. The un-redacted data never leaves the machine in the clear -- only
 #     the AES-256-GCM ciphertext (useless without the passphrase) is published.
-ENC_MARKER="$REPO_ROOT/web/src/data/applications.encrypted.json"  # baked pointer
-SITE_BLOB="$REPO_ROOT/data/site.enc.json"                          # heavy ciphertext (gitignored)
-rm -f "$ENC_MARKER" "$SITE_BLOB"
+ENC_MARKER="$STAGE_DIR/data/applications.encrypted.json"
+SITE_BLOB="$STAGE_DIR/data/site.enc.json"
+FULL_JSON=""
 if [ -n "${ENCRYPTED:-}" ]; then
     echo "==> Emitting un-redacted data + encrypting the full dashboard for the SPA"
     "$PY" -m jobscope dashboard --emit-json   # -> data/dashboard.json (has applications; gitignored)
-    FULL_JSON="$REPO_ROOT/data/dashboard.json"
+    FULL_JSON="$STAGE_DIR/data/dashboard.json"
     [ -f "$FULL_JSON" ] || { echo "expected payload not found: $FULL_JSON" >&2; exit 1; }
     PASS="${JOBSCOPE_APPS_PASSPHRASE:-}"
     if [ -z "$PASS" ]; then
@@ -106,9 +149,12 @@ fi
 # 2. Build the web dashboard (Vite/React) with the redacted data (and, if --encrypted,
 #    the encrypted applications blob) baked in.
 echo "==> Building web dashboard (npm run build)"
+DIST="$STAGE_DIR/dist"
+export JOBSCOPE_DASHBOARD_JSON="$PUBLIC_JSON"
+export JOBSCOPE_ENCRYPTED_JSON="$ENC_MARKER"
+export JOBSCOPE_BUILD_OUT_DIR="$DIST"
 ( cd "$REPO_ROOT/web" && npm run build )
 
-DIST="$REPO_ROOT/web/dist"
 [ -f "$DIST/index.html" ] || { echo "expected build output not found: $DIST/index.html" >&2; exit 1; }
 
 # Ship the heavy encrypted blob as a separate file next to the SPA (fetched lazily
@@ -116,6 +162,21 @@ DIST="$REPO_ROOT/web/dist"
 if [ -n "${ENCRYPTED:-}" ] && [ -f "$SITE_BLOB" ]; then
     cp "$SITE_BLOB" "$DIST/site.enc.json"
     echo "==> Bundled encrypted blob -> $DIST/site.enc.json (lazy-fetched on unlock)"
+fi
+
+SOURCE_COMMIT="$(git rev-parse HEAD)"
+echo "==> Validating isolated publication artifact"
+"$PY" -m jobscope.deliver.publish_artifact \
+    --public "$PUBLIC_JSON" \
+    --full "$FULL_JSON" \
+    --encrypted "$SITE_BLOB" \
+    --marker "$ENC_MARKER" \
+    --dist "$DIST" \
+    --source-commit "$SOURCE_COMMIT"
+
+if [ -n "${VERIFY_ONLY:-}" ]; then
+    echo "==> Artifact verified; --verify-only requested, skipping push."
+    exit 0
 fi
 
 # Publish gate: only the designated publisher (the machine that ran
@@ -140,6 +201,10 @@ EMAIL="rinz0x0cruz@users.noreply.github.com"
 if [ ! -d "$DASH_DIR/.git" ]; then
     git clone --quiet --branch "$BRANCH" --single-branch "$REPO" "$DASH_DIR"
 fi
+
+git -C "$DASH_DIR" fetch --quiet origin "$BRANCH"
+git -C "$DASH_DIR" checkout -q "$BRANCH"
+git -C "$DASH_DIR" reset --hard "origin/$BRANCH" >/dev/null
 
 # Replace the published files with the fresh build (hashed asset names change per build).
 find "$DASH_DIR" -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +

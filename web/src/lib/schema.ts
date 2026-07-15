@@ -24,6 +24,7 @@ export interface CompSummary {
   interval?: string
   currency?: string
   source?: string
+  source_url?: string
   range?: string
 }
 

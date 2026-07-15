@@ -7,3 +7,8 @@ declare module '*.json' {
   const value: unknown
   export default value
 }
+
+declare module 'virtual:jobscope-data' {
+  export const dashboard: unknown
+  export const encryptedSite: unknown
+}

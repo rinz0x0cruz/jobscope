@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "detect-secrets>=1.5"]
+dev = ["pytest==8.3.4", "ruff==0.12.4", "detect-secrets==1.5.0"]
 # Optional OS-keychain storage for secrets (Windows Credential Manager / macOS
 # Keychain / Secret Service). The tool falls back to environment/.env without it.
 secure = ["keyring>=24"]

@@ -13,6 +13,7 @@ import re
 
 from jobscope.core import ai
 from jobscope.deliver import pdf
+from jobscope import enrich as enrichment
 from jobscope.core.model import Application, Resume, slugify
 from jobscope.analyze.resume import SKILL_LEXICON
 from jobscope.core.store import now_iso
@@ -30,7 +31,7 @@ def run(cfg: dict, store, job_id: str) -> int:
         return 1
 
     analysis = analyze(resume, job)
-    enr = store.get_enrichment(job.company) if job.company else {}
+    enr = enrichment.for_job(store, job)
 
     summary = _tailored_summary(cfg, store, resume, job, analysis)
     resume_md = _build_resume(resume, job, analysis, summary)

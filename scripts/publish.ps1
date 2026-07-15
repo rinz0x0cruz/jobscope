@@ -37,6 +37,9 @@
     enter. Prompted for the passphrase (or set $env:JOBSCOPE_APPS_PASSPHRASE, or store
     it via `jobscope secrets set JOBSCOPE_APPS_PASSPHRASE`).
 
+.PARAMETER VerifyOnly
+    Build and validate the isolated encrypted artifact, but do not update gh-pages.
+
 .EXAMPLE
     ./scripts/publish.ps1 -Encrypted
 
@@ -50,7 +53,8 @@ param(
     [switch]$Refresh,
     [switch]$NoScan,
     [switch]$Encrypted,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$VerifyOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,6 +79,45 @@ if (-not $Encrypted) {
     throw 'Refusing to publish without encryption: since the whole-app-auth change the public build ships no data, so a non-encrypted publish would be a dead, unopenable site. Re-run with -Encrypted (set $env:JOBSCOPE_APPS_PASSPHRASE, or store it via: jobscope secrets set JOBSCOPE_APPS_PASSPHRASE).'
 }
 
+# One publisher per checkout. Bash and PowerShell use the same two-line owner
+# file (PID, host), so scheduled/manual publishers exclude one another.
+$LockDir = Join-Path $RepoRoot ".jobscope-publish.lock"
+$HostName = [Environment]::MachineName
+function Enter-PublishLock([string]$Path) {
+    try {
+        New-Item -ItemType Directory -Path $Path -ErrorAction Stop | Out-Null
+    }
+    catch {
+        $owner = @(Get-Content (Join-Path $Path "owner") -ErrorAction SilentlyContinue)
+        $ownerPid = 0
+        if ($owner.Count -ge 1) { [void][int]::TryParse($owner[0], [ref]$ownerPid) }
+        $ownerHost = if ($owner.Count -ge 2) { $owner[1].Trim() } else { "" }
+        $ownerAlive = $ownerPid -gt 0 -and $null -ne (
+            Get-Process -Id $ownerPid -ErrorAction SilentlyContinue)
+        if ($ownerHost -and $ownerHost -ieq $HostName -and -not $ownerAlive) {
+            Remove-Item $Path -Recurse -Force
+            New-Item -ItemType Directory -Path $Path -ErrorAction Stop | Out-Null
+        }
+        else {
+            throw "another publisher holds $Path (pid=$($ownerPid -as [string]), host=$ownerHost)"
+        }
+    }
+    Set-Content -Path (Join-Path $Path "owner") -Value @($PID, $HostName) -Encoding ascii
+}
+
+$OldEmitDir = $env:JOBSCOPE_EMIT_DIR
+$OldDashboardJson = $env:JOBSCOPE_DASHBOARD_JSON
+$OldEncryptedJson = $env:JOBSCOPE_ENCRYPTED_JSON
+$OldBuildOutDir = $env:JOBSCOPE_BUILD_OUT_DIR
+$StageDir = $null
+
+Enter-PublishLock $LockDir
+try {
+$StageDir = Join-Path ([IO.Path]::GetTempPath()) ("jobscope-publish-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path (Join-Path $StageDir "data") -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $StageDir "dist") -Force | Out-Null
+$env:JOBSCOPE_EMIT_DIR = Join-Path $StageDir "data"
+
 # 0. Optional data refresh: rerun the pipeline so the published site reflects the latest
 #    jobs and application emails. -Refresh runs scan -> match -> inbox first; -NoScan
 #    skips the slow networked job scan and just rescores + syncs the inbox.
@@ -97,9 +140,8 @@ Write-Host "==> Emitting the locked (empty) public dashboard JSON (jobscope dash
 & $Py -m jobscope dashboard --emit-json --public
 if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json --public failed (exit $LASTEXITCODE)" }
 
-$PublicJson = Join-Path $RepoRoot "data\dashboard.public.json"
+$PublicJson = Join-Path $StageDir "data\dashboard.public.json"
 if (-not (Test-Path $PublicJson)) { throw "expected payload not found: $PublicJson" }
-Copy-Item $PublicJson (Join-Path $RepoRoot "web\src\data\dashboard.json") -Force
 
 # 1b. Optional: bake an end-to-end encrypted applications blob into the SPA so the
 #     Applications tab can decrypt it in-browser (AES-256-GCM, passphrase-gated). This
@@ -107,14 +149,13 @@ Copy-Item $PublicJson (Join-Path $RepoRoot "web\src\data\dashboard.json") -Force
 #     into the bundle. Always clear a stale blob first, so a plain redacted publish can
 #     never ship one. The un-redacted data never leaves your machine in the clear --
 #     only the encrypted blob is published -- so it is safe to host publicly.
-$EncMarker = Join-Path $RepoRoot "web\src\data\applications.encrypted.json"  # baked pointer
-$SiteBlob  = Join-Path $RepoRoot "data\site.enc.json"                        # heavy ciphertext (gitignored)
-Remove-Item $EncMarker, $SiteBlob -Force -ErrorAction SilentlyContinue
+$EncMarker = Join-Path $StageDir "data\applications.encrypted.json"
+$SiteBlob  = Join-Path $StageDir "data\site.enc.json"
+$FullJson = Join-Path $StageDir "data\dashboard.json"
 if ($Encrypted) {
     Write-Host "==> Emitting un-redacted data + encrypting the full dashboard for the SPA"
     & $Py -m jobscope dashboard --emit-json   # -> data\dashboard.json (has applications; gitignored, local only)
     if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json failed (exit $LASTEXITCODE)" }
-    $FullJson = Join-Path $RepoRoot "data\dashboard.json"
     if (-not (Test-Path $FullJson)) { throw "expected payload not found: $FullJson" }
 
     # Passphrase resolution: env var (unattended) -> OS keychain (jobscope secrets
@@ -151,6 +192,10 @@ if ($Encrypted) {
 # 2. Build the web dashboard (Vite/React) with the redacted data (and, if -Encrypted,
 #    the encrypted applications blob) baked in.
 Write-Host "==> Building web dashboard (npm run build)"
+$Dist = Join-Path $StageDir "dist"
+$env:JOBSCOPE_DASHBOARD_JSON = $PublicJson
+$env:JOBSCOPE_ENCRYPTED_JSON = $EncMarker
+$env:JOBSCOPE_BUILD_OUT_DIR = $Dist
 Push-Location (Join-Path $RepoRoot "web")
 try {
     # npm/Vite print progress and a benign lottie-web `eval` warning to stderr; under
@@ -167,7 +212,6 @@ try {
 }
 finally { Pop-Location }
 
-$Dist = Join-Path $RepoRoot "web\dist"
 if (-not (Test-Path (Join-Path $Dist "index.html"))) { throw "expected build output not found: $Dist\index.html" }
 
 # Ship the heavy encrypted blob as a separate file next to the SPA (fetched lazily
@@ -175,6 +219,23 @@ if (-not (Test-Path (Join-Path $Dist "index.html"))) { throw "expected build out
 if ($Encrypted -and (Test-Path $SiteBlob)) {
     Copy-Item $SiteBlob (Join-Path $Dist "site.enc.json") -Force
     Write-Host "==> Bundled encrypted blob -> $Dist\site.enc.json (lazy-fetched on unlock)"
+}
+
+$SourceCommit = (git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw "git rev-parse HEAD failed (exit $LASTEXITCODE)" }
+Write-Host "==> Validating isolated publication artifact"
+& $Py -m jobscope.deliver.publish_artifact `
+    --public $PublicJson `
+    --full $FullJson `
+    --encrypted $SiteBlob `
+    --marker $EncMarker `
+    --dist $Dist `
+    --source-commit $SourceCommit
+if ($LASTEXITCODE -ne 0) { throw "publication artifact validation failed (exit $LASTEXITCODE)" }
+
+if ($VerifyOnly) {
+    Write-Host "==> Artifact verified; -VerifyOnly requested, skipping push."
+    return
 }
 
 # Publish gate: only the designated publisher (the machine that ran
@@ -248,4 +309,17 @@ try {
 finally {
     $ErrorActionPreference = $eapPrev
     Pop-Location
+}
+}
+finally {
+    if ($null -eq $OldEmitDir) { Remove-Item Env:JOBSCOPE_EMIT_DIR -ErrorAction SilentlyContinue }
+    else { $env:JOBSCOPE_EMIT_DIR = $OldEmitDir }
+    if ($null -eq $OldDashboardJson) { Remove-Item Env:JOBSCOPE_DASHBOARD_JSON -ErrorAction SilentlyContinue }
+    else { $env:JOBSCOPE_DASHBOARD_JSON = $OldDashboardJson }
+    if ($null -eq $OldEncryptedJson) { Remove-Item Env:JOBSCOPE_ENCRYPTED_JSON -ErrorAction SilentlyContinue }
+    else { $env:JOBSCOPE_ENCRYPTED_JSON = $OldEncryptedJson }
+    if ($null -eq $OldBuildOutDir) { Remove-Item Env:JOBSCOPE_BUILD_OUT_DIR -ErrorAction SilentlyContinue }
+    else { $env:JOBSCOPE_BUILD_OUT_DIR = $OldBuildOutDir }
+    if ($StageDir) { Remove-Item $StageDir -Recurse -Force -ErrorAction SilentlyContinue }
+    Remove-Item $LockDir -Recurse -Force -ErrorAction SilentlyContinue
 }

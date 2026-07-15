@@ -13,6 +13,7 @@ import webbrowser
 
 from jobscope.core import ai
 from jobscope.deliver import email
+from jobscope import enrich as enrichment
 from . import tailor
 from jobscope.core.model import Application
 from jobscope.core.store import now_iso
@@ -39,7 +40,7 @@ def prep(cfg: dict, store, job_id: str, notify: bool = True) -> int:
 
     app = {a["job_id"]: a for a in store.applications()}.get(job_id, {})
     pkg = app.get("package_dir") or _default_pkg(cfg, job)
-    enr = store.get_enrichment(job.company) if job.company else {}
+    enr = enrichment.for_job(store, job)
     contacts = store.contacts_for(job.company) if job.company else []
 
     answers = _filled_answers(cfg, store, resume, job)
@@ -52,6 +53,10 @@ def prep(cfg: dict, store, job_id: str, notify: bool = True) -> int:
     if not brief_data:
         from jobscope.enrich import brief as _brief
         brief_data = _brief.build(cfg, store, job.company, job, enr or {})
+        store.save_job_analysis(
+            job.id, resume_base=job.resume_base or "",
+            version=enrichment.ANALYSIS_VERSION, brief=brief_data,
+        )
     _write(pkg, "company-brief.md",
            f"# Company brief -- {job.company} ({job.title})\n\n{brief_data.get('text', '')}\n")
 

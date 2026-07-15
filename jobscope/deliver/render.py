@@ -15,6 +15,7 @@ from typing import Any
 
 from jobscope.core import companies
 from jobscope.core.store import now_iso
+from jobscope import enrich as enrichment
 
 TIER_COLORS = {"Strong": "#16a34a", "Good": "#2563eb", "Stretch": "#d97706", "Skip": "#6b7280"}
 
@@ -93,7 +94,7 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
         resumes = {}
     default_resume = next(iter(resumes.values()), None)
     rows = _dedupe([
-        _job_record(j, store.get_enrichment(j.company) if j.company else {}, store, stale_days,
+        _job_record(j, enrichment.for_job(store, j), store, stale_days,
                     resumes.get(j.resume_base) or default_resume)
         for j in jobs
     ])
@@ -108,7 +109,8 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
 
 def _json_path(cfg: dict, public: bool) -> str:
     db = cfg["output"].get("db_path") or "data/jobscope.db"
-    directory = os.path.dirname(os.path.abspath(db)) or "."
+    directory = os.environ.get("JOBSCOPE_EMIT_DIR") or (
+        os.path.dirname(os.path.abspath(db)) or ".")
     return os.path.join(directory, "dashboard.public.json" if public else "dashboard.json")
 
 

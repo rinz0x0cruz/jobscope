@@ -26,6 +26,7 @@ Usage:
     python -m jobscope purge [--mail --applications --older-than N]  Wipe stored email PII / apps
     python -m jobscope prune [--yes]               Drop stored jobs outside your India/remote scope
     python -m jobscope secrets [set|list|rm|import-env]  Store secrets in the OS keychain
+    python -m jobscope doctor                       Offline operational readiness checks
     python -m jobscope selftest                     Offline self-tests (no network)
 """
 from __future__ import annotations
@@ -238,6 +239,11 @@ def cmd_export(args, cfg):
 def cmd_selftest(args, cfg):
     from . import selftest
     return selftest.run()
+
+
+def cmd_doctor(args, cfg):
+    from . import doctor
+    return doctor.run(cfg)
 
 
 def _secret_names(cfg) -> list[str]:
@@ -550,6 +556,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Env-var name (e.g. JOBSCOPE_GMAIL_APP_PW) for set/rm")
     sp.set_defaults(func=cmd_secrets)
 
+    sub.add_parser("doctor", help="Offline operational readiness checks").set_defaults(func=cmd_doctor)
     sub.add_parser("selftest", help="Offline self-tests (no network)").set_defaults(func=cmd_selftest)
     return p
 

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { Settings } from '@/features/settings'
 import type { SettingsProps } from '@/features/settings'
-import { ScoreFormatProvider } from '@/hooks/useScoreFormat'
+import { ScoreFormatProvider } from '@/hooks/ScoreFormatProvider'
 import type { Profile } from '@/lib/schema'
 
 const profile: Profile = {

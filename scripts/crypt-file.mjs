@@ -48,6 +48,10 @@ if (mode === "encrypt") {
     console.error("error: not a JSDB-encrypted file (bad magic / too short)");
     process.exit(1);
   }
+  if (input[MAGIC.length] !== 1) {
+    console.error(`error: unsupported JSDB version ${input[MAGIC.length]}`);
+    process.exit(1);
+  }
   const salt = input.subarray(5, 21);
   const iv = input.subarray(21, 33);
   const tag = input.subarray(input.length - TAG);

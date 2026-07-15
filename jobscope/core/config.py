@@ -103,6 +103,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Per-task overrides (only used when quorum.enabled). Empty -> use `strategy`.
         "strategy_generative": "council",  # summary / cover letter / "why here" (higher quality)
         "strategy_classify": "ensemble",   # seniority / email labels (self-consistency vote)
+        "rate_limit_rpm": 0,   # 0 = unpaced; use ~18 for OpenRouter's 20 RPM free ceiling
+        "fallbacks": [],       # exact provider:model refs tried in order after a failed call
     },
     "email": {
         "enabled": False,
@@ -124,6 +126,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "include_spam": False,   # also sweep the spam folder -- a real application email misfiled as spam is still caught
         "spam_folder": "[Gmail]/Spam",  # Gmail's IMAP spam folder (localize if your account isn't English)
         "lookback_days": 90,     # first run scans this far back; later runs are incremental
+        "uid_recovery_days": 30, # bounded replay if Gmail resets the folder's UIDVALIDITY epoch
+        "imap_attempts": 3,      # reconnect on transient IMAP abort/network failures
+        "classification_chars": 6000, # body text inspected in memory; stored snippets remain <=500 chars
         "store_snippets": False, # persist a short email-body excerpt? off = classify in memory then discard (less PII at rest)
     },
     "apply": {

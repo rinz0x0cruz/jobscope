@@ -10,7 +10,10 @@ export function useSearchState() {
   // Stabilise across renders (keyed on the serialised search) so downstream
   // useMemo selectors don't recompute every render.
   const key = JSON.stringify(raw)
-  const state = useMemo(() => searchSchema.parse(raw), [key])
+  const state = useMemo(
+    () => searchSchema.parse(JSON.parse(key) as Record<string, unknown>),
+    [key],
+  )
   const navigate = useNavigate()
 
   const set = (patch: Partial<SearchState>, opts?: { replace?: boolean }) => {

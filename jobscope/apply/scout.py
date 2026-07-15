@@ -42,13 +42,17 @@ def scout(cfg: dict, store, company: str, *, provider: Optional[str] = None,
                           f"Try an explicit board, e.g. \"{company}|lever|<slug>\".")}
     name, prov, board_slug = resolved
 
-    try:
-        board = ats.fetch_company(name, prov, board_slug)
-    except Exception as exc:  # noqa: BLE001 - surface a friendly error to the caller
-        return {"ok": False, "error": f"could not fetch the {prov} board: {str(exc)[:120]}"}
+    fetch = ats.fetch_company_result(name, prov, board_slug)
+    if not fetch.successful:
+        return {
+            "ok": False,
+            "error": f"could not fetch the {prov} board ({fetch.status.value}): {fetch.detail}",
+        }
+    board = fetch.jobs
 
     result: dict[str, Any] = {"ok": True, "company": name, "provider": prov,
                               "slug": board_slug, "count": len(board),
+                              "source_status": fetch.status.value,
                               "matched": 0, "saved": 0, "results": []}
     if not board:
         return result

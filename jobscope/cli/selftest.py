@@ -7,6 +7,69 @@ from __future__ import annotations
 
 import os
 import tempfile
+from contextlib import contextmanager
+
+
+def _http_result(httpx, fetch, url, **kwargs):
+     data = fetch(url, **kwargs)
+     return httpx.HttpResult(
+          ok=data is not None,
+          status_code=200 if data is not None else None,
+          attempts=1,
+          data=data,
+          error="selftest request failure" if data is None else "",
+     )
+
+
+def _ats_payload(url, **_kwargs):
+     if "greenhouse" not in url:
+          return None
+     return {"jobs": [
+          {"title": "Security Engineer", "location": {"name": "Bengaluru, India"},
+           "absolute_url": "https://x/1", "content": "<p>a &amp; b</p>",
+           "updated_at": "2026-06-30T00:00:00-04:00"},
+          {"title": "Account Executive", "location": {"name": "Bengaluru, India"},
+           "absolute_url": "https://x/2", "content": "sell", "updated_at": ""},
+     ]}
+
+
+@contextmanager
+def _stub_ats_http(ats, fetch):
+     original = ats.httpx.get_json_result
+     ats.httpx.get_json_result = lambda url, **kwargs: _http_result(
+          ats.httpx, fetch, url, **kwargs)
+     try:
+          yield
+     finally:
+          ats.httpx.get_json_result = original
+
+
+def _selftest_ingest(c):
+    _selftest_inbox(c)
+    from ..core.config import load_config
+    from ..core.store import Store
+    from ..ingest import ats
+
+    with _stub_ats_http(ats, _ats_payload):
+        c.ok("ats resolves known slug",
+             ats._resolve("databricks") == ("databricks", "greenhouse", "databricks"))
+        c.ok("ats resolves explicit override", ats._resolve("A|lever|a") == ("A", "lever", "a"))
+        boards = ats.fetch_company("Databricks", "greenhouse", "databricks")
+        c.ok("ats parses greenhouse board", len(boards) == 2 and boards[0].source == "ats")
+        c.ok("ats strips + unescapes html", boards[0].description == "a & b")
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(os.path.join(tmp, "a.db"))
+            cfg = load_config(None)
+            cfg["search"].update(terms=["security engineer"], country_indeed="India",
+                                 is_remote=True, companies=["databricks"])
+            c.ok("ats run filters role + upserts", ats.run(cfg, store) == 1)
+            job_id = store.jobs()[0].id
+            c.ok("reconcile ignores empty liveset",
+                 store.reconcile_open("ats", "databricks", set()) == 0)
+            c.ok("reconcile closes missing job",
+                 store.reconcile_open("ats", "databricks", {"https://other"}) == 1)
+            c.ok("closed status persists", store.get_job(job_id).status == "closed")
+            store.close()
 
 
 class _Check:
@@ -106,48 +169,8 @@ def run() -> int:
     except ImportError:
         pass  # not yet built
 
-    # --- inbox (deterministic email classification; no network) ----------
-    _selftest_inbox(c)
-
-    # --- ats (direct company boards; HTTP stubbed, no network) -----------
-    from ..ingest import ats
-
-    def _stub(url, **_kw):
-        if "greenhouse" in url:
-            return {"jobs": [
-                {"title": "Security Engineer", "location": {"name": "Bengaluru, India"},
-                 "absolute_url": "https://x/1", "content": "<p>a &amp; b</p>",
-                 "updated_at": "2026-06-30T00:00:00-04:00"},
-                {"title": "Account Executive", "location": {"name": "Bengaluru, India"},
-                 "absolute_url": "https://x/2", "content": "sell", "updated_at": ""},
-            ]}
-        return None
-
-    _orig_get_json = ats.httpx.get_json
-    ats.httpx.get_json = _stub
-    try:
-        c.ok("ats resolves known slug",
-             ats._resolve("databricks") == ("databricks", "greenhouse", "databricks"))
-        c.ok("ats resolves explicit override", ats._resolve("A|lever|a") == ("A", "lever", "a"))
-        boards = ats.fetch_company("Databricks", "greenhouse", "databricks")
-        c.ok("ats parses greenhouse board", len(boards) == 2 and boards[0].source == "ats")
-        c.ok("ats strips + unescapes html", boards[0].description == "a & b")
-        with tempfile.TemporaryDirectory() as tmp:
-            store = Store(os.path.join(tmp, "a.db"))
-            cfg2 = load_config(None)
-            cfg2["search"].update(terms=["security engineer"], country_indeed="India",
-                                  is_remote=True, companies=["databricks"])
-            c.ok("ats run filters role + upserts", ats.run(cfg2, store) == 1)
-            jid = store.jobs()[0].id
-            c.ok("reconcile ignores empty liveset",
-                 store.reconcile_open("ats", "databricks", set()) == 0)
-            c.ok("reconcile closes missing job",
-                 store.reconcile_open("ats", "databricks", {"https://other"}) == 1)
-            c.ok("closed status persists", store.get_job(jid).status == "closed")
-            store.close()
-    finally:
-        ats.httpx.get_json = _orig_get_json
-
+    # --- inbox + ATS (deterministic / HTTP stubbed; no network) ----------
+    _selftest_ingest(c)
     total = c.passed + c.failed
     print(f"\n  {c.passed}/{total} checks passed")
     return 0 if c.failed == 0 else 1

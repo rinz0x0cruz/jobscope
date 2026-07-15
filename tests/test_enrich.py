@@ -7,15 +7,19 @@ from jobscope.core.model import Job
 def test_comp_formats_range_and_links():
     job = Job(company="Acme Inc", salary_min=120000, salary_max=150000,
               currency="USD", salary_interval="yearly")
-    out = comp.enrich("Acme Inc", job)
-    assert out["range"] == "$120k–$150k/yearly"
-    assert "levels.fyi" in out["levels_fyi"]
+    company = comp.enrich("Acme Inc", job)
+    posting = comp.posting(job)
+    assert posting["range"] == "$120k–$150k/yearly"
+    assert posting["source"] == "posting"
+    assert "range" not in company
+    assert "levels.fyi" in company["levels_fyi"]
 
 
 def test_comp_without_salary_still_gives_links():
     out = comp.enrich("Acme", Job(company="Acme"))
     assert "range" not in out
     assert out["levels_search"].startswith("https://www.levels.fyi")
+    assert comp.posting(Job(company="Acme")) == {}
 
 
 # ---- reddit sentiment lexicon ------------------------------------------

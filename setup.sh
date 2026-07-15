@@ -13,7 +13,7 @@ echo "==> Upgrading pip"
 python -m pip install --upgrade pip
 
 echo "==> Installing dependencies"
-pip install -r requirements.txt
+pip install -r requirements.lock
 
 echo "==> Installing Chromium (Playwright) for PDF + assisted apply"
 python -m playwright install chromium

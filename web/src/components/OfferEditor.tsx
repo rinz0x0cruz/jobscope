@@ -25,13 +25,6 @@ export function OfferEditor({ app }: { app: Application }) {
     }
   }, [])
 
-  // re-seed when the drawer switches to a different application
-  useEffect(() => {
-    setInterviewAt(app.interview_at || '')
-    setSalary(app.salary_offered || '')
-    setDecision(app.offer_accepted || '')
-  }, [app.job_id, app.interview_at, app.salary_offered, app.offer_accepted])
-
   if (!token) return null
 
   const dirty =

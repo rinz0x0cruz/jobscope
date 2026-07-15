@@ -122,6 +122,8 @@ quorum:
   # or e.g. "refine" to minimise cost on free-tier keys.
   strategy_generative: council        # summary / cover letter / "why here"
   strategy_classify: ensemble         # seniority + email labels (self-consistency)
+  rate_limit_rpm: 0                    # use ~18 for OpenRouter's 20 RPM free ceiling
+  fallbacks: []                        # exact provider:model refs; never a random router
   # members:                          # optional extra models; omit to self-refine ai.model
   #   - { name: a, provider: openrouter, model: google/gemma-4-31b-it:free }
 
@@ -153,6 +155,9 @@ inbox:
   include_spam: false                 # also scan the spam folder (catches a real application email Gmail misfiled as spam)
   spam_folder: "[Gmail]/Spam"         # Gmail's IMAP spam folder name (localize if your Gmail isn't in English)
   lookback_days: 90                   # first run scans this far back; later runs are incremental
+  uid_recovery_days: 30               # bounded replay when Gmail changes a folder's UIDVALIDITY epoch
+  imap_attempts: 3                    # reconnect on transient IMAP abort/network failures
+  classification_chars: 6000          # body text inspected in memory; stored snippets remain <=500 chars
   store_snippets: false               # persist a short email-body excerpt? off = classify in memory then discard (less PII at rest)
 
 apply:

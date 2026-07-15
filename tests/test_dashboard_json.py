@@ -295,6 +295,69 @@ def test_build_data_matches_contract():
         store.close()
 
 
+def test_same_company_roles_keep_distinct_job_analysis():
+    from jobscope.enrich import ANALYSIS_VERSION
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = load_config("__no_such_config_for_tests__.yaml")
+        cfg["output"]["db_path"] = os.path.join(tmp, "analysis.db")
+        store = Store(cfg["output"]["db_path"])
+        first = Job(
+            source="ats", title="Security Engineer", company="Acme",
+            url="https://example.test/one", tier="Good", score=70,
+            salary_min=100000, salary_max=120000, salary_interval="yearly",
+            currency="USD",
+        ).ensure_id()
+        second = Job(
+            source="ats", title="Security Architect", company="Acme",
+            url="https://example.test/two", tier="Strong", score=85,
+            salary_min=180000, salary_max=220000, salary_interval="yearly",
+            currency="USD",
+        ).ensure_id()
+        store.upsert_job(first)
+        store.upsert_job(second)
+        store.save_enrichment(
+            "Acme", comp={"levels_fyi": "https://levels.example/acme"})
+        store.save_job_analysis(
+            first.id, resume_base="", version=ANALYSIS_VERSION,
+            comp={"range": "$100k-$120k/yearly", "source": "posting"},
+            brief={"text": "Engineer-specific brief"},
+        )
+        store.save_job_analysis(
+            second.id, resume_base="", version=ANALYSIS_VERSION,
+            comp={"range": "$180k-$220k/yearly", "source": "posting"},
+            brief={"text": "Architect-specific brief"},
+        )
+
+        rows = {row["id"]: row for row in render.build_data(cfg, store)["rows"]}
+
+        assert rows[first.id]["enrich"]["comp"]["range"] == "$100k–$120k/yearly"
+        assert rows[second.id]["enrich"]["comp"]["range"] == "$180k–$220k/yearly"
+        assert rows[first.id]["brief"] == "Engineer-specific brief"
+        assert rows[second.id]["brief"] == "Architect-specific brief"
+        assert rows[first.id]["enrich"]["comp"]["levels_fyi"] == "https://levels.example/acme"
+        assert rows[second.id]["enrich"]["comp"]["levels_fyi"] == "https://levels.example/acme"
+        store.close()
+
+
+def test_emit_json_honors_isolated_output_directory(tmp_path, monkeypatch):
+    cfg = load_config("__no_such_config_for_tests__.yaml")
+    cfg["output"]["db_path"] = str(tmp_path / "data" / "jobscope.db")
+    isolated = tmp_path / "publish-stage"
+    isolated.mkdir()
+    monkeypatch.setenv("JOBSCOPE_EMIT_DIR", str(isolated))
+    store = Store(cfg["output"]["db_path"])
+
+    public_path = render.emit_json(cfg, store, public=True)
+    full_path = render.emit_json(cfg, store, public=False)
+
+    assert public_path == str(isolated / "dashboard.public.json")
+    assert full_path == str(isolated / "dashboard.json")
+    assert (isolated / "dashboard.public.json").is_file()
+    assert (isolated / "dashboard.json").is_file()
+    store.close()
+
+
 def test_applied_outreach_takes_one_best_contact_per_company():
     """One contact per applied company -- the single highest-confidence address."""
     with tempfile.TemporaryDirectory() as tmp:

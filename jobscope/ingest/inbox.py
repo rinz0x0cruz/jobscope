@@ -26,6 +26,9 @@ import email as _email
 import email.utils as _eu
 import hashlib
 import imaplib
+import re
+import time
+from dataclasses import dataclass
 from email.header import decode_header, make_header
 from typing import Optional
 
@@ -36,6 +39,20 @@ from jobscope.core.store import now_iso
 from . import mailrules
 
 _HEADER_FIELDS = "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)])"
+
+
+class _TransientIMAPError(RuntimeError):
+    pass
+
+
+class _InboxStateError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class _AccountSyncResult:
+    count: int
+    ok: bool
 
 
 def run(cfg: dict, store, *, dry_run: bool = False, account: Optional[str] = None,
@@ -63,9 +80,12 @@ def run(cfg: dict, store, *, dry_run: bool = False, account: Optional[str] = Non
         return 0
 
     total_new = 0
+    failed_accounts = 0
     for acct in accounts:
-        total_new += _sync_account(cfg, store, acct, dry_run=dry_run, since=since,
-                                   backfill=backfill)
+        result = _sync_account(
+            cfg, store, acct, dry_run=dry_run, since=since, backfill=backfill)
+        total_new += result.count
+        failed_accounts += not result.ok
 
     if not dry_run:
         # Rebuild the funnel from the timeline so a rejection for one application
@@ -78,7 +98,7 @@ def run(cfg: dict, store, *, dry_run: bool = False, account: Optional[str] = Non
           f"{len(accounts)} account(s).")
     if total_new and not dry_run:
         print("  next: python -m jobscope track   |   python -m jobscope dashboard --open")
-    return 0
+    return 1 if failed_accounts else 0
 
 
 def _folders_for(icfg: dict) -> list[str]:
@@ -99,8 +119,32 @@ def _uid_marker(addr: str, folder: str) -> str:
     return f"inbox:{addr}:last_uid" if folder == "INBOX" else f"inbox:{addr}:{folder}:last_uid"
 
 
+def _uidvalidity_marker(addr: str, folder: str) -> str:
+    suffix = "uidvalidity" if folder == "INBOX" else f"{folder}:uidvalidity"
+    return f"inbox:{addr}:{suffix}"
+
+
+def _response_number(M, name: str) -> int | None:
+    try:
+        _typ, data = M.response(name)
+    except imaplib.IMAP4.abort:
+        raise
+    except OSError as exc:
+        raise _TransientIMAPError(f"IMAP {name} response failed: {exc}") from exc
+    except (AttributeError, imaplib.IMAP4.error):
+        return None
+    if not data:
+        return None
+    raw = b" ".join(
+        item if isinstance(item, bytes) else str(item).encode("ascii", errors="ignore")
+        for item in data if item is not None
+    )
+    match = re.search(rb"\d+", raw)
+    return int(match.group()) if match else None
+
+
 def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optional[str],
-                  backfill: bool) -> int:
+                  backfill: bool) -> _AccountSyncResult:
     icfg = cfg["inbox"]
     addr = (acct.get("email") or "").strip()
     pw = inbox_password(cfg, acct)
@@ -108,18 +152,18 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
         env = acct.get("password_env", "?")
         print(f"  [skip] {addr or '(no email)'}: missing app password "
               f"(set env {env} in .env)")
-        return 0
+        source = f"inbox:{addr or '(missing account)'}"
+        store.log_run(source, 0, "error")
+        store.set_source_health(
+            source, provider="imap", slug=addr, status="error",
+            detail=f"missing app password reference {env}",
+        )
+        return _AccountSyncResult(0, False)
 
     host = icfg.get("imap_host", "imap.gmail.com")
     port = int(icfg.get("imap_port", 993))
     lookback_days = int(acct.get("lookback_days", icfg.get("lookback_days", 90)))
-
-    try:
-        M = imaplib.IMAP4_SSL(host, port)
-    except OSError as exc:  # noqa: BLE001 - network setup is best-effort
-        print(f"  [skip] {addr}: cannot reach {host}:{port} ({exc})")
-        store.log_run(f"inbox:{addr}", 0, "error")
-        return 0
+    attempts = max(1, int(icfg.get("imap_attempts", 3)))
 
     # Prebuild a company -> job-id index once so email->job linking is O(1)/email.
     job_index: dict[str, str] = {}
@@ -127,23 +171,68 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
         if j.company:
             job_index.setdefault(mailrules.normalize_company(j.company), j.id)
 
-    kept = 0
-    try:
-        M.login(addr, pw)
-        for folder in _folders_for(icfg):
-            kept += _sync_folder(M, addr, folder, store, cfg, job_index,
-                                 dry_run=dry_run, since=since, backfill=backfill,
-                                 lookback_days=lookback_days)
-    except imaplib.IMAP4.error as exc:
-        print(f"  [skip] {addr}: IMAP login failed ({exc}). "
-              f"Check the app password and that IMAP is enabled.")
-        store.log_run(f"inbox:{addr}", 0, "error")
-    finally:
+    track_new_ids = not (dry_run or backfill)
+    initial_event_ids = {
+        event["id"] for event in store.mail_events()
+        if event.get("account") == addr
+    } if track_new_ids else set()
+
+    for attempt in range(1, attempts + 1):
+        M = None
         try:
-            M.logout()
-        except Exception:  # noqa: BLE001
-            pass
-    return kept
+            M = imaplib.IMAP4_SSL(host, port)
+            M.login(addr, pw)
+            kept = 0
+            for folder in _folders_for(icfg):
+                kept += _sync_folder(M, addr, folder, store, cfg, job_index,
+                                     dry_run=dry_run, since=since, backfill=backfill,
+                                     lookback_days=lookback_days)
+            status = "recovered" if attempt > 1 else "ok"
+            store.set_source_health(
+                f"inbox:{addr}", provider="imap", slug=addr, status=status,
+                item_count=kept, attempts=attempt,
+            )
+            if track_new_ids:
+                current_ids = {
+                    event["id"] for event in store.mail_events()
+                    if event.get("account") == addr
+                }
+                return _AccountSyncResult(len(current_ids - initial_event_ids), True)
+            return _AccountSyncResult(kept, True)
+        except (imaplib.IMAP4.abort, _TransientIMAPError) as exc:
+            if attempt < attempts:
+                print(f"  [retry] {addr}: IMAP session aborted ({exc}); "
+                      f"reconnecting ({attempt + 1}/{attempts})")
+                time.sleep(min(0.5 * (2 ** (attempt - 1)), 2.0))
+                continue
+            detail = f"IMAP session aborted after {attempts} attempt(s): {exc}"
+        except OSError as exc:
+            if attempt < attempts:
+                print(f"  [retry] {addr}: cannot reach {host}:{port} ({exc}); "
+                      f"reconnecting ({attempt + 1}/{attempts})")
+                time.sleep(min(0.5 * (2 ** (attempt - 1)), 2.0))
+                continue
+            detail = f"cannot reach {host}:{port} after {attempts} attempt(s): {exc}"
+        except imaplib.IMAP4.error as exc:
+            detail = (f"IMAP login failed: {exc}. Check the app password and "
+                      "that IMAP is enabled.")
+        except _InboxStateError as exc:
+            detail = str(exc)
+        finally:
+            if M is not None:
+                try:
+                    M.logout()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        print(f"  [skip] {addr}: {detail}")
+        store.log_run(f"inbox:{addr}", 0, "error")
+        store.set_source_health(
+            f"inbox:{addr}", provider="imap", slug=addr, status="error",
+            attempts=attempt, detail=detail,
+        )
+        return _AccountSyncResult(0, False)
+    return _AccountSyncResult(0, False)
 
 
 def _sync_folder(M, addr: str, folder: str, store, cfg: dict, job_index: dict, *,
@@ -152,18 +241,42 @@ def _sync_folder(M, addr: str, folder: str, store, cfg: dict, job_index: dict, *
     """Scan a single IMAP folder for one account; returns the newly-ingested count.
     A missing folder (e.g. no localized Spam) is skipped quietly."""
     marker = _uid_marker(addr, folder)
-    last_uid = 0 if (backfill or since) else int(store.meta_get(marker, "0") or 0)
+    validity_marker = _uidvalidity_marker(addr, folder)
+    stored_last_uid = int(store.meta_get(marker, "0") or 0)
     try:
         typ, _ = M.select(folder, readonly=True)
+    except imaplib.IMAP4.abort:
+        raise
     except imaplib.IMAP4.error:
         typ = "NO"
     if typ != "OK":
         return 0
 
+    uidvalidity = _response_number(M, "UIDVALIDITY")
+    uidnext = _response_number(M, "UIDNEXT")
+    if uidvalidity is None:
+        detail = "folder did not report UIDVALIDITY; watermark left unchanged"
+        print(f"  [skip] {addr} [{folder}]: {detail}")
+        store.log_run(f"inbox:{addr}:{folder}", 0, "error")
+        store.set_source_health(
+            f"inbox:{addr}:{folder}", provider="imap", slug=folder,
+            status="error", detail=detail,
+        )
+        raise _InboxStateError(detail)
+
+    stored_uidvalidity = store.meta_get(validity_marker)
+    epoch_changed = bool(
+        stored_last_uid and str(uidvalidity) != (stored_uidvalidity or "")
+    )
+    scan_last_uid = 0 if (backfill or since or epoch_changed) else stored_last_uid
+    recovery_days = int(cfg.get("inbox", {}).get("uid_recovery_days", 30))
+    scan_lookback_days = recovery_days if epoch_changed and not (backfill or since) else lookback_days
+
     kept = 0
     scanned = 0
-    max_uid = last_uid
-    uids = _search_uids(M, last_uid, since, lookback_days, backfill)
+    max_uid = 0 if epoch_changed else stored_last_uid
+    uids = _search_uids(M, scan_last_uid, since, scan_lookback_days,
+                        backfill or epoch_changed)
     for uid in uids:
         scanned += 1
         u = int(uid)
@@ -172,13 +285,26 @@ def _sync_folder(M, addr: str, folder: str, store, cfg: dict, job_index: dict, *
         try:
             ev = _process_uid(M, addr, uid, store, cfg, job_index, dry_run=dry_run,
                               rescore=backfill)
+        except _TransientIMAPError:
+            raise
         except Exception:  # noqa: BLE001 - one bad message never sinks the run
             ev = None
         if ev is not None:
             kept += 1
-    if not dry_run and max_uid > last_uid:
-        store.meta_set(marker, str(max_uid))
-    store.log_run(f"inbox:{addr}:{folder}", kept, "ok")
+    if not dry_run:
+        if epoch_changed and uidnext is not None:
+            max_uid = max(max_uid, uidnext - 1)
+        if max_uid != stored_last_uid or epoch_changed:
+            store.meta_set(marker, str(max_uid))
+        store.meta_set(validity_marker, str(uidvalidity))
+    status = "recovered" if epoch_changed else "ok"
+    store.log_run(f"inbox:{addr}:{folder}", kept, status)
+    store.set_source_health(
+        f"inbox:{addr}:{folder}", provider="imap", slug=folder,
+        status=status, item_count=scanned, attempts=1,
+        detail=(f"UIDVALIDITY changed; replayed the last {scan_lookback_days} day(s)"
+                if epoch_changed else ""),
+    )
     tag = "" if folder == "INBOX" else f" [{folder}]"
     print(f"  [{addr}]{tag} {scanned} scanned / {kept} job-related"
           + (" (dry-run)" if dry_run else ""))
@@ -187,12 +313,21 @@ def _sync_folder(M, addr: str, folder: str, store, cfg: dict, job_index: dict, *
 
 def _search_uids(M, last_uid: int, since: Optional[str], lookback_days: int,
                  backfill: bool) -> list[bytes]:
-    if last_uid and not backfill and not since:
-        typ, data = M.uid("search", None, "UID", f"{last_uid + 1}:*")
-    else:
-        date = _imap_since(since, lookback_days)
-        typ, data = M.uid("search", None, "SINCE", date)
-    if typ != "OK" or not data or not data[0]:
+    try:
+        if last_uid and not backfill and not since:
+            typ, data = M.uid("search", None, "UID", f"{last_uid + 1}:*")
+        else:
+            date = _imap_since(since, lookback_days)
+            typ, data = M.uid("search", None, "SINCE", date)
+    except imaplib.IMAP4.abort:
+        raise
+    except (imaplib.IMAP4.error, OSError) as exc:
+        raise _TransientIMAPError(f"IMAP UID search failed: {exc}") from exc
+    if typ != "OK":
+        raise _TransientIMAPError(f"IMAP UID search failed: {typ}")
+    if not data:
+        raise _TransientIMAPError("IMAP UID search returned no response")
+    if not data[0]:
         return []
     # "n:*" always returns at least the highest message even when none are new;
     # filter to strictly-new UIDs.
@@ -228,7 +363,8 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
     if not mailrules.is_job_related(from_domain, sig) and not mailrules.is_ats_domain(from_domain):
         return None
 
-    snippet = _fetch_snippet(M, uid)
+    configured_limit = int(cfg.get("inbox", {}).get("classification_chars", 6000))
+    snippet = _fetch_snippet(M, uid, limit=max(1500, min(configured_limit, 20000)))
     if mailrules.is_transactional(subject, snippet):
         return None  # some OTP/verification mail carries the tell only in the body
     sig, _scores, ambiguous, tied = mailrules.classify_scored(subject, snippet)
@@ -331,16 +467,28 @@ def _quorum_pick(cfg: dict, store, subject: str, snippet: str,
 
 # --- IMAP fetch + MIME helpers ---------------------------------------------
 def _fetch_headers(M, uid):
-    typ, data = M.uid("fetch", uid, _HEADER_FIELDS)
+    try:
+        typ, data = M.uid("fetch", uid, _HEADER_FIELDS)
+    except imaplib.IMAP4.abort:
+        raise
+    except (imaplib.IMAP4.error, OSError) as exc:
+        raise _TransientIMAPError(
+            f"IMAP header fetch failed for UID {uid!r}: {exc}") from exc
     if typ != "OK" or not data or not data[0] or not isinstance(data[0], tuple):
-        return None
+        raise _TransientIMAPError(f"IMAP header fetch failed for UID {uid!r}: {typ}")
     return _email.message_from_bytes(data[0][1])
 
 
 def _fetch_snippet(M, uid, limit: int = 1500) -> str:
-    typ, data = M.uid("fetch", uid, "(BODY.PEEK[])")
+    try:
+        typ, data = M.uid("fetch", uid, "(BODY.PEEK[])")
+    except imaplib.IMAP4.abort:
+        raise
+    except (imaplib.IMAP4.error, OSError) as exc:
+        raise _TransientIMAPError(
+            f"IMAP body fetch failed for UID {uid!r}: {exc}") from exc
     if typ != "OK" or not data or not data[0] or not isinstance(data[0], tuple):
-        return ""
+        raise _TransientIMAPError(f"IMAP body fetch failed for UID {uid!r}: {typ}")
     msg = _email.message_from_bytes(data[0][1])
     return _strip_html(_extract_text(msg))[:limit]
 

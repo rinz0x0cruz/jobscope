@@ -184,6 +184,7 @@ export function ShellV2({
       </AppShell>
 
       <CommandPalette
+        key={cmdOpen ? 'open' : 'closed'}
         open={cmdOpen}
         onOpenChange={setCmdOpen}
         rows={data.rows}

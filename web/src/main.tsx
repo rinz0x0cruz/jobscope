@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from '@tanstack/react-router'
 import { router } from './router'
-import { ScoreFormatProvider } from './hooks/useScoreFormat'
+import { ScoreFormatProvider } from './hooks/ScoreFormatProvider'
 import './styles/theme.css'
 
 createRoot(document.getElementById('root')!).render(
