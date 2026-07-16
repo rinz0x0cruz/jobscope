@@ -12,13 +12,16 @@ describe('urlState: schema + defaults', () => {
     expect(s.sort).toBe('score')
     expect(s.flags).toEqual([])
     expect(s.tiers).toEqual([])
+    expect(s.reviewBucket).toBe('monitored')
     expect(s.resume).toEqual([])
   })
 
   it('maps legacy tabs onto the new primary views', () => {
     expect(activeView(searchSchema.parse({ tab: 'applications' }))).toBe('applications')
     expect(activeView(searchSchema.parse({ tab: 'overview' }))).toBe('pipeline')
-    expect(activeView(searchSchema.parse({ tab: 'Strong' }))).toBe('feed')
+    expect(activeView(searchSchema.parse({ tab: 'Strong' }))).toBe('review')
+    expect(activeView(searchSchema.parse({ view: 'feed' }))).toBe('review')
+    expect(activeView(searchSchema.parse({ view: 'companies' }))).toBe('companies')
     expect(activeView(searchSchema.parse({ view: 'activity', tab: 'applications' }))).toBe('activity')
   })
 

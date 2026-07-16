@@ -23,11 +23,12 @@ from .enrichment import EnrichmentMixin
 from .jobs import JobsMixin
 from .mail import MailMixin
 from .meta import MetaMixin
+from .monitoring import MonitoringMixin
 from .profile import ProfileMixin
 
 
 class Store(JobsMixin, EnrichmentMixin, ApplicationsMixin, MailMixin,
-            ProfileMixin, MetaMixin, _StoreBase):
+            ProfileMixin, MetaMixin, MonitoringMixin, _StoreBase):
     """One SQLite database behind a single shared connection.
 
     Composes the per-concern mixins over :class:`~jobscope.store.base._StoreBase`,

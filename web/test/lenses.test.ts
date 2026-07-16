@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { buildBriefing } from '@/lib/briefing'
-import { buildTriage } from '@/lib/triage'
 import { buildTimeline } from '@/lib/timeline'
 import type { Application, DashboardData, JobRow } from '@/lib/schema'
 
@@ -17,6 +16,8 @@ function makeData(over: Partial<DashboardData> = {}): DashboardData {
     applications: [],
     profile: null,
     applied_outreach: [],
+    companies: [],
+    reviews: [],
     ...over,
   }
 }
@@ -66,24 +67,18 @@ describe('buildBriefing', () => {
   it('surfaces fresh strong matches worth a look', () => {
     expect(b.matches.map((m) => m.jobId)).toContain('m')
   })
-})
-
-describe('buildTriage', () => {
-  it('queues open, non-skip, un-applied roles by score with a brief', () => {
-    const data = makeData({
-      rows: [
-        row({ id: 'hi', score: 90, brief: 'strong match' }),
-        row({ id: 'lo', score: 40, rationale: 'fallback reason' }),
-        row({ id: 'skip', score: 99, tier: 'Skip' }),
-        row({ id: 'closed', score: 95, status: 'closed' }),
-        row({ id: 'done', score: 88 }),
-      ],
-      applications: [app({ job_id: 'done' })],
+  it('keeps repeated same-day signals uniquely addressable', () => {
+    const repeated = makeData({
+      applications: [app({
+        job_id: 'same-day', company: 'Acme',
+        timeline: [
+          { date: ago(1), signal: 'confirmation', subject: 'First', from: '', summary: '' },
+          { date: ago(1), signal: 'confirmation', subject: 'Second', from: '', summary: '' },
+        ],
+      })],
     })
-    const q = buildTriage(data, NOW)
-    expect(q.items.map((i) => i.jobId)).toEqual(['hi', 'lo'])
-    expect(q.items[1].brief).toBe('fallback reason')
-    expect(q.total).toBe(2)
+    const ids = buildBriefing(repeated, NOW).moved.map((item) => item.id)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 })
 

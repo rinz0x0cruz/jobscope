@@ -241,11 +241,11 @@ function BoardColumns({ columns, onOpen }: BoardProps) {
   }, [])
 
   return (
-    <div ref={scrollerRef} className="flex h-full gap-3 overflow-x-auto overflow-y-hidden p-3 lg:overflow-hidden">
+    <div ref={scrollerRef} className="flex h-full gap-3 overflow-x-auto overflow-y-hidden p-3 min-[1400px]:overflow-hidden">
       {columns.map((col) => (
         <section
           key={col.stage}
-          className="flex w-[80vw] flex-none flex-col overflow-hidden rounded-card border border-line sm:w-[46vw] lg:w-auto lg:min-w-0 lg:flex-1"
+          className="flex w-[80vw] flex-none flex-col overflow-hidden rounded-card border border-line sm:w-[46vw] min-[1400px]:w-auto min-[1400px]:min-w-0 min-[1400px]:flex-1"
           style={{ background: `color-mix(in srgb, ${col.color} 5%, var(--panel))` }}
         >
           <span className="h-1 shrink-0" style={{ background: col.color }} aria-hidden="true" />

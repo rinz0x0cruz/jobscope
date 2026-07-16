@@ -6,14 +6,54 @@ handled by the store). Failures are per-term so one bad site doesn't sink the ru
 """
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Any
 
 from jobscope.core import geo
 from jobscope.core.model import Job, derive_remote_scope
 from jobscope.core.store import now_iso
 
+DISCOVERY_MARKER = "discovery:last_scan"
 
-def run(cfg: dict, store) -> int:
+
+def discovery_due(cfg: dict, store, *, now: _dt.datetime | None = None) -> bool:
+    settings = cfg.get("discovery", {}) or {}
+    if not settings.get("enabled", True):
+        return False
+    interval = max(1, int(settings.get("interval_hours", 24) or 24))
+    last = store.meta_get(DISCOVERY_MARKER)
+    if not last:
+        return True
+    try:
+        previous = _dt.datetime.fromisoformat(last.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return True
+    current = now or _dt.datetime.now(_dt.timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=_dt.timezone.utc)
+    return current - previous >= _dt.timedelta(hours=interval)
+
+
+def run(cfg: dict, store, *, mode: str = "all", force_discovery: bool = False) -> int:
+    if mode not in {"all", "monitored", "discovery"}:
+        raise ValueError(f"invalid scan mode: {mode}")
+    if mode in {"all", "monitored"}:
+        from . import monitor
+        summary = monitor.scan_active_monitors(cfg, store)
+        print(
+            "  monitored portals: "
+            f"{summary['successful']}/{summary['companies']} healthy, "
+            f"{summary['matched']} matched ({summary['new']} new)"
+        )
+    if mode == "monitored":
+        return 0
+    if not force_discovery and not discovery_due(cfg, store):
+        print("  broad discovery not due yet; monitored portals were still checked.")
+        return 0
+    if not (cfg.get("discovery", {}) or {}).get("enabled", True):
+        print("  broad discovery is disabled.")
+        return 0
+
     base = cfg["search"]
     # An editable, résumé-derived search profile (data/profile.yaml) drives the
     # fetch when present; config.search is the fallback. See analyze/profile.py.
@@ -35,36 +75,29 @@ def run(cfg: dict, store) -> int:
     try:
         from jobspy import scrape_jobs
     except ImportError:
-        scrape_jobs = None
-        if base.get("companies"):
-            print("  JobSpy not installed - skipping keyword search, running ATS boards only.")
-        else:
-            print("  JobSpy is not installed. Run: pip install python-jobspy")
-            return 1
+        print("  JobSpy is not installed. Run: pip install python-jobspy")
+        return 1
 
-    if scrape_jobs is not None:
-        # One search per profile; each profile overrides the base search (location,
-        # is_remote, hours_old, ...). No profiles -> a single search from the base
-        # (backwards compatible).
-        profiles = base.get("profiles") or [{}]
-        for prof in profiles:
-            s = {**base, **prof}
-            label = prof.get("name") or s.get("location") or "search"
-            if len(profiles) > 1:
-                print(f"\n  == profile: {label} "
-                      f"(location={s.get('location')!r}, hours_old={s.get('hours_old')}) ==")
-            new, seen, dropped = _scan_profile(scrape_jobs, s, store, label, home, geo_on)
-            total_new += new
-            total_seen += seen
-            total_dropped += dropped
+    # One search per profile; each profile overrides the base search (location,
+    # is_remote, hours_old, ...). No profiles -> a single search from the base.
+    profiles = base.get("profiles") or [{}]
+    for search_profile in profiles:
+        settings = {**base, **search_profile}
+        label = search_profile.get("name") or settings.get("location") or "search"
+        if len(profiles) > 1:
+            print(f"\n  == profile: {label} "
+                  f"(location={settings.get('location')!r}, hours_old={settings.get('hours_old')}) ==")
+        new, seen, dropped = _scan_profile(
+            scrape_jobs, settings, store, label, home, geo_on,
+        )
+        total_new += new
+        total_seen += seen
+        total_dropped += dropped
 
-    # ATS boards: pull configured companies' public job boards directly. Needs
-    # only `requests`, so it runs even when JobSpy is unavailable.
-    from . import ats
-    total_new += ats.run(cfg, store)
+    store.meta_set(DISCOVERY_MARKER, now_iso())
 
     drop_note = f" ({total_dropped} out-of-scope dropped)" if total_dropped else ""
-    print(f"\n  scan complete: {total_new} new / {total_seen} seen{drop_note}. "
+    print(f"\n  broad discovery complete: {total_new} new / {total_seen} seen{drop_note}. "
           f"Next: python -m jobscope match")
     return 0
 

@@ -15,6 +15,8 @@ function makeData(over: Partial<DashboardData> = {}): DashboardData {
     applications: [],
     profile: null,
     applied_outreach: [],
+    companies: [],
+    reviews: [],
     ...over,
   }
 }

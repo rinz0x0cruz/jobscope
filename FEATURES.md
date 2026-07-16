@@ -12,8 +12,8 @@ No authenticated-account automation; a human always reviews before submit.
 ## Pipeline / data flow
 
 ```
-resume import → profile (editable data/profile.yaml) → scan → store jobs
-     → match (score + filters + resume routing) → enrich top N → atscheck / coverage
+resume import → profile → company monitors (every refresh) + discovery (daily)
+  → match → review sync (pending monitored/discovery → save/dismiss) → enrich
      → tailor → prep package → (human review) → apply / outreach → interview prep → track → digest
 
 inbox (read-only Gmail IMAP) → classify emails → mail_events (timeline)
@@ -31,9 +31,12 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | Command | Behaviour |
 | --- | --- |
 | `init` | Scaffolds `config.yaml` + `data/` dir. |
-| `resume import <path> --name <n>` | Parses `.md/.json/.pdf/.txt` into a structured resume and stores it under a name. Import several names for multi-resume matching. Seeds the search profile on first import. |
+| `resume import <path> --name <n>` | Parses `.md/.json/.pdf/.txt` into a structured resume and stores it under a name. Up to three named profiles are supported; local Settings can upload, build, replace, and switch them. |
 | `profile [build\|show] [--resume N] [--force]` | Builds/shows the editable, résumé-derived **search profile** (`data/profile.yaml`): target roles from your titles + a skills→role map, your locations, remote. `scan` fetches from it (config.search is the fallback); `--force` regenerates, never clobbering edits otherwise. |
-| `scan` | Scrapes jobs for every search term across every **profile**, then pulls configured companies' **public ATS boards** directly (see Scraping + Company-direct ATS boards). De-dupes by URL. |
+| `companies [seed\|list\|scan\|apply]` | Persistent company-monitor registry and official-portal scans. `seed` imports configured companies plus active applications once; `apply` consumes the validated workflow action file. |
+| `scout <company>` | Ephemeral ATS resolution/ranked preview. The durable workflow is to monitor the company. |
+| `scan [--mode all\|monitored\|discovery]` | Monitored portals are primary; broad JobSpy discovery is secondary and cadence-gated (24h by default). |
+| `reviews [sync\|list]` | Durable pending/saved/dismissed review decisions with monitored/discovery provenance. |
 | `match` | Scores every stored job, applies **filters**, and records the best-fit resume per job. Prints tier counts + filtered count. |
 | `pipeline [--no-prep]` | scan → match → enrich → prep top picks → email digest. `--no-prep` stops after enrich. |
 | `enrich [--job <id>]` | Adds public intel per company (comp, stock/IPO, Reddit, news, Glassdoor, contacts, brief). Default: top N by score. |
@@ -41,7 +44,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `prep <job_id>` | Builds a review-ready application package folder (tailored resume/cover PDF, filled-answers, index, contacts) and marks status `prepared`. |
 | `apply <job_id> [--assist]` | Opens the posting URL for you to submit. `--assist` = headed Playwright autofill of a **public** ATS form that **stops before submit**. |
 | `outreach <job_id> [--to E] [--send] [--force]` | Drafts a tailored recruiter email + attaches your résumé and **previews it by default**. Resolves a contact deterministically: a real recruiter who emailed you (no-reply/ATS relays filtered out), a published HR/careers email **discovered on the employer's own site** (domain verified by fetching it + matching the company name), or a `careers@` role inbox on that verified domain — or `--to`. Sending is opt-in (`apply.outreach.enabled` + `email.*` + `--send`), **deduped per company** with a cooldown, and honors a do-not-contact list. |
-| `dashboard [--public] [--emit-web]` | Emits the dashboard JSON payload the web app consumes (`data/dashboard.json`; `--public` writes the **redacted** `data/dashboard.public.json` — per-job contacts/rationale/resume-base, the Overview funnel/targets, **and all applications** stripped). `--emit-web` also mirrors the un-redacted payload to `web/src/data/dashboard.json` so a local `npm run dev`/`build` picks up fresh data. Used by the publish scripts to bake the site. |
+| `dashboard [--public] [--emit-web]` | Emits the private dashboard payload; `--public` writes an **empty schema-valid shell**. `--emit-web` mirrors private data for local development. Publish scripts ship only the empty shell plus encrypted `site.enc.json`. |
 | `serve [--port 8799] [--open]` | Builds (if needed) + serves the **web SPA** on 127.0.0.1 with a localhost-only **Refresh & Publish** button (syncs Gmail -> rescore -> publish -> rebuild). |
 | `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E] [--include-spam] [--reclassify]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox; `--include-spam` also sweeps the `[Gmail]/Spam` folder this run (overrides `inbox.include_spam`), catching a real application email Gmail misfiled as spam; `--reclassify` is an **offline** repair — re-check stored mail with the current rules + rebuild the funnel (instance-split), with no Gmail sync. |
@@ -58,21 +61,20 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 
 ---
 
-## Dashboard UX / motion layer
+## Dashboard UX
 
-- **Published React dashboard:** Vite/React/PWA build with static `dashboard.json` baked in. The public build
-  is redacted: contacts, rationale, resume-base, search targets, funnel, and all applications are stripped.
-- **"Nightshift Console" skin:** a deep-ink palette with a warm amber/coral signature balanced by a cool
-  cyan/sky/teal data hue, mono-forward numerals, and console scanlines. A Lottie-powered briefcase/scope logo
-  sits in the header. All local code/assets — no CDN or runtime animation fetch.
-- **Generative hero backdrop:** a swappable animated canvas (`HeroBackdrop`, default `grid`) with six offline
-  variants — `constellation`, `flowfield`, `dotgrid`, `aurora`, `radar`, `grid` — chosen via `?hero=<variant>`.
-  Colours read from the theme vars so every variant follows the palette + light/dark toggle; reduced-motion draws
-  a single static frame. **Touch / small screens default to the CSS `aurora`** (it scales smoothly under a
-  pinch-zoom); the canvas variants harden their resize — debounced, frozen mid-zoom via `visualViewport`, and
-  the field is rescaled rather than reseeded — so the backdrop no longer glitches when you zoom on a phone.
-- **Command palette (⌘K):** a `cmdk`-powered palette (also opens on `/` and a header pill) jumps between views,
-  toggles the theme, fuzzy-searches every role, and runs refresh actions (pull latest / scan Gmail / connect a token).
+- **Company-first IA:** Review, Companies, Pipeline, Applications, Activity, Settings. Review defaults
+  to pending monitored matches; broad Discovery, Saved, and Dismissed never mix implicitly. Companies
+  owns portal resolution, source health, scan/pause/remove, and per-company pending/saved roles.
+- **Local + encrypted Pages actions:** localhost uses loopback/CSRF APIs immediately. Static Pages stores
+  optimistic actions locally and sends one `mutations_json` batch through the existing guarded GitHub
+  workflow. The queue survives failures and clears only after a successful encrypted republish.
+
+- **Published React dashboard:** Vite/React/PWA build with an empty baked payload. The private contract is
+  fetched from `site.enc.json` and decrypted in-browser before any application surface mounts.
+- **Operational visual system:** warm coral commands, green/amber/red status signals, IBM Plex Sans UI,
+  Source Serif role prose, compact controls, stable split panes, and light/dark themes.
+- **Command palette (⌘K):** jumps between all six views, fuzzy-searches roles, toggles theme, and runs refresh actions.
 - **Header Refresh button:** rescans Gmail on demand — with a stored fine-grained token it POSTs `workflow_dispatch`
   directly, otherwise it opens GitHub's Run-workflow page. Throttle-safe: a client cooldown plus a check for an
   already-running scan means rapid taps never stack workflow runs; it then polls the run and offers to pull the fresh build.
@@ -80,32 +82,24 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   `jobscope serve` — it resolves a contact, shows the tailored draft (editable To/Subject/Body), notes the résumé
   it will attach, and sends via the same guardrails as the CLI. Backed by a loopback, CSRF-guarded `/api/outreach`;
   hidden on the public static site (no backend to reach).
-- **Bento Overview:** the Overview tab is a bento grid — a large **Fit distribution** donut (scaled to fill its card),
-  an application-pipeline panel, top companies, the skill-gap constellation, and a top-matches rail.
-- **Interaction polish:** KPI, role, and application cards use cursor-follow spotlight variables (`--spot-x`,
-  `--spot-y`) and preserve keyboard focus rings. Application cards also get status-colored rails; `interview`
-  and `offer` rails pulse gently to surface active outcomes.
-- **Skill-gap view:** the Overview page uses an interactive constellation-style demand graph for recurring
-  missing skills. Select a node to see visible roles that mention the gap; high-demand gaps read as related
-  signals instead of a ranked checklist.
-- **Wider console layout:** the React dashboard uses a wider scan-friendly container so KPI cards, charts,
-  and top-match tables have more breathing room on desktop while preserving the same mobile stack.
-- **Facet visibility:** dashboard facets hide when they have only one possible value. The Resume facet is a
-  special case — rather than vanish, it shows a **disabled hint** (_"Import 2+ named resumes and rerun match to
-  filter by resume"_) until the emitted data contains 2+ distinct `resume_base` values, so the feature stays
-  discoverable even with a single resume.
-- **Whole-site unlock (two-tier):** with `-Encrypted`, the *entire* un-redacted dashboard — job descriptions,
-  match rationale, referral contacts, and applications — is published as a single AES-256-GCM blob. The public
-  build stays redacted; a **header lock button** (and the Applications tab gate) takes a passphrase, then
-  decrypts the payload **in-browser** and swaps it in wholesale. The heavy ciphertext ships as a separate
-  lazily-fetched file (`site.enc.json`) so the public bundle stays lean; only a tiny pointer is baked in. The
-  un-redacted payload is never served in the clear. [scripts/apps-template.html](scripts/apps-template.html)
-  remains a standalone reference shell that `build-secure-apps.mjs` can still produce.
-- **Reduced motion:** CSS, Motion, and Lottie animation respects the global `prefers-reduced-motion` guard;
-  decorative layers are `aria-hidden`/`pointer-events: none`.
-- **UX tests:** a Vitest + Testing-Library suite in `web/test/` covers the refresh flow (cooldown, token,
-  dispatch de-dupe, pull), the fit-distribution donut, filters, URL state, formatters, and the Refresh button.
-  It runs locally via `npm test` and in CI (the `web` job in `.github/workflows/ci.yml`) on every push.
+- **Review workspace:** ranked monitored/discovery/saved/dismissed buckets, source-aware actions, preserved
+  list position, desktop reader/pipeline split, and a full-screen mobile role reader.
+- **Market intelligence on cards:** structured posting pay is compared with compatible public compensation
+  benchmarks; Glassdoor rating, Reddit sentiment/thread count, recent news, and verified recruiter mail surface
+  only when backed by stored public data. Missing recruiter mail can be resolved through guarded local outreach.
+- **Companies workspace:** resolution preview, Needs setup visibility, source health, scan/pause/resume/remove,
+  editable portal details, per-company pending/saved roles, and a preferred recruiter contact. Targeted scans
+  fetch jobs and verified contacts together; scheduled contact refresh is opt-in to bound domain probes.
+- **Recruiter preference:** verified inbound recruiters remain highest confidence; within comparable sources,
+  cybersecurity/security recruiter titles rank ahead of technical/engineering, then general recruiting/HR.
+  Employer domains must come from the company site, verified name/domain match, or inbox evidence—never
+  LinkedIn, Indeed, Greenhouse, Lever, Workday, or another aggregator/ATS mail domain.
+- **Applications + Activity:** operational inbox/board/offers views, preserved Sankey, action queue, and a
+  chronological event stream with unique event identity.
+- **Whole-site unlock:** the private payload includes jobs, descriptions, rationale, contacts, profile,
+  monitors, reviews, and applications. Only its AES-256-GCM ciphertext and a tiny pointer are published.
+- **UX tests:** Vitest + Testing Library cover routing, Review/Companies actions, queue synchronization,
+  refresh de-duplication, models, readers, and application workflows.
 
 ---
 
@@ -178,15 +172,19 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   directly — no login, no API key — surfacing India/remote roles keyword search never sees.
 - **Providers:** Greenhouse (`boards-api.greenhouse.io`), Lever (`api.lever.co`), Ashby
   (`api.ashbyhq.com`). All are logged-out public JSON endpoints (consistent with the no-auth-automation rule).
-- **Config:** `search.companies` is a list of entries. Each is either a known name resolved via
+- **Persistent registry:** SQLite `company_monitors` becomes authoritative after `companies seed`.
+  Existing `search.companies` entries remain migration/fallback input. Active application companies are
+  imported too; unresolved employers stay visible as **Needs setup** instead of silently disappearing.
+- **Config seed:** `search.companies` is a list of entries. Each is either a known name resolved via
   `jobscope/ats.py` `COMPANY_BOARDS` (e.g. `databricks` → greenhouse/databricks) or an explicit
   `"Name|provider|slug"` override. Empty list = ATS boards skipped.
 - **Filtering:** each board is filtered to your locations (target countries/cities from `profiles` +
   `country_indeed`, plus any remote role when `is_remote` is set) **and** role keywords derived from
   `search.terms` (+ a small security/SWE lexicon), then normalized to the `Job` schema and de-duped by URL
   like any other source (`source = "ats"`).
-- **Best-effort:** a wrong slug or dead board yields nothing rather than failing the scan. ATS runs even if
-  JobSpy isn't installed (it needs only `requests`).
+- **Best-effort and fail-closed:** errors/partial/empty boards update source health but never close stored
+  roles. Only a complete, non-empty `OK` board reconciles missing postings. ATS monitoring runs without
+  JobSpy. Workday/iCIMS/custom HTML portals are explicit unsupported/Needs-setup states in the MVP.
 
 ## Taken-down (closed) detection
 
@@ -198,9 +196,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   company. `scan` reports e.g. `[databricks] ... (3 taken down)`.
 - JobSpy postings (LinkedIn/Indeed) can't be re-verified reliably, so they aren't auto-closed -- only the
   authoritative ATS signal flips `status`.
-- **Dashboard:** closed roles show a red `⚑ Taken down` badge with a struck-through title, an Overview
-  **Taken down** KPI, and a **Hide taken-down** toggle. Applications keep the job's `status` so you can see
-  if a role you applied to has since been pulled.
+- **Dashboard:** closed roles leave the active Review queue. Applications retain the posting status, so a
+  tracked application can still show that its source role was pulled.
 
 ---
 
@@ -411,48 +408,19 @@ application emails into funnel updates, so the pipeline reflects reality without
 
 ## Dashboard
 
-The **React SPA** in `web/` (built to `web/dist`, served locally by `jobscope serve`). Your data stays local; only a redacted build is published to Pages.
+The React SPA in `web/` is served privately on localhost or unlocked from the encrypted Pages artifact.
 
-### Tabs
-- **Overview**, **Applications**, + one tab per score bucket: **Strong / Good / Stretch / Skip**, each with a live count.
-- A bucket tab shows only that tier's jobs; **Overview** and **Applications** show summary/pipeline panels (no job list).
-
-### Overview tab
-- **KPI cards:** Total, Strong, Good, Avg score, Filtered.
-- **Analyzed donut:** tier distribution with counts + percentages.
-- **Targeting these roles:** your search terms, plus *by-resume* and *by-location* split bars.
-- **Application funnel:** counts by application status (from the tracker).
-- **Top companies:** most frequent employers in view.
-- **Skill gaps:** top gap skills as bars (jobs unlocked).
-- **Top matches table:** highest-scoring jobs; click a row to open the detail drawer.
-
-### Applications tab
-Fed by `track` + `inbox` — your application pipeline, not the job search.
-- **KPI cards:** Applications, Submitted, Response %, Interview %, Offer %, Rejected.
-- **Pipeline flow:** an inline-SVG Sankey (no libraries) — the **Applied** flow *splits* into
-  **Interview / Rejected / No response**, and the Interview branch splits again into **Offer / Rejected /
-  In process**; band widths are proportional to counts, so you see how far each application got.
-- **Kanban board:** columns by status (Applied → Interview → Offer → Rejected, plus any New/Prepared/Skipped);
-  each card shows the company, role, applied date, and the application's **email timeline** (a colored signal
-  chip + subject + date per message).
-- Applications are **private** — stripped from the public dashboard.
-
-### List (bucket tabs)
-- **Cards** (minimal): score + bar, title, company · location, matched-resume tag, `NEW` (<24h), intel dots
-  (funding, salary, stock ticker/Private, Glassdoor, Reddit, contacts, news), tier pill.
-- **Detail drawer** (click a card): company brief, compensation, stock/IPO, Reddit, Glassdoor, recent news,
-  referral leads, "why this rank", and — when grouped — an "All postings" list. Close with ✕, backdrop, or `Esc`.
-- **Grouping** (`Group: on/off`, on by default): collapses duplicate postings of the same role
-  (same company + normalized title) into one card with a `×N postings` badge; the drawer lists each posting
-  (source · location · score + link).
-
-### Controls (apply within the active bucket / scope)
-- **Search** box (`/` to focus, `Esc` to clear): filters by title / company / rationale; also scopes the Overview.
-- **Facet filters** — **Resume** (2+ resumes), **Country** (from location), **Location** (city/region,
-  top places + Remote), **Work mode** (Remote / On-site), and **Funding** (`public` / `unicorn` — a
-  compensation proxy from curated funding data). All stack together (AND) with search, the active tab,
-  and grouping; each auto-hides when there's only one value.
-- **Group** on/off; **theme** light/dark (persisted). Lists are ordered by score (desc).
+- **Review:** monitored roles first; Discovery, Saved, and Dismissed are explicit durable buckets. Save,
+  dismiss, restore, and monitor-company actions update locally or enter the Pages sync queue.
+- **Companies:** add/resolve official portals; inspect board health and counts; scan, pause, resume, edit, or
+  remove monitors; open pending/saved roles without leaving the company context.
+- **Pipeline:** application Sankey plus outcome and response metrics.
+- **Applications:** operational list, compact/table/grouped views, board, and offer register.
+- **Activity:** overdue action queue plus application-event history.
+- **Settings:** up to three résumé-derived profiles, local upload/build/switch, explicit Gmail scan, data
+  freshness, GitHub sync token, privacy, display, and lock controls.
+- Desktop uses a persistent Review reader and company list/detail split. Mobile uses five primary slots with
+  Activity/Settings in More and opens readers/details full-screen.
 
 ---
 
@@ -465,27 +433,26 @@ Fed by `track` + `inbox` — your application pipeline, not the job search.
 
 ## Public dashboard & hosting (mobile viewing)
 
-- `dashboard --emit-json --public` emits a **redacted** payload to `data/dashboard.public.json` (gitignored).
-  `render._redact_public` strips per-job `contacts`, `rationale`, and `resume_base`, plus the Overview
-  `funnel`/`targets` and all `applications`; it keeps company, title, location, score, tier, salary, brief,
-  enrichment, and links. (`dashboard --public` still writes the redacted single-file HTML for local viewing.)
+- `dashboard --emit-json --public` emits an **empty schema-valid shell** to `data/dashboard.public.json`.
+  It contains no jobs, companies, reviews, profile, applications, contacts, or search targets.
 - **Hosting:** the code repo is **public**; the published dashboard is the **Vite/React app** (`web/`),
   served by GitHub Pages from a dedicated **`gh-pages`** branch (kept separate from `main`) at
   <https://rinz0x0cruz.github.io/jobscope/>.
-- `scripts/publish.ps1` / `publish.sh` emit the redacted payload, bake it into the web app, `npm run build`,
+- `scripts/publish.ps1` / `publish.sh` emit the empty shell, encrypt the full payload, run `npm run build`,
   and push `web/dist` (+ `.nojekyll`) to the `gh-pages` branch via a gitignored persistent single-branch clone
   (`.dashboard-repo/`), pinned to the `rinz0x0cruz` identity. `scripts/register-publish-task.ps1` runs it as a
   daily Windows Scheduled Task.
 - **Cloud auto-refresh (no PC needed).** A GitHub Actions workflow (`.github/workflows/refresh.yml`) scans
   your Gmail and republishes on a schedule (every 3h) **and on demand — including from the GitHub mobile
   app's *Run workflow* button, so you can refresh from your phone.** It runs the same deterministic
-  `inbox → match → publish` (AI off) on GitHub's runners. Privacy model: the SQLite DB is kept
+  `companies seed/apply/scan → cadence-gated discovery → inbox → match → reviews sync → publish` (AI off).
+  Privacy model: the SQLite DB is kept
   **AES-256-GCM-encrypted** on a private, force-updated **`data`** branch (only the latest blob is stored,
-  useless without the key); only the redacted dashboard + the passphrase-encrypted applications blob are
-  published to `gh-pages`, exactly like the local publish. Gated on five repo secrets (config, DB key, apps
+  useless without the key); only the empty shell + passphrase-encrypted whole-site blob are
+  published to `gh-pages`, exactly like the local publish. Gated on repository secrets (config, DB key, site
   passphrase, two Gmail app-passwords); without them the workflow no-ops.
-- **Rules:** only ever publish the **redacted** build (`data/dashboard.public.json` -> `web/dist`) — never
-  the un-redacted local data. Locally the SQLite DB stays on your machine; in the cloud it is only ever
+- **Rules:** only publish the **empty** public build plus verified ciphertext — never the plaintext private
+  payload. Locally the SQLite DB stays on your machine; in the cloud it is only ever
   present **encrypted** (restored from the `data` branch for the run, re-encrypted before the push).
 
 ---

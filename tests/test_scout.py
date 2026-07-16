@@ -108,6 +108,7 @@ def test_scout_save_upserts_matches(monkeypatch):
         # if it matched the profile, saving upserted it into the store
         if res["matched"]:
             assert res["saved"] >= 1 and len(store.jobs()) >= 1
+            assert store.jobs()[0].score > 0 and store.jobs()[0].tier != ""
         store.close()
 
 

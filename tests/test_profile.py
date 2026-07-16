@@ -148,6 +148,32 @@ def test_ensure_seeded_multiple_names_keeps_first_active():
         assert profile.active_name(cfg) == "research"       # first seeded is active
 
 
+def test_profile_creation_is_capped_at_three():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        for name in ("research", "consulting", "product"):
+            assert profile.ensure_seeded(cfg, _resume(), name)
+        assert len(profile.list_profiles(cfg)) == profile.MAX_PROFILES
+        assert not profile.can_create_profile(cfg, "fourth")
+        assert profile.ensure_seeded(cfg, _resume(), "fourth") is None
+        assert profile.can_create_profile(cfg, "research")
+
+
+def test_resume_import_rejects_a_hidden_fourth_profile():
+    from jobscope.analyze.resume import import_resume
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        path = os.path.join(tmp, "resume.md")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("# Jane Doe\n## Skills\nPython, AWS, threat modeling")
+        with Store(cfg["output"]["db_path"]) as store:
+            for name in ("research", "consulting", "product"):
+                assert import_resume(path, store, cfg, name=name) == 0
+            assert import_resume(path, store, cfg, name="fourth") == 1
+            assert len(store.list_resumes()) == profile.MAX_PROFILES
+
+
 def test_legacy_single_profile_migrates_into_store():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)

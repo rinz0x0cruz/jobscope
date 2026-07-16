@@ -52,8 +52,13 @@ def _hunter(cfg: dict, domain: str) -> list[dict]:
         if not _valid(addr, domain):
             continue
         score = e.get("confidence") or 0
+        name = " ".join(
+            part for part in (e.get("first_name"), e.get("last_name")) if part
+        ).strip()
+        title = (e.get("position") or "recruiting contact").strip()
+        identity = " · ".join(part for part in (name, title) if part)
         out.append({"email": addr, "confidence": "high" if score >= 80 else "medium",
-                    "source": "hunter", "note": "found via Hunter.io"})
+                    "source": "hunter", "note": f"{identity} via Hunter.io"})
     return out
 
 
@@ -79,7 +84,11 @@ def _apollo(cfg: dict, domain: str) -> list[dict]:
     resp = _post_json(
         "https://api.apollo.io/v1/mixed_people/search",
         {"q_organization_domains": domain,
-         "person_titles": ["recruiter", "talent acquisition", "hr", "people", "hiring manager"],
+         "person_titles": [
+             "cybersecurity recruiter", "security recruiter", "technical recruiter",
+             "engineering recruiter", "technical talent acquisition",
+             "talent acquisition partner", "recruiter", "hiring manager",
+         ],
          "page": 1, "per_page": 10},
         headers={"X-Api-Key": key})
     people = (resp or {}).get("people") or []

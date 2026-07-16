@@ -86,6 +86,24 @@ def test_finder_apollo_parses(monkeypatch):
                     "source": "apollo", "note": "Recruiter via Apollo"}]
 
 
+def test_finder_apollo_requests_security_and_technical_recruiters(monkeypatch):
+    monkeypatch.delenv("JOBSCOPE_HUNTER_API_KEY", raising=False)
+    monkeypatch.setenv("JOBSCOPE_APOLLO_API_KEY", "k")
+    captured = {}
+
+    def fake_post(_url, body, **_kwargs):
+        captured.update(body)
+        return {"people": []}
+
+    monkeypatch.setattr("jobscope.apply.finder._post_json", fake_post)
+    finder.find_contacts(load_config(None), "Acme", "acme.com")
+
+    titles = [title.lower() for title in captured["person_titles"]]
+    assert "cybersecurity recruiter" in titles
+    assert "security recruiter" in titles
+    assert "technical recruiter" in titles
+
+
 # --- batch discovery --------------------------------------------------------
 def _fake_site(url, **_k):
     return '<a href="mailto:careers@acme.com">Careers</a>' if "acme.com" in url else None
@@ -107,6 +125,20 @@ def test_discover_company_contacts_ranks_sources(monkeypatch):
                                "source": "recruiter", "note": "a recruiter emailed you from this address"}
         assert "careers@acme.com" in emails                        # published on-site (medium)
         assert any(c["source"] == "role_inbox" for c in contacts)  # role inboxes (low)
+
+
+def test_recruiter_ranking_prefers_security_then_technical_specialists():
+    contacts = outreach.rank_recruiter_contacts([
+        {"email": "talent@acme.com", "confidence": "medium", "source": "apollo",
+         "note": "Talent Acquisition Partner via Apollo"},
+        {"email": "tech@acme.com", "confidence": "medium", "source": "apollo",
+         "note": "Technical Recruiter via Apollo"},
+        {"email": "cyber@acme.com", "confidence": "medium", "source": "apollo",
+         "note": "Cybersecurity Recruiter via Apollo"},
+    ])
+    assert [contact["email"] for contact in contacts] == [
+        "cyber@acme.com", "tech@acme.com", "talent@acme.com",
+    ]
 
 
 def test_scan_applied_contacts_persists_then_skips_fresh(monkeypatch):

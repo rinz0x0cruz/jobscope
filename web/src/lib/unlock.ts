@@ -1,4 +1,4 @@
-import type { DashboardData, EncBlob, EncRef } from './schema'
+import { normalizeDashboardData, type DashboardData, type EncBlob, type EncRef } from './schema'
 
 // sessionStorage key: an unlock survives tab switches / reloads within the same
 // tab, but is cleared when the tab closes (never persisted to disk).
@@ -59,14 +59,14 @@ export async function unlockDashboard(ref: EncRef, passphrase: string): Promise<
     ['decrypt'],
   )
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(blob.iv) }, key, b64ToBytes(blob.ct))
-  return JSON.parse(new TextDecoder().decode(pt)) as DashboardData
+  return normalizeDashboardData(JSON.parse(new TextDecoder().decode(pt)) as DashboardData)
 }
 
 /** Read a previously-unlocked payload cached for this tab (or null). */
 export function readCachedUnlock(): DashboardData | null {
   try {
     const s = sessionStorage.getItem(UNLOCK_KEY)
-    return s ? (JSON.parse(s) as DashboardData) : null
+    return s ? normalizeDashboardData(JSON.parse(s) as DashboardData) : null
   } catch {
     return null
   }

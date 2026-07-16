@@ -4,12 +4,12 @@
 
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Download, FileText, GitBranch, Lock, Palette, RefreshCw, Shield } from 'lucide-react'
+import { Download, FileText, GitBranch, Lock, Palette, RefreshCw, Shield, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge, Button, Chip, Segmented } from '@/ui'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
-import { connectToken, disconnectToken, hasGitHubToken, pullLatestData } from '@/lib/refresh'
-import { localServeToken, profileUse } from '@/lib/outreach'
+import { connectToken, disconnectToken, hasGitHubToken, pullLatestData, scanNewMail } from '@/lib/refresh'
+import { localServeToken, profileUpload, profileUse } from '@/lib/outreach'
 import { fmtGenerated } from '@/lib/format'
 import type { Profile } from '@/lib/schema'
 
@@ -18,6 +18,7 @@ export interface SettingsProps {
   generated: string
   total: number
   onLock: () => void
+  onProfileChange?: (profile: Profile) => void
 }
 
 function currentTheme(): 'light' | 'dark' {
@@ -36,18 +37,21 @@ function applyTheme(theme: 'light' | 'dark') {
   }
 }
 
-export function Settings({ profile, generated, total, onLock }: SettingsProps) {
+export function Settings({ profile, generated, total, onLock, onProfileChange }: SettingsProps) {
   const [theme, setTheme] = useState<'light' | 'dark'>(currentTheme)
   const { format, setFormat } = useScoreFormat()
   const [tokenConnected, setTokenConnected] = useState(hasGitHubToken)
   const [prof, setProf] = useState<Profile | null>(profile)
   const [serveToken, setServeToken] = useState<string | null>(null)
   const [switching, setSwitching] = useState(false)
+  const [resumeFile, setResumeFile] = useState<File | null>(null)
+  const [profileName, setProfileName] = useState('')
+  const [uploading, setUploading] = useState(false)
   const locations = prof ? [...new Set([...prof.locations, ...(prof.remote ? ['Remote'] : [])])] : []
 
   useEffect(() => {
     let live = true
-    localServeToken().then((t) => live && setServeToken(t))
+    localServeToken(true).then((t) => live && setServeToken(t))
     return () => {
       live = false
     }
@@ -60,6 +64,7 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
       const res = await profileUse(name, serveToken)
       if (res.ok && res.profile) {
         setProf(res.profile)
+        onProfileChange?.(res.profile)
         toast.success(`Active profile: ${name}`)
       } else {
         toast.error(res.error || 'Could not switch profile')
@@ -70,6 +75,37 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
       setSwitching(false)
     }
   }
+
+  const uploadResume = async () => {
+    if (!serveToken || !resumeFile || !profileName.trim()) return
+    setUploading(true)
+    try {
+      const res = await profileUpload(resumeFile, profileName.trim(), serveToken)
+      if (res.ok && res.profile) {
+        setProf(res.profile)
+        onProfileChange?.(res.profile)
+        setResumeFile(null)
+        setProfileName('')
+        toast.success(`Profile built: ${res.profile.name}`)
+      } else {
+        toast.error(res.error || 'Could not build profile')
+      }
+    } catch {
+      toast.error('Could not upload resume')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const profileCount = prof?.available.length ?? 0
+  const profileLimit = 3
+  const profileCapReached = profileCount >= profileLimit
+  const normalizedProfileName = profileName.trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const replacingProfile = Boolean(
+    normalizedProfileName && prof?.available.includes(normalizedProfileName),
+  )
+  const newProfileBlocked = profileCapReached && !replacingProfile
 
   return (
     <section className="mx-auto min-h-full w-full max-w-[1600px] border-x border-line bg-panel">
@@ -88,7 +124,7 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
         <aside className="border-b border-line bg-inset/35 p-4 lg:border-b-0 lg:border-r lg:p-5">
           <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto [scrollbar-width:none] lg:sticky lg:top-4 lg:flex-col [&::-webkit-scrollbar]:hidden">
             <SettingsLink target="appearance" icon={<Palette size={14} aria-hidden="true" />}>Appearance</SettingsLink>
-            {prof && <SettingsLink target="profile" icon={<FileText size={14} aria-hidden="true" />}>Search profile</SettingsLink>}
+            <SettingsLink target="profile" icon={<FileText size={14} aria-hidden="true" />}>Search profiles</SettingsLink>
             <SettingsLink target="sync" icon={<RefreshCw size={14} aria-hidden="true" />}>Data sync</SettingsLink>
             <SettingsLink target="privacy" icon={<Shield size={14} aria-hidden="true" />}>Privacy</SettingsLink>
           </nav>
@@ -129,13 +165,14 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
             </PreferenceRow>
           </SettingsSection>
 
-          {prof && (
-            <SettingsSection
+          <SettingsSection
               id="profile"
               icon={<FileText size={16} aria-hidden="true" />}
-              title="Search profile"
+              title="Search profiles"
               description="The résumé and targets used to rank incoming roles."
             >
+              {prof ? (
+                <>
               <div className="flex flex-wrap items-center justify-between gap-3 pb-5">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -182,8 +219,57 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
                 ))}
                 </TagField>
             )}
+                </>
+              ) : (
+                <p className="pb-5 text-[13px] text-ink-3">No search profile loaded.</p>
+              )}
+
+              {serveToken && (
+                <div className="border-t border-line pt-5">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Upload résumé</p>
+                      <p className="text-[11px] text-ink-3">{profileCount} of {profileLimit} profiles</p>
+                    </div>
+                    {profileCapReached && <Badge tone="neutral">Reuse a profile name to replace</Badge>}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-[minmax(10rem,.55fr)_minmax(12rem,1fr)_auto]">
+                    <input
+                      value={profileName}
+                      onChange={(event) => setProfileName(event.target.value)}
+                      aria-label="Profile name"
+                      placeholder="Profile name"
+                      className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong disabled:opacity-50"
+                    />
+                    <label className="flex h-9 min-w-0 cursor-pointer items-center gap-2 rounded-md border border-line bg-inset px-3 text-[12px] text-ink-2 hover:border-line-strong">
+                      <Upload size={14} className="shrink-0" aria-hidden="true" />
+                      <span className="truncate">{resumeFile?.name || 'Choose résumé'}</span>
+                      <input
+                        type="file"
+                        accept=".md,.txt,.json,.pdf"
+                        aria-label="Resume file"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] ?? null
+                          setResumeFile(file)
+                          if (file && !profileName) {
+                            setProfileName(file.name.replace(/\.[^.]+$/, ''))
+                          }
+                        }}
+                        className="sr-only"
+                      />
+                    </label>
+                    <Button
+                      variant="secondary"
+                      disabled={newProfileBlocked || uploading || !resumeFile || !profileName.trim()}
+                      onClick={() => void uploadResume()}
+                    >
+                      {uploading ? <RefreshCw size={15} className="animate-spin" aria-hidden="true" /> : <Upload size={15} aria-hidden="true" />}
+                      Build profile
+                    </Button>
+                  </div>
+                </div>
+              )}
             </SettingsSection>
-          )}
 
           <SettingsSection
             id="sync"
@@ -192,6 +278,10 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
             description="Run the GitHub refresh workflow or pull its latest encrypted result."
           >
             <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={() => void scanNewMail()}>
+              <RefreshCw size={15} aria-hidden="true" />
+              Scan Gmail
+            </Button>
             {tokenConnected ? (
               <>
                 <Badge tone="good">Token connected</Badge>

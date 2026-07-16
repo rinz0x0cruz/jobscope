@@ -37,6 +37,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "home_country": "India",   # geo scope: the country you can work onsite in (see core.geo)
         "scope_to_home": True,     # drop roles outside {home onsite, global/home-eligible remote}
     },
+    "discovery": {
+        "enabled": True,
+        "interval_hours": 24,
+    },
     "match": {
         "weights": {
             "skills": 0.34,
@@ -79,7 +83,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "stock": True,
         "reddit": True,
         "news": True,
-        "glassdoor": False,
+        "glassdoor": True,
         "contacts": True,
         "brief": True,
         "news_feeds": [],
@@ -161,6 +165,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "applied_scan": {
                 "limit": 25,
                 "max_age_days": 14,
+            },
+            # Targeted company scans also refresh a verified recruiter/HR contact.
+            # Scheduled all-company scans reuse fresh contacts to bound network work.
+            "monitor_scan": {
+                "enabled": True,
+                "max_age_days": 14,
+                "scheduled": False,
             },
         },
     },

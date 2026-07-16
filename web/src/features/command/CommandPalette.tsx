@@ -8,6 +8,7 @@ import { Command } from 'cmdk'
 import Fuse from 'fuse.js'
 import {
   Briefcase,
+  Building2,
   CalendarClock,
   Columns3,
   Home,
@@ -34,7 +35,8 @@ export interface CommandPaletteProps {
 }
 
 const LENSES: { section: ViewValue; label: string; Icon: LucideIcon }[] = [
-  { section: 'feed', label: 'Feed', Icon: Home },
+  { section: 'review', label: 'Review', Icon: Home },
+  { section: 'companies', label: 'Companies', Icon: Building2 },
   { section: 'pipeline', label: 'Pipeline', Icon: Inbox },
   { section: 'applications', label: 'Applications', Icon: Columns3 },
   { section: 'activity', label: 'Activity', Icon: CalendarClock },

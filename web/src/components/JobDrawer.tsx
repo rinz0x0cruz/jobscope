@@ -81,7 +81,7 @@ export function JobDescription({ text }: { text: string }) {
             <div className="mb-1 text-[11px] text-mute">
               {matches.length} matching line{matches.length === 1 ? '' : 's'}
             </div>
-            <div className="space-y-2 font-reader text-[15px] leading-7 text-dim">
+            <div className="space-y-2 font-reader text-[16px] leading-7 text-dim">
               {matches.map((l, i) => (
                 <p key={i} className="whitespace-pre-wrap">
                   {highlight(l, query)}
@@ -127,7 +127,7 @@ function DescriptionBlocks({ blocks }: { blocks: DescriptionBlock[] }) {
         index += 1
       }
       content.push(
-        <ul key={`bullets-${index}`} className="list-disc space-y-1.5 pl-5 font-reader text-[15px] leading-7 text-dim marker:text-accent">
+        <ul key={`bullets-${index}`} className="list-disc space-y-2 pl-5 font-reader text-[16px] leading-7 text-dim marker:text-accent">
           {bullets.map((bullet, bulletIndex) => <li key={bulletIndex}>{bullet.text}</li>)}
         </ul>,
       )
@@ -137,7 +137,7 @@ function DescriptionBlocks({ blocks }: { blocks: DescriptionBlock[] }) {
       block.type === 'heading' ? (
         <h4 key={index} className="pt-1 text-[12px] font-semibold uppercase text-fg">{block.text}</h4>
       ) : (
-        <p key={index} className="font-reader text-[15px] leading-7 text-dim">{block.text}</p>
+        <p key={index} className="font-reader text-[16px] leading-7 text-dim">{block.text}</p>
       ),
     )
     index += 1
@@ -391,7 +391,7 @@ export function RoleReader({
 
         {job.brief && (
           <Section title="Company brief">
-            <p className="whitespace-pre-wrap font-reader text-[15px] leading-7 text-dim">{job.brief}</p>
+            <p className="whitespace-pre-wrap font-reader text-[16px] leading-7 text-dim">{job.brief}</p>
           </Section>
         )}
 
@@ -542,7 +542,7 @@ export function RoleReader({
                 {fit.warning && <p className="text-[12px] text-hot">{fit.warning}</p>}
               </div>
             ) : (
-              <p className="font-reader text-[15px] leading-7 text-dim">{fit.fallback}</p>
+              <p className="font-reader text-[16px] leading-7 text-dim">{fit.fallback}</p>
             )}
           </Section>
         )}

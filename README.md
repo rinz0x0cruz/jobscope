@@ -1,7 +1,8 @@
 # jobscope
 
-**Resume-driven job scout, enricher, and application-prep tool.** Point it at your
-resume; it scrapes fitting roles, ranks them by a transparent fit score, enriches each
+**Resume-driven company monitor, job scout, and application-prep tool.** Point it at your
+resume; it monitors selected employers' official career portals, keeps broad discovery separate,
+ranks fitting roles by a transparent fit score, enriches each
 with public intel (compensation, stock/IPO, Reddit sentiment, company news, referral
 leads), tailors your resume + cover letter per job, and assembles a **review-ready
 application package** with an email summary.
@@ -58,8 +59,11 @@ python -m jobscope init                          # scaffold config.yaml + data/ 
 # add your resume at data/resume.md
 python -m jobscope resume import data/resume.md   # parse it + seed a résumé-derived search profile
 python -m jobscope profile show                   # review/edit data/profile.yaml (terms/locations drive scan)
-python -m jobscope scan                           # scrape jobs from the profile (JobSpy)
+python -m jobscope companies seed                 # import configured + active-application companies once
+python -m jobscope companies scan                 # check monitored Greenhouse/Lever/Ashby portals
+python -m jobscope scan --mode discovery          # optional broad LinkedIn/Indeed/Google discovery (daily cadence)
 python -m jobscope match                          # rank by fit score
+python -m jobscope reviews sync                   # monitored/discovery roles enter the review queue
 python -m jobscope enrich                         # comp / stock / reddit / news / contacts (top N)
 python -m jobscope tailor <job_id>                # tailored resume + cover letter (PDF)
 python -m jobscope prep   <job_id>                # full review-ready application package
@@ -77,9 +81,12 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | Command | What it does |
 |---|---|
 | `init` | Scaffold `config.yaml`, `data/`, `.env` |
-| `resume import <path> [--name N]` | Parse `.md`/`.json`/`.pdf`/`.txt` into a (named) base resume |
-| `profile [build\|show] [--resume N] [--force]` | Editable résumé-derived search profile (terms/locations/remote) that drives `scan` |
-| `scan` | Scrape jobs for your searches — the résumé profile if present, else `config.yaml` (JobSpy) |
+| `resume import <path> [--name N]` | Parse `.md`/`.json`/`.pdf`/`.txt` into a named base resume (maximum 3 profiles) |
+| `profile [build\|show] [--resume N] [--force]` | Editable résumé-derived search profile (terms/locations/remote) that drives `scan`; local Settings can upload/build/switch profiles |
+| `companies [seed\|list\|scan\|apply]` | Persistent company watchlist. A targeted scan fetches official portal jobs plus verified recruiter contacts; scheduled contact refresh is optional. |
+| `scout <company> [--provider P --slug S]` | Preview one company's public ATS board and profile-ranked openings without monitoring it. |
+| `scan [--mode all\|monitored\|discovery] [--force-discovery]` | `all` checks monitored portals and runs broad JobSpy discovery only when its cadence is due; explicit modes isolate either source. |
+| `reviews [sync\|list] [--state S]` | Build/inspect the durable `pending` / `saved` / `dismissed` review queue without resetting prior decisions. |
 | `match` | Fit scoring + tiers, **multi-resume selection**, and **filters** (clearance/sponsorship/block-list) |
 | `pipeline` | scan -> match -> enrich -> prep top picks -> digest (one shot) |
 | `enrich [--job ID]` | Comp, stock/IPO, Reddit, news, Glassdoor, referral contacts, **company brief** |
@@ -89,7 +96,7 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `brief <job_id>` | Blunt, risk-forward company brief (no marketing fluff) |
 | `gaps [--top N]` | Skill-gap learning plan: skills to learn ranked by jobs unlocked |
 | `new` | New Strong/Good jobs since you last reviewed |
-| `dashboard [--open] [--public]` / `serve` | Render / serve the local HTML dashboard (click a card to expand full detail); `--public` writes a redacted copy safe to host |
+| `dashboard [--open] [--public]` / `serve` | Emit/serve the dashboard; `--public` writes the empty schema-valid shell used by encrypted publication |
 | `track [--set job_id=status] [--timeline job_id]` | Application funnel, rates, follow-up reminders, and a per-application email timeline |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Sync Gmail over read-only IMAP and auto-advance the funnel from application emails |
 | `export [--format json\|csv]` | Export ranked jobs |
@@ -174,10 +181,16 @@ match:
   prefer_company_size: "large"                        # any | large | mid | small
 ```
 
-The dashboard is master–detail: cards show only the essentials (score, title,
-company · location, a couple of intel dots), and clicking one slides open a drawer
-with the company brief, compensation, stock/IPO, Reddit, Glassdoor, news, referral
-leads, and the score rationale. Close with the ✕, the backdrop, or `Esc`.
+The dashboard is company-first and master–detail. **Review** defaults to pending matches from
+monitored portals, with Discovery, Saved, and Dismissed as explicit sibling queues. **Companies**
+shows portal health, board/open/pending/saved counts, and a preferred recruiter. **Scan jobs + recruiter**
+checks the supported career portal and refreshes verified contacts together. Contact ranking prefers
+cybersecurity/security recruiters, then technical/engineering recruiters, then general recruiting/HR.
+Cards show score, role/company/location, public-market compensation ratio when comparable,
+Glassdoor/Reddit/news signals when available, and a verified recruiter mail or guarded local lookup.
+Clicking one opens the Source Serif reader with the description, company brief, compensation,
+stock/IPO, public reputation, referral leads, and score rationale. The toolbar and Settings both
+provide **Scan Gmail**; local serve uses its CSRF-guarded refresh API and Pages dispatches the existing workflow.
 
 Remote roles carry a **remote scope**: the dashboard's *remote scope* facet splits
 global remote ("Remote (anywhere)") from geo-restricted remote ("Remote in Ireland"),
@@ -187,9 +200,9 @@ or search country (off by default; global remote is never penalized).
 
 ## Publish to GitHub Pages (view on mobile)
 
-The published dashboard is the **Vite/React app** in `web/`. It embeds only a
-**redacted** snapshot (no referral contacts, rationale, resume labels, application
-funnel, or search terms), so it is safe to host publicly:
+The published dashboard is the **Vite/React app** in `web/`. Its public JavaScript embeds an
+**empty shell**; all roles, monitored companies, review decisions, contacts, profile, and
+applications live only in the separately fetched AES-256-GCM `site.enc.json` payload:
 
 ```bash
 python -m jobscope dashboard --emit-json --public   # -> data/dashboard.public.json (redacted)
@@ -212,8 +225,9 @@ the tool and update the live site in one step — it refreshes your data
 (`scan → match → inbox`), rebuilds the redacted dashboard, and pushes it to `gh-pages`.
 Equivalent to `scripts/publish.ps1 -Refresh -Force` (or `scripts/publish.sh --refresh --force`);
 add `-NoScan` / `--no-scan` for a quick applications-only refresh that skips the job scan.
-Your applications stay **redacted** from the public site — they remain visible only in
-your local `dashboard` view.
+The unlocked Pages app can queue Save/Dismiss/company-monitor actions in browser storage. With
+the optional fine-grained GitHub token connected, **Sync N** sends one bounded action batch to
+`refresh.yml`; changes clear only after the encrypted DB and site republish successfully.
 
 **Private applications on your phone (encrypted).** To view your applications remotely
 without exposing them, publish them **end-to-end encrypted** into the dashboard's

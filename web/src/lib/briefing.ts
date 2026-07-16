@@ -116,12 +116,12 @@ export function buildBriefing(data: DashboardData, now = Date.now()): Briefing {
     if (dApplied !== null && dApplied >= 0 && dApplied < WEEK) {
       moved.push({ id: `${a.job_id}:applied`, text: `Applied to ${a.company}`, company: a.company, jobId: a.job_id, tone: 'neutral' })
     }
-    for (const e of a.timeline ?? []) {
+    for (const [eventIndex, e] of (a.timeline ?? []).entries()) {
       const mk = MOVED_SIGNAL_TEXT[e.signal]
       if (!mk) continue
       const d = daysSince(e.date, now)
       if (d === null || d < 0 || d >= WEEK) continue
-      moved.push({ id: `${a.job_id}:${e.signal}:${e.date}`, text: mk(a.company), company: a.company, jobId: a.job_id, tone: MOVED_SIGNAL_TONE[e.signal] ?? 'neutral' })
+      moved.push({ id: `${a.job_id}:${e.signal}:${e.date}:${eventIndex}`, text: mk(a.company), company: a.company, jobId: a.job_id, tone: MOVED_SIGNAL_TONE[e.signal] ?? 'neutral' })
     }
   }
   moved.sort((x, y) => (y.id > x.id ? 1 : -1))

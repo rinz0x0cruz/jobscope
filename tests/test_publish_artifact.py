@@ -11,10 +11,24 @@ def _write_inputs(tmp_path):
         "generated": "2026-07-15T00:00:00Z", "total": 0, "rows": [],
         "overview": {"funnel": {}, "gaps": [], "considered": 0, "targets": []},
         "applications": [], "profile": None, "applied_outreach": [],
+        "companies": [], "reviews": [],
     }
     full = {
         **public,
         "total": 1,
+        "applied_outreach": [{
+            "company": "Private Referral Corp", "domain": "private-referral.example",
+            "contacts": [{
+                "email": "recruiter@private-referral.example",
+                "note": "private recruiter note",
+            }],
+        }],
+        "companies": [{
+            "company": "Private Monitor Corp",
+            "slug": "private-monitor-board",
+            "careers_url": "https://private-monitor.example/careers",
+            "health_detail": "private monitor health detail",
+        }],
         "rows": [{
             "id": "private-job-123", "title": "Unique Detection Engineer",
             "company": "Sensitive Example Corp", "location": "Remote",
@@ -85,6 +99,24 @@ def test_verify_artifact_rejects_private_string_leak(tmp_path):
         asset.read_text("utf-8") + 'const leaked={title:"Unique Detection Engineer"};',
         encoding="utf-8",
     )
+
+    with pytest.raises(ArtifactValidationError, match="private dashboard field leaked"):
+        verify_artifact(
+            public_path=paths["public"], full_path=paths["full"],
+            encrypted_path=paths["encrypted"], marker_path=paths["marker"],
+            dist_path=paths["dist"],
+        )
+
+
+@pytest.mark.parametrize("leak", [
+    'email:"recruiter@private-referral.example"',
+    'company:"Private Monitor Corp"',
+    'slug:"private-monitor-board"',
+])
+def test_verify_artifact_rejects_outreach_and_monitor_leaks(tmp_path, leak):
+    paths = _write_inputs(tmp_path)
+    asset = paths["dist"] / "assets" / "app.js"
+    asset.write_text(asset.read_text("utf-8") + leak, encoding="utf-8")
 
     with pytest.raises(ArtifactValidationError, match="private dashboard field leaked"):
         verify_artifact(

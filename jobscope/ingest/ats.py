@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 from jobscope.core import geo, httpx
 from jobscope.core.model import Job, derive_remote_scope
@@ -84,6 +85,26 @@ class BoardStatus(StrEnum):
     INVALID = "invalid"
     ERROR = "error"
     UNSUPPORTED = "unsupported"
+
+
+class ResolutionStatus(StrEnum):
+    RESOLVED = "resolved"
+    UNRESOLVED = "unresolved"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass(frozen=True, slots=True)
+class BoardResolution:
+    company: str
+    status: ResolutionStatus
+    provider: str = ""
+    slug: str = ""
+    careers_url: str = ""
+    detail: str = ""
+
+    @property
+    def resolved(self) -> bool:
+        return self.status == ResolutionStatus.RESOLVED
 
 
 @dataclass(slots=True)
@@ -268,6 +289,7 @@ def _ashby(company: str, slug: str) -> BoardFetchResult:
 
 
 _FETCHERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby}
+SUPPORTED_PROVIDERS = frozenset(_FETCHERS)
 
 
 def fetch_company_result(company: str, provider: str, slug: str) -> BoardFetchResult:
@@ -290,7 +312,7 @@ def fetch_company(company: str, provider: str, slug: str) -> list[Job]:
     return fetch_company_result(company, provider, slug).jobs
 
 
-def _resolve(entry: str) -> tuple[str, str, str] | None:
+def resolve_config_entry(entry: str) -> tuple[str, str, str] | None:
     """Turn a config entry into (display_name, provider, slug).
 
     Accepts a bare name resolved via COMPANY_BOARDS, or an explicit
@@ -306,7 +328,68 @@ def _resolve(entry: str) -> tuple[str, str, str] | None:
     return None
 
 
+def _resolve(entry: str) -> tuple[str, str, str] | None:
+    """Backward-compatible alias for the public offline config resolver."""
+    return resolve_config_entry(entry)
+
+
 _PROBE_ORDER = ("greenhouse", "lever", "ashby")
+
+_UNSUPPORTED_ATS_HOSTS = (
+    "myworkdayjobs.com", "workday.com", "icims.com", "smartrecruiters.com",
+)
+
+
+def board_url(provider: str, slug: str) -> str:
+    templates = {
+        "greenhouse": "https://boards.greenhouse.io/{slug}",
+        "lever": "https://jobs.lever.co/{slug}",
+        "ashby": "https://jobs.ashbyhq.com/{slug}",
+    }
+    template = templates.get((provider or "").lower())
+    return template.format(slug=slug) if template and slug else ""
+
+
+def parse_board_url(url: str) -> tuple[str, str] | None:
+    """Extract a supported provider + board slug from a careers/posting URL."""
+    try:
+        parsed = urlparse((url or "").strip())
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    parts = [part for part in parsed.path.split("/") if part]
+    if host in {"boards.greenhouse.io", "job-boards.greenhouse.io"} and parts:
+        return "greenhouse", parts[0]
+    if host == "boards-api.greenhouse.io" and len(parts) >= 3 and parts[:2] == ["v1", "boards"]:
+        return "greenhouse", parts[2]
+    if host == "jobs.lever.co" and parts:
+        return "lever", parts[0]
+    if host == "jobs.ashbyhq.com" and parts:
+        return "ashby", parts[0]
+    return None
+
+
+def _unsupported_ats_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return any(host == suffix or host.endswith(f".{suffix}") for suffix in _UNSUPPORTED_ATS_HOSTS)
+
+
+def _board_from_careers_page(url: str) -> tuple[str, str] | None:
+    result = httpx.get_text_result(url)
+    if not result.ok or not isinstance(result.data, str):
+        return None
+    candidates = re.findall(r"(?is)href\s*=\s*['\"]([^'\"]+)['\"]", result.data)
+    candidates += re.findall(r"https?://[^\s'\"<>]+", result.data)
+    for candidate in candidates:
+        parsed = parse_board_url(urljoin(url, _html.unescape(candidate)))
+        if parsed:
+            return parsed
+    return None
 
 
 def _slug_variants(name: str) -> list[str]:
@@ -323,30 +406,83 @@ def _slug_variants(name: str) -> list[str]:
     return out
 
 
-def resolve_board(name: str, *, provider: str | None = None,
-                  slug: str | None = None) -> tuple[str, str, str] | None:
-    """Resolve a company name to ``(display_name, provider, board_slug)``.
+def resolve_board_result(name: str, *, provider: str | None = None,
+                         slug: str | None = None, careers_url: str = "",
+                         probe: bool = True) -> BoardResolution:
+    """Resolve a company and optional careers URL to a typed board outcome.
 
     Priority: an explicit ``provider`` + ``slug`` -> a ``Name|provider|slug`` override
     embedded in ``name`` or the curated :data:`COMPANY_BOARDS` map (both via
-    :func:`_resolve`) -> a best-effort probe that guesses a slug and tries
-    Greenhouse / Lever / Ashby, keeping the first board that returns any jobs.
-    Returns ``None`` when nothing yields a live board.
+    :func:`resolve_config_entry`) -> a supported ATS URL (or link on an official
+    careers page) -> an optional best-effort board probe.
     """
     display = (name or "").strip()
     if not display:
-        return None
+        return BoardResolution(display, ResolutionStatus.UNRESOLVED, detail="company is required")
     if provider and slug:
-        return display, provider.lower().strip(), slug.strip()
-    embedded = _resolve(display)
+        normalized_provider = provider.lower().strip()
+        normalized_slug = slug.strip()
+        if normalized_provider not in SUPPORTED_PROVIDERS:
+            return BoardResolution(
+                display, ResolutionStatus.UNSUPPORTED, normalized_provider, normalized_slug,
+                careers_url, f"unsupported ATS provider: {normalized_provider}",
+            )
+        return BoardResolution(
+            display, ResolutionStatus.RESOLVED, normalized_provider, normalized_slug,
+            board_url(normalized_provider, normalized_slug),
+        )
+    embedded = resolve_config_entry(display)
     if embedded:
-        return embedded
+        company, embedded_provider, embedded_slug = embedded
+        if embedded_provider not in SUPPORTED_PROVIDERS:
+            return BoardResolution(
+                company, ResolutionStatus.UNSUPPORTED, embedded_provider, embedded_slug,
+                careers_url, f"unsupported ATS provider: {embedded_provider}",
+            )
+        return BoardResolution(
+            company, ResolutionStatus.RESOLVED, embedded_provider, embedded_slug,
+            board_url(embedded_provider, embedded_slug),
+        )
+    if careers_url:
+        direct = parse_board_url(careers_url)
+        discovered = direct or _board_from_careers_page(careers_url)
+        if discovered:
+            discovered_provider, discovered_slug = discovered
+            return BoardResolution(
+                display, ResolutionStatus.RESOLVED, discovered_provider, discovered_slug,
+                board_url(discovered_provider, discovered_slug),
+            )
+        if _unsupported_ats_url(careers_url):
+            return BoardResolution(
+                display, ResolutionStatus.UNSUPPORTED, careers_url=careers_url,
+                detail="career portal uses an unsupported ATS",
+            )
+    if not probe:
+        return BoardResolution(
+            display, ResolutionStatus.UNRESOLVED, careers_url=careers_url,
+            detail="no supported ATS board resolved",
+        )
     for slug_guess in _slug_variants(display):
         for prov in _PROBE_ORDER:
             result = fetch_company_result(display, prov, slug_guess)
             if result.successful and result.jobs:
-                return display, prov, slug_guess
-    return None
+                return BoardResolution(
+                    display, ResolutionStatus.RESOLVED, prov, slug_guess,
+                    board_url(prov, slug_guess),
+                )
+    return BoardResolution(
+        display, ResolutionStatus.UNRESOLVED, careers_url=careers_url,
+        detail="no public Greenhouse, Lever, or Ashby board found",
+    )
+
+
+def resolve_board(name: str, *, provider: str | None = None,
+                  slug: str | None = None) -> tuple[str, str, str] | None:
+    """Compatibility wrapper returning the historical tuple-or-None shape."""
+    resolution = resolve_board_result(name, provider=provider, slug=slug)
+    if not resolution.resolved:
+        return None
+    return resolution.company, resolution.provider, resolution.slug
 
 
 def _role_keywords(search: dict) -> set[str]:
@@ -380,6 +516,18 @@ def _matches(job: Job, locs: set[str], roles: set[str], want_remote: bool,
     title = (job.title or "").lower()
     role_ok = (not roles) or any(k in title for k in roles)
     return loc_ok and role_ok
+
+
+def filter_board_jobs(cfg: dict, jobs: list[Job]) -> list[Job]:
+    """Apply the configured role/location/geo prefilter to one ATS board."""
+    search = cfg.get("search", {}) or {}
+    locs = _target_locations(search)
+    roles = _role_keywords(search)
+    want_remote = bool(search.get("is_remote", True)) or any(
+        profile.get("is_remote") for profile in (search.get("profiles") or []))
+    home = search.get("home_country", "India")
+    geo_on = bool(search.get("scope_to_home", True))
+    return [job for job in jobs if _matches(job, locs, roles, want_remote, home, geo_on)]
 
 
 def run(cfg: dict, store) -> int:

@@ -76,9 +76,9 @@
   --chart-indigo: #818cf8; --chart-teal: #2dd4bf; --chart-amber: #fbbf24; --chart-slate: #94a3b8;
   --score-1: #4338ca; --score-2: #4f46e5; --score-3: #6366f1; --score-4: #818cf8; --score-5: #a5b4fc;
   --radius: 8px; --shadow: 0 8px 24px -16px rgba(0, 0, 0, .55);
-  --font: "IBM Plex Sans", sans-serif;
+  --font: "Manrope", sans-serif;
   --mono: "Cascadia Code", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
-  --font-display: "IBM Plex Sans", sans-serif;
+  --font-display: "Manrope", sans-serif;
   --reader: "Source Serif 4", Georgia, serif;
 
   /* Design-system foundation (Stage 3 P0): elevation ramp + semantic aliases +
@@ -163,6 +163,36 @@ html.light {
 
 @utility tnum {
   font-variant-numeric: tabular-nums;
+}
+
+.review-queue {
+  container-type: inline-size;
+}
+
+.feed-list-grid {
+  display: flex;
+  flex-direction: column;
+  align-content: start;
+  gap: 10px;
+  padding: 12px;
+  background: var(--paper);
+}
+
+.feed-list-grid > article {
+  flex: 0 0 auto;
+  min-height: 132px;
+}
+
+@container (min-width: 840px) {
+  .feed-list-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .feed-list-grid > article {
+    min-height: 148px;
+  }
 }
 
 /* Global reduced-motion kill-switch: neutralize every animation/transition

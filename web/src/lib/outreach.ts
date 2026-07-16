@@ -54,7 +54,8 @@ const api = (path: string) => `${location.origin}/${path}`
 // Probe the local serve API once; resolves to the CSRF token, or null on the
 // public site (where /api/token does not exist).
 let tokenProbe: Promise<string | null> | null = null
-export function localServeToken(): Promise<string | null> {
+export function localServeToken(refresh = false): Promise<string | null> {
+  if (refresh) tokenProbe = null
   if (!tokenProbe) {
     tokenProbe = fetch(api('api/token'), { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
@@ -121,6 +122,23 @@ export interface ProfileUseResult {
   profile?: Profile
 }
 
+export interface ProfileUploadResult extends ProfileUseResult {
+  profile_count?: number
+  profile_limit?: number
+}
+
+function fileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('Could not read resume'))
+    reader.onload = () => {
+      const value = String(reader.result || '')
+      resolve(value.includes(',') ? value.slice(value.indexOf(',') + 1) : value)
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
 export async function profileUse(name: string, token: string): Promise<ProfileUseResult> {
   const r = await fetch(api('api/profile/use'), {
     method: 'POST',
@@ -128,6 +146,24 @@ export async function profileUse(name: string, token: string): Promise<ProfileUs
     body: JSON.stringify({ name }),
   })
   return (await r.json()) as ProfileUseResult
+}
+
+export async function profileUpload(
+  file: File,
+  name: string,
+  token: string,
+): Promise<ProfileUploadResult> {
+  const contentBase64 = await fileAsBase64(file)
+  const r = await fetch(api('api/resume/upload'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    body: JSON.stringify({
+      name,
+      filename: file.name,
+      content_base64: contentBase64,
+    }),
+  })
+  return (await r.json()) as ProfileUploadResult
 }
 
 // Free-text company search: resolve the employer's domain, discover HR contacts,

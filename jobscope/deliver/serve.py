@@ -1,22 +1,24 @@
-"""Serve the jobscope web dashboard (the React SPA) over local HTTP, with a
-localhost-only "Refresh & Publish" control.
+"""Serve the jobscope web dashboard (the React SPA) over local HTTP with
+localhost-only mutation and refresh APIs.
 
 `jobscope serve` serves the built SPA from ``web/dist`` on 127.0.0.1 (building it
-first, un-redacted, if it is missing) and injects a floating Refresh button into
-the served page. The button POSTs to ``/api/refresh``; the server then syncs the
+first, un-redacted, if it is missing). The React Scan Gmail control POSTs to
+``/api/refresh``; the server then syncs the
 Gmail inbox (last ``serve.inbox_days`` days, append-only), rescores matches,
 publishes the redacted/encrypted public site, and rebuilds the local un-redacted
 SPA -- at most once per day unless forced. The endpoints bind to loopback and are
-CSRF-guarded (loopback Origin + a per-run token); the button is injected only at
-serve time, so it never exists on the published site.
+CSRF-guarded (loopback Origin + a per-run token).
 """
 from __future__ import annotations
 
 import datetime as _dt
+import base64
+import binascii
 import http.server
 import json
 import os
 import secrets
+import tempfile
 import threading
 import webbrowser
 from dataclasses import asdict, dataclass
@@ -26,6 +28,9 @@ from typing import Callable
 # background worker. Writes are small dict.update() calls (atomic under the GIL);
 # _LOCK only guards the "is one already running?" decision in do_POST.
 _LOCK = threading.Lock()
+_MAX_RESUME_BYTES = 5 * 1024 * 1024
+_MAX_RESUME_REQUEST_BYTES = 7 * 1024 * 1024
+_RESUME_EXTENSIONS = frozenset({".md", ".txt", ".json", ".pdf"})
 _STATE: dict[str, str] = {
     "state": "idle",     # idle | running | done | skipped | error | busy
     "step": "",          # scan | inbox | match | render | publish | ...
@@ -84,69 +89,10 @@ def _dist_dir(cfg: dict) -> str:
     return os.path.abspath(override) if override else os.path.join(_repo_root(), "web", "dist")
 
 
-# Floating Refresh control injected into the served SPA's index.html. It lives
-# outside React's #root (appended to <body>), appears only on localhost, and
-# reveals itself only after /api/token confirms the endpoint exists -- so it never
-# shows on the statically-hosted public site (served without injection).
-_REFRESH_WIDGET = """
-<style id="js-refresh-style">
-#jsRefreshFab{position:fixed;right:18px;bottom:18px;z-index:2147483000;display:inline-flex;
-  align-items:center;gap:8px;padding:11px 16px;border-radius:999px;border:1px solid rgba(255,255,255,.16);
-  background:#7c6cff;color:#fff;font:600 13px/1 system-ui,-apple-system,sans-serif;cursor:pointer;
-  box-shadow:0 10px 34px rgba(0,0,0,.4)}
-#jsRefreshFab[disabled]{opacity:.65;cursor:progress}
-#jsRefreshFab svg{width:15px;height:15px;flex:none}
-#jsRefreshFab.spin svg{animation:jsspin 1s linear infinite}
-@keyframes jsspin{to{transform:rotate(360deg)}}
-#jsRefreshToast{position:fixed;right:18px;bottom:72px;z-index:2147483000;max-width:320px;
-  padding:10px 13px;border-radius:10px;font:13px/1.45 system-ui,-apple-system,sans-serif;
-  background:#151827;color:#e8e9f0;border:1px solid #2a2e42;box-shadow:0 10px 34px rgba(0,0,0,.45);display:none}
-#jsRefreshToast.show{display:block}
-#jsRefreshToast.ok{border-color:#22c55e}
-#jsRefreshToast.err{border-color:#ef4444}
-#jsRefreshToast.run{border-color:#3b82f6}
-@media (prefers-reduced-motion:reduce){#jsRefreshFab.spin svg{animation:none}}
-</style>
-<script>
-(function(){
-  if(window.__jsRefreshInit){return;} window.__jsRefreshInit=1;
-  var local=location.protocol==='http:'&&(location.hostname==='127.0.0.1'||location.hostname==='localhost');
-  if(!local){return;}
-  var token=null, poll=null, sawRunning=false;
-  var fab=document.createElement('button');
-  fab.id='jsRefreshFab';
-  fab.title='Sync Gmail & publish (Shift-click to force a same-day rerun)';
-  fab.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg><span>Refresh</span>';
-  var toast=document.createElement('div'); toast.id='jsRefreshToast';
-  function show(m,k){toast.textContent=m||'';toast.className=(m?'show ':'')+(k||'');}
-  function busy(b){fab.disabled=b;fab.classList.toggle('spin',b);fab.querySelector('span').textContent=b?'Refreshing':'Refresh';}
-  function stop(){if(poll){clearInterval(poll);poll=null;}busy(false);}
-  function done(s){stop();
-    if(s.state==='done'){show(s.message||'Published.','ok');if(sawRunning){setTimeout(function(){location.reload();},1600);}}
-    else if(s.state==='skipped'){show(s.message||'Already refreshed today.','ok');setTimeout(function(){show('');},6000);}
-    else if(s.state==='error'){show('Error: '+(s.message||'refresh failed'),'err');}
-    sawRunning=false;}
-  function check(){fetch('/api/status').then(function(r){return r.json();}).then(function(s){
-    if(s.state==='running'){sawRunning=true;if(s.message){show(s.message,'run');}}else{done(s);}
-  }).catch(function(){stop();show('Lost connection to jobscope serve.','err');});}
-  function go(force){busy(true);show('Starting\u2026','run');
-    fetch('/api/refresh',{method:'POST',headers:{'X-Refresh-Token':token,'Content-Type':'application/json'},body:JSON.stringify({force:!!force})})
-      .then(function(r){return r.json();}).then(function(j){if(j.state==='busy'){show('A refresh is already running\u2026','run');}if(!poll){poll=setInterval(check,1300);}})
-      .catch(function(){busy(false);show('Could not start refresh.','err');});}
-  fab.addEventListener('click',function(e){if(token){go(e.shiftKey);}});
-  fetch('/api/token').then(function(r){return r.ok?r.json():null;}).then(function(j){
-    if(j&&j.enabled){token=j.token;document.body.appendChild(toast);document.body.appendChild(fab);
-      fetch('/api/status').then(function(r){return r.json();}).then(function(s){if(s.state==='running'){busy(true);sawRunning=true;poll=setInterval(check,1500);check();}}).catch(function(){});}
-  }).catch(function(){});
-})();
-</script>
-"""
-
-
 def _build_server(cfg: dict, port: int):
     """Build (but do not start) the SPA HTTP server with the refresh API wired
-    in. Serves ``web/dist`` (building it once, un-redacted, if absent) and injects
-    the Refresh widget into index.html. Returns ``(httpd, page, token,
+    in. Serves ``web/dist`` (building it once, un-redacted, if absent); the React
+    shell owns Gmail/refresh controls. Returns ``(httpd, page, token,
     refresh_enabled)``; exposed so tests can drive the endpoints on an ephemeral
     port."""
     from jobscope.core.store import Store
@@ -163,8 +109,6 @@ def _build_server(cfg: dict, port: int):
         _STATE["last_date"] = store.meta_get("refresh:last_date", "") or ""
 
     token = secrets.token_hex(16)
-    inject = refresh_on
-
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=directory, **kwargs)
@@ -189,8 +133,6 @@ def _build_server(cfg: dict, port: int):
             except OSError:
                 self.send_error(404, "dashboard not built")
                 return
-            if inject and b"</body>" in html:
-                html = html.replace(b"</body>", _REFRESH_WIDGET.encode("utf-8") + b"</body>", 1)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(html)))
@@ -327,6 +269,85 @@ def _build_server(cfg: dict, port: int):
             except Exception as exc:  # noqa: BLE001 - surface to the UI
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
+        def _resume_upload(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0 or length > _MAX_RESUME_REQUEST_BYTES:
+                self._send_json(413, {"ok": False, "error": "resume upload is too large"})
+                return
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except ValueError:
+                self._send_json(400, {"ok": False, "error": "invalid JSON"})
+                return
+            filename = os.path.basename(str(data.get("filename") or "").strip())
+            requested_name = str(data.get("name") or "").strip()
+            extension = os.path.splitext(filename)[1].lower()
+            if not requested_name:
+                self._send_json(400, {"ok": False, "error": "profile name required"})
+                return
+            if extension not in _RESUME_EXTENSIONS:
+                self._send_json(400, {"ok": False, "error": "resume must be .md, .txt, .json, or .pdf"})
+                return
+            try:
+                content = base64.b64decode(str(data.get("content_base64") or ""), validate=True)
+            except (ValueError, binascii.Error):
+                self._send_json(400, {"ok": False, "error": "invalid resume encoding"})
+                return
+            if not content or len(content) > _MAX_RESUME_BYTES:
+                self._send_json(413, {"ok": False, "error": "resume must be between 1 byte and 5 MB"})
+                return
+
+            path = ""
+            try:
+                from jobscope.analyze import profile as _profile
+                from jobscope.analyze import resume as _resume
+                from jobscope.core.model import slugify
+                from jobscope.core.store import Store
+                from jobscope.deliver import render
+
+                name = slugify(requested_name)[:40]
+                if not _profile.can_create_profile(cfg, name):
+                    self._send_json(409, {
+                        "ok": False,
+                        "error": f"profile limit reached ({_profile.MAX_PROFILES})",
+                    })
+                    return
+                with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as handle:
+                    handle.write(content)
+                    path = handle.name
+                with Store(cfg["output"]["db_path"]) as store:
+                    if _resume.import_resume(path, store, cfg, name=name) != 0:
+                        self._send_json(400, {"ok": False, "error": "could not import resume"})
+                        return
+                    uploaded = store.get_resume(name)
+                    if uploaded is not None:
+                        uploaded.source_path = filename
+                        store.save_resume(uploaded, name=name)
+                    if _profile.run(
+                        cfg, store, action="build", resume_name=name,
+                        name=name, force=True,
+                    ) != 0 or not _profile.set_active(cfg, name):
+                        self._send_json(500, {"ok": False, "error": "could not build profile"})
+                        return
+                    prof = render._profile_data(cfg, store)
+                self._send_json(200, {
+                    "ok": True,
+                    "profile": prof,
+                    "profile_count": len(_profile.list_profiles(cfg)),
+                    "profile_limit": _profile.MAX_PROFILES,
+                })
+            except (Exception, SystemExit) as exc:  # surface parser failures without stopping serve
+                self._send_json(400, {"ok": False, "error": str(exc)[:200]})
+            finally:
+                if path:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+
         def _scout(self) -> None:
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
@@ -351,6 +372,52 @@ def _build_server(cfg: dict, port: int):
                         save=bool(data.get("save")),
                         limit=int(data.get("limit") or 40))
                 self._send_json(200, res)
+            except Exception as exc:  # noqa: BLE001 - surface to the UI
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
+        def _company_resolve(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except ValueError:
+                data = {}
+            try:
+                from jobscope.apply import monitoring
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    result = monitoring.resolve_company(
+                        cfg, store,
+                        company=data.get("company") or "",
+                        careers_url=data.get("careers_url") or "",
+                        provider=data.get("provider") or "",
+                        slug=data.get("slug") or "",
+                    )
+                self._send_json(200, result)
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)[:200]})
+            except Exception as exc:  # noqa: BLE001 - surface to the UI
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
+        def _monitoring_actions(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except ValueError:
+                data = {}
+            try:
+                from jobscope.apply import monitoring
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    result = monitoring.apply_actions(cfg, store, data.get("actions"))
+                self._send_json(200, result)
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)[:200]})
             except Exception as exc:  # noqa: BLE001 - surface to the UI
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
@@ -387,8 +454,17 @@ def _build_server(cfg: dict, port: int):
             if route == "/api/profile/use":
                 self._profile_use()
                 return
+            if route == "/api/resume/upload":
+                self._resume_upload()
+                return
             if route == "/api/scout":
                 self._scout()
+                return
+            if route == "/api/companies/resolve":
+                self._company_resolve()
+                return
+            if route == "/api/monitoring/actions":
+                self._monitoring_actions()
                 return
             if route != "/api/refresh":
                 self.send_error(404)
@@ -432,7 +508,7 @@ def run(cfg: dict, port: int = 8799, open_browser: bool = False) -> int:
         url = f"http://127.0.0.1:{port}/{page}"
         print(f"  serving dashboard at {url}  (Ctrl+C to stop)")
         if refresh_on:
-            print("  refresh & publish button enabled (localhost only)")
+            print("  local Gmail scan and profile upload APIs enabled")
         if open_browser:
             webbrowser.open(url)
         try:
@@ -474,12 +550,20 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
         current_stage = ""
         note = ""
         try:
-            if want_scan:
+            from jobscope.ingest import monitor, scrape
+            step("monitors", "Scanning monitored company portals")
+            stages.append(_run_stage(
+                "monitors", required=False,
+                action=lambda: monitor.scan_active_monitors(cfg, store),
+            ))
+
+            if want_scan or scrape.discovery_due(cfg, store):
                 step("scan", "Scanning job boards\u2026")
-                from jobscope.ingest import scrape
                 stages.append(_run_stage(
                     "scan", required=False,
-                    action=lambda: scrape.run(cfg, store),
+                    action=lambda: scrape.run(
+                        cfg, store, mode="discovery", force_discovery=want_scan,
+                    ),
                     nonzero_is_failure=True,
                 ))
 
@@ -500,6 +584,12 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
                 "match", required=True,
                 action=lambda: match.run(cfg, store),
                 nonzero_is_failure=True,
+            ))
+
+            from jobscope.analyze import review
+            stages.append(_run_stage(
+                "reviews", required=True,
+                action=lambda: review.sync_reviews(store),
             ))
 
             from jobscope.apply import track as _track

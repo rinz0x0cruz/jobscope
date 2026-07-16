@@ -11,7 +11,7 @@ describe('ShellV2', () => {
     render(
       <ShellV2
         data={dashboard({ rows: [job] })}
-        state={searchSchema.parse({ view: 'feed', job: job.id })}
+        state={searchSchema.parse({ view: 'review', job: job.id })}
         onStateChange={onStateChange}
         onLock={vi.fn()}
       />,
@@ -27,13 +27,27 @@ describe('ShellV2', () => {
     render(
       <ShellV2
         data={dashboard({ rows: [job] })}
-        state={searchSchema.parse({ view: 'feed', job: job.id })}
+        state={searchSchema.parse({ view: 'review', job: job.id })}
         onStateChange={onStateChange}
         onLock={vi.fn()}
       />,
     )
 
-    fireEvent.keyDown(window, { key: '2' })
+    fireEvent.keyDown(window, { key: '3' })
     expect(onStateChange).toHaveBeenCalledWith({ view: 'pipeline', job: undefined })
+  })
+
+  it('maps shortcut six to Settings', () => {
+    const onStateChange = vi.fn()
+    render(
+      <ShellV2
+        data={dashboard()}
+        state={searchSchema.parse({ view: 'review' })}
+        onStateChange={onStateChange}
+        onLock={vi.fn()}
+      />,
+    )
+    fireEvent.keyDown(window, { key: '6' })
+    expect(onStateChange).toHaveBeenCalledWith({ view: 'settings', job: undefined, company: undefined })
   })
 })

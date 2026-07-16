@@ -1,4 +1,6 @@
 import { toast } from 'sonner'
+import { acknowledgeMonitoringActions, queuedMonitoringActions } from './companyActions'
+import { localServeToken } from './outreach'
 
 // The live dashboard is a static build served from GitHub Pages; new results are
 // produced by the `refresh.yml` Action (scan mailbox -> rescore -> republish).
@@ -94,6 +96,7 @@ function ghHeaders(token: string): HeadersInit {
 interface WorkflowRun {
   status: string
   conclusion: string | null
+  display_title?: string
 }
 
 /** Newest runs of the refresh workflow (needs the token's Actions: read). */
@@ -144,6 +147,29 @@ export async function pullLatestData(): Promise<void> {
  *  With a stored token it POSTs `workflow_dispatch` (and polls to completion);
  *  otherwise it opens GitHub's Run-workflow page — no secret ever required. */
 export async function scanNewMail(): Promise<void> {
+  const localToken = await localServeToken(true)
+  if (localToken) {
+    const id = toast.loading('Starting Gmail scan…')
+    try {
+      const response = await fetch(`${location.origin}/api/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': localToken },
+        body: JSON.stringify({ force: true, full_scan: false }),
+      })
+      const payload = await response.json() as { state?: string; message?: string }
+      toast.dismiss(id)
+      if (response.ok && ['started', 'busy'].includes(payload.state || '')) {
+        toast.success(payload.state === 'busy' ? 'Gmail scan already running' : 'Gmail scan started')
+      } else {
+        toast.error(payload.message || `Could not start Gmail scan (HTTP ${response.status})`)
+      }
+    } catch {
+      toast.dismiss(id)
+      toast.error('Could not reach the local Gmail scanner')
+    }
+    return
+  }
+
   const remaining = scanCooldownRemaining()
   if (remaining > 0) {
     toast('Scan on cooldown', {
@@ -203,14 +229,22 @@ export async function scanNewMail(): Promise<void> {
 
 /** Poll the newest run to completion, then offer a one-tap pull. Rate-limit
  *  friendly: a short head start, then ~12s spacing, capped at ~6 min. */
-async function pollUntilDone(token: string): Promise<void> {
+async function pollUntilDone(
+  token: string,
+  onSuccess?: () => void | Promise<void>,
+  expectedTitle?: string,
+): Promise<void> {
   const deadline = Date.now() + 6 * 60 * 1000
   await sleep(6000)
   while (Date.now() < deadline) {
     try {
-      const [run] = await latestRuns(token, 1)
+      const runs = await latestRuns(token, expectedTitle ? 10 : 1)
+      const run = expectedTitle
+        ? runs.find((candidate) => candidate.display_title === expectedTitle)
+        : runs[0]
       if (run && !isActiveRun(run)) {
         if (run.conclusion === 'success') {
+          await onSuccess?.()
           toast.success('Scan complete — new results ready', {
             description: 'Give the deploy a few seconds, then pull the latest.',
             action: { label: 'Pull latest', onClick: () => void pullLatestData() },
@@ -227,6 +261,60 @@ async function pollUntilDone(token: string): Promise<void> {
       /* transient network/API hiccup — keep polling */
     }
     await sleep(12000)
+  }
+}
+
+/** Dispatch queued company/review decisions in one workflow run. The browser
+ * queue is retained through conflicts and failures, and clears only after a
+ * successful encrypted refresh/publish. */
+export async function syncMonitoringQueue(): Promise<void> {
+  const actions = queuedMonitoringActions()
+  if (!actions.length) {
+    toast('No queued changes')
+    return
+  }
+  const token = readToken()
+  if (!token) {
+    toast.error('Connect a GitHub token to sync changes', {
+      description: 'Settings → Data sync. The queued changes remain in this browser.',
+    })
+    return
+  }
+  const id = toast.loading(`Checking before syncing ${actions.length} change${actions.length === 1 ? '' : 's'}…`)
+  try {
+    const runs = await latestRuns(token)
+    if (runs.some(isActiveRun)) {
+      toast.dismiss(id)
+      toast('A refresh is already running', {
+        description: 'Queued changes were kept. Sync again after it finishes.',
+      })
+      return
+    }
+    const mutationNonce = crypto.randomUUID()
+    const expectedTitle = `Monitoring sync ${mutationNonce}`
+    const response = await fetch(`${API}/actions/workflows/${WORKFLOW}/dispatches`, {
+      method: 'POST',
+      headers: ghHeaders(token),
+      body: JSON.stringify({
+        ref: REF,
+        inputs: {
+          mutations_json: JSON.stringify(actions),
+          mutation_nonce: mutationNonce,
+        },
+      }),
+    })
+    toast.dismiss(id)
+    if (response.status !== 204) {
+      toast.error(`Could not sync changes (HTTP ${response.status})`)
+      return
+    }
+    toast.success('Queued changes are syncing', {
+      description: 'They will clear after the encrypted dashboard republishes.',
+    })
+    void pollUntilDone(token, () => acknowledgeMonitoringActions(actions), expectedTitle)
+  } catch {
+    toast.dismiss(id)
+    toast.error('Network error — queued changes were kept.')
   }
 }
 

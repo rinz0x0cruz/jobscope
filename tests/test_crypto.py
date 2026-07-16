@@ -86,6 +86,8 @@ def test_node_dashboard_envelope_matches_browser_contract(tmp_path):
         "applications": [],
         "profile": None,
         "applied_outreach": [],
+        "companies": [],
+        "reviews": [],
     }
     dashboard.write_text(json.dumps(payload), encoding="utf-8")
 

@@ -1,12 +1,15 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ArrowUpRight, BriefcaseBusiness, ChevronDown, Clock3, MapPin, Users } from 'lucide-react'
+import { ArrowUpRight, BookmarkPlus, BriefcaseBusiness, Building2, ChevronDown, CircleDollarSign, Clock3, Loader2, Mail, MapPin, MessageCircle, Newspaper, RotateCcw, Star, Users, X } from 'lucide-react'
+import { toast } from 'sonner'
 import type { FeedItem, FeedModel } from '@/lib/feed'
 import { FACETS, FEED_FLAG_VALUES, type FeedFlag, type SearchState } from '@/lib/urlState'
-import type { JobRow, Tier } from '@/lib/schema'
+import type { JobRow, ReviewState, Tier } from '@/lib/schema'
+import { compRatio, glassdoorRating } from '@/lib/format'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
 import { scoreToGrade } from '@/lib/gamification'
 import { presentFitRationale } from '@/lib/jobPresentation'
+import { localServeToken, outreachPreview } from '@/lib/outreach'
 
 export interface FeedViewProps {
   model: FeedModel
@@ -14,6 +17,8 @@ export interface FeedViewProps {
   selectedId?: string
   onSelect: (jobId: string) => void
   onStateChange: (patch: Partial<SearchState>, options?: { replace?: boolean }) => void
+  onReviewState: (jobId: string, state: ReviewState) => void
+  onMonitorCompany: (jobId: string, company: string, postingUrl: string) => void
 }
 
 const TIER_COLOR: Record<Tier, string> = {
@@ -48,11 +53,11 @@ function FeedToolbar({ model, rows, state, onStateChange }: Pick<FeedViewProps, 
     state.flags.filter((flag) => SECONDARY_FLAGS.includes(flag)).length +
     FACETS.reduce((total, facet) => total + state[facet.key].length, 0)
   return (
-    <div className="border-b border-line bg-panel">
-      <div className="flex min-h-12 items-center gap-3 border-b border-line px-4 py-2 sm:px-5">
+    <div className="shrink-0 border-b border-line bg-panel px-4 pb-3 pt-4 sm:px-5">
+      <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <span className="font-medium text-ink">{model.total}</span>{' '}
-          <span className="text-ink-3">of {model.available} available roles</span>
+          <span className="font-mono text-[13px] font-semibold text-ink">{model.total}</span>{' '}
+          <span className="text-[12px] text-ink-3">of {model.available} roles</span>
         </div>
         <label className="flex items-center gap-2 text-[12px] text-ink-3">
           <span className="hidden sm:inline">Sort</span>
@@ -60,7 +65,7 @@ function FeedToolbar({ model, rows, state, onStateChange }: Pick<FeedViewProps, 
             aria-label="Sort roles"
             value={state.sort}
             onChange={(event) => onStateChange({ sort: event.target.value as SearchState['sort'] })}
-            className="h-8 rounded-md border border-line bg-paper px-2 text-[12px] text-ink outline-none focus:border-line-strong"
+            className="h-8 rounded-md border border-line bg-paper px-2.5 text-[12px] text-ink outline-none focus:border-line-strong"
           >
             <option value="score">Best match</option>
             <option value="newest">Newest</option>
@@ -69,7 +74,24 @@ function FeedToolbar({ model, rows, state, onStateChange }: Pick<FeedViewProps, 
         </label>
       </div>
 
-      <div className="flex items-center gap-2 px-4 py-2 sm:px-5">
+      <div className="mt-3 flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Review buckets">
+        {([
+          ['monitored', 'Monitored'], ['discovery', 'Discovery'],
+          ['saved', 'Saved'], ['dismissed', 'Dismissed'],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={state.reviewBucket === value}
+            onClick={() => onStateChange({ reviewBucket: value, job: undefined })}
+            className={`h-8 shrink-0 rounded-md border px-3 text-[11px] font-medium transition ${state.reviewBucket === value ? 'border-brand bg-brand-weak text-brand' : 'border-line bg-paper text-ink-3 hover:border-line-strong hover:text-ink'}`}
+          >
+            {label} <span className="font-mono">{model.buckets[value]}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-2 flex items-center gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {(['Strong', 'Good', 'Stretch'] as Tier[]).map((tier) => (
             <FilterChip
@@ -92,7 +114,7 @@ function FeedToolbar({ model, rows, state, onStateChange }: Pick<FeedViewProps, 
           ))}
         </div>
         <details className="group relative shrink-0">
-          <summary className="flex h-8 cursor-pointer list-none items-center gap-1 rounded-full border border-line px-3 text-[11px] font-medium text-ink-2 transition hover:border-line-strong [&::-webkit-details-marker]:hidden">
+          <summary className="flex h-8 cursor-pointer list-none items-center gap-1 rounded-md border border-line bg-paper px-3 text-[11px] font-medium text-ink-2 transition hover:border-line-strong [&::-webkit-details-marker]:hidden">
             More<span className="hidden sm:inline"> filters</span>{advancedFilters ? ` · ${advancedFilters}` : ''}
             <ChevronDown size={13} aria-hidden="true" className="transition group-open:rotate-180" />
           </summary>
@@ -180,7 +202,7 @@ function FilterChip({
       onClick={onClick}
       aria-label={ariaLabel}
       aria-pressed={active}
-      className="h-8 shrink-0 rounded-full border px-3 text-[11px] font-medium transition"
+      className="h-8 shrink-0 rounded-md border px-3 text-[11px] font-medium transition"
       style={
         active
           ? { borderColor: color || 'var(--brand-coral)', color: color || 'var(--brand-coral)', background: 'var(--brand-weak)' }
@@ -192,15 +214,102 @@ function FilterChip({
   )
 }
 
-function FeedRow({ item, selected, onSelect }: { item: FeedItem; selected: boolean; onSelect: () => void }) {
+function RecruiterSignal({ row }: { row: JobRow }) {
+  const [email, setEmail] = useState(row.recruiter?.email || '')
+  const [loading, setLoading] = useState(false)
+
+  if (email) {
+    return (
+      <a
+        href={`mailto:${email}`}
+        aria-label={`Email recruiter for ${row.title}`}
+        title={`${row.recruiter?.confidence || 'resolved'} confidence · ${row.recruiter?.source || 'outreach'}`}
+        className="inline-flex max-w-full items-center gap-1 text-brand hover:underline"
+      >
+        <Mail size={12} aria-hidden="true" />
+        <span className="max-w-44 truncate">{email}</span>
+      </a>
+    )
+  }
+
+  const findRecruiter = async () => {
+    setLoading(true)
+    try {
+      const token = await localServeToken()
+      if (!token) {
+        toast.error('Recruiter lookup is available in the local workspace')
+        return
+      }
+      const preview = await outreachPreview(row.id, token)
+      if (preview.ok && preview.to) {
+        setEmail(preview.to)
+        toast.success(`Found ${preview.to}`)
+      } else {
+        toast.error(preview.error || 'No verified recruiter address found')
+      }
+    } catch {
+      toast.error('Could not resolve a recruiter address')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void findRecruiter()}
+      disabled={loading}
+      aria-label={`Find recruiter for ${row.title}`}
+      className="inline-flex items-center gap-1 text-ink-3 hover:text-brand disabled:opacity-50"
+    >
+      {loading ? <Loader2 size={12} className="animate-spin" aria-hidden="true" /> : <Mail size={12} aria-hidden="true" />}
+      Find recruiter
+    </button>
+  )
+}
+
+function CardIntelligence({ row }: { row: JobRow }) {
+  const ratio = compRatio(row)
+  const glassdoor = glassdoorRating(row)
+  const sentiment = row.enrich.reddit?.sentiment
+  const threads = row.enrich.reddit?.count
+  const news = row.enrich.news?.length ?? 0
+  return (
+    <div className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-2 text-[10px] font-medium text-ink-3">
+      {ratio !== null && (
+        <span className={ratio >= 100 ? 'inline-flex items-center gap-1 text-strong' : 'inline-flex items-center gap-1 text-stretch'} title="Posting midpoint compared with public market midpoint">
+          <CircleDollarSign size={12} aria-hidden="true" /> {ratio}% market
+        </span>
+      )}
+      {glassdoor !== null && (
+        <span className="inline-flex items-center gap-1" title="Glassdoor public rating">
+          <Star size={12} aria-hidden="true" /> Glassdoor {glassdoor.toFixed(1)}
+        </span>
+      )}
+      {sentiment && sentiment !== 'unknown' && (
+        <span className="inline-flex items-center gap-1 capitalize" title={`${threads || 0} public Reddit threads`}>
+          <MessageCircle size={12} aria-hidden="true" /> Reddit {sentiment}
+        </span>
+      )}
+      {news > 0 && (
+        <span className="inline-flex items-center gap-1" title="Recent public company news">
+          <Newspaper size={12} aria-hidden="true" /> {news} news
+        </span>
+      )}
+      <span className="min-w-0 sm:ml-auto"><RecruiterSignal row={row} /></span>
+    </div>
+  )
+}
+
+function FeedRow({ item, selected, onSelect, onReviewState, onMonitorCompany }: { item: FeedItem; selected: boolean; onSelect: () => void; onReviewState: (state: ReviewState) => void; onMonitorCompany: () => void }) {
   const { format } = useScoreFormat()
   const row = item.row
   const fit = presentFitRationale(row.rationale)
   return (
     <article
       data-feed-id={row.id}
-      className={`group grid grid-cols-[minmax(0,1fr)_2.75rem] border-b border-line bg-panel transition-colors ${
-        selected ? 'bg-brand-weak shadow-[inset_3px_0_var(--brand-coral)]' : 'hover:bg-inset/55'
+      className={`group grid grid-cols-[minmax(0,1fr)_2.75rem_2.75rem] overflow-hidden rounded-card border border-line bg-panel shadow-[var(--shadow-panel)] transition-colors ${
+        selected ? 'border-brand bg-brand-weak shadow-[inset_3px_0_var(--brand-coral)]' : 'hover:border-line-strong hover:bg-inset/55'
       }`}
     >
       <button
@@ -208,7 +317,7 @@ function FeedRow({ item, selected, onSelect }: { item: FeedItem; selected: boole
         onClick={onSelect}
         aria-label={`${row.company} — ${row.title}`}
         aria-current={selected ? 'true' : undefined}
-        className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+        className="col-start-1 row-start-1 grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
       >
         <span className="flex flex-col items-center justify-start border-r border-line px-2 py-4">
           <span className="font-mono text-lg font-semibold tabular-nums" style={{ color: TIER_COLOR[row.tier] }}>
@@ -262,13 +371,27 @@ function FeedRow({ item, selected, onSelect }: { item: FeedItem; selected: boole
           ) : null}
         </span>
       </button>
+      <CardIntelligence row={row} />
+      <div className="col-start-2 row-span-2 row-start-1 flex flex-col border-l border-line">
+        {item.review.state === 'pending' ? (
+          <>
+            {item.review.origins.includes('discovery') && !item.review.origins.includes('monitored') && (
+              <button type="button" onClick={onMonitorCompany} aria-label={`Monitor ${row.company}`} title="Monitor company" className="grid min-h-11 flex-1 place-items-center text-ink-3 hover:bg-inset hover:text-brand"><Building2 size={15} /></button>
+            )}
+            <button type="button" onClick={() => onReviewState('saved')} aria-label={`Save ${row.title}`} title="Save role" className="grid min-h-11 flex-1 place-items-center text-ink-3 hover:bg-brand-weak hover:text-brand"><BookmarkPlus size={15} /></button>
+            <button type="button" onClick={() => onReviewState('dismissed')} aria-label={`Dismiss ${row.title}`} title="Dismiss role" className="grid min-h-11 flex-1 place-items-center border-t border-line text-ink-3 hover:bg-inset hover:text-hot"><X size={15} /></button>
+          </>
+        ) : (
+          <button type="button" onClick={() => onReviewState('pending')} aria-label={`Restore ${row.title} to review`} title="Restore to review" className="grid min-h-11 flex-1 place-items-center text-ink-3 hover:bg-inset hover:text-brand"><RotateCcw size={15} /></button>
+        )}
+      </div>
       <a
         href={row.url}
         target="_blank"
         rel="noreferrer"
         aria-label={`Apply to ${row.company} — ${row.title}`}
         title="Open application"
-        className="flex items-center justify-center border-l border-line text-ink-3 outline-none transition hover:bg-brand-weak hover:text-brand focus-visible:bg-brand-weak focus-visible:text-brand"
+        className="col-start-3 row-span-2 row-start-1 flex items-center justify-center border-l border-line text-ink-3 outline-none transition hover:bg-brand-weak hover:text-brand focus-visible:bg-brand-weak focus-visible:text-brand"
       >
         <ArrowUpRight size={16} aria-hidden="true" />
       </a>
@@ -276,7 +399,7 @@ function FeedRow({ item, selected, onSelect }: { item: FeedItem; selected: boole
   )
 }
 
-function FeedList({ model, selectedId, onSelect }: Pick<FeedViewProps, 'model' | 'selectedId' | 'onSelect'>) {
+function FeedList({ model, selectedId, onSelect, onReviewState, onMonitorCompany }: Pick<FeedViewProps, 'model' | 'selectedId' | 'onSelect' | 'onReviewState' | 'onMonitorCompany'>) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtual = model.items.length > 50
   // TanStack Virtual intentionally returns mutable measurement callbacks.
@@ -300,7 +423,11 @@ function FeedList({ model, selectedId, onSelect }: Pick<FeedViewProps, 'model' |
   }
 
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto" data-feed-scroll="">
+    <div
+      ref={scrollRef}
+      className={`min-h-0 flex-1 overflow-y-auto ${virtual ? '' : 'feed-list-grid'}`}
+      data-feed-scroll=""
+    >
       {virtual ? (
         <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
           {virtualRows.map((virtualRow) => {
@@ -313,14 +440,14 @@ function FeedList({ model, selectedId, onSelect }: Pick<FeedViewProps, 'model' |
                 className="absolute left-0 top-0 w-full"
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
               >
-                <FeedRow item={item} selected={selectedId === item.row.id} onSelect={() => onSelect(item.row.id)} />
+                <FeedRow item={item} selected={selectedId === item.row.id} onSelect={() => onSelect(item.row.id)} onReviewState={(state) => onReviewState(item.row.id, state)} onMonitorCompany={() => onMonitorCompany(item.row.id, item.row.company, item.row.url)} />
               </div>
             )
           })}
         </div>
       ) : (
         model.items.map((item) => (
-          <FeedRow key={item.row.id} item={item} selected={selectedId === item.row.id} onSelect={() => onSelect(item.row.id)} />
+          <FeedRow key={item.row.id} item={item} selected={selectedId === item.row.id} onSelect={() => onSelect(item.row.id)} onReviewState={(state) => onReviewState(item.row.id, state)} onMonitorCompany={() => onMonitorCompany(item.row.id, item.row.company, item.row.url)} />
         ))
       )}
     </div>
@@ -354,9 +481,9 @@ export function FeedView(props: FeedViewProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [model.items, onSelect, selectedId])
   return (
-    <section aria-label="Ranked roles" className="flex min-h-0 min-w-0 flex-1 flex-col border-x border-line bg-panel lg:border-l lg:border-r-0">
+    <section aria-label="Review queue" className="review-queue flex min-h-0 min-w-0 flex-1 flex-col bg-paper min-[1400px]:border-l min-[1400px]:border-line">
       <FeedToolbar model={props.model} rows={props.model.facetRows} state={props.state} onStateChange={props.onStateChange} />
-      <FeedList model={props.model} selectedId={props.selectedId} onSelect={props.onSelect} />
+      <FeedList model={props.model} selectedId={props.selectedId} onSelect={props.onSelect} onReviewState={props.onReviewState} onMonitorCompany={props.onMonitorCompany} />
     </section>
   )
 }

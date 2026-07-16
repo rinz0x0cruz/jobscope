@@ -32,6 +32,8 @@ def _validate_public(data: Any) -> None:
         "applications": [],
         "profile": None,
         "applied_outreach": [],
+        "companies": [],
+        "reviews": [],
     }
     for key, value in expected.items():
         if data.get(key) != value:
@@ -97,6 +99,10 @@ def _private_markers(full: dict) -> set[tuple[str, str]]:
             if isinstance(contact, dict):
                 for key in ("name", "title", "url"):
                     _add_marker(markers, key, contact.get(key))
+        recruiter = row.get("recruiter") or {}
+        if isinstance(recruiter, dict):
+            for key in ("email", "note"):
+                _add_marker(markers, key, recruiter.get(key))
 
     for application in full.get("applications") or []:
         if not isinstance(application, dict):
@@ -128,6 +134,15 @@ def _private_markers(full: dict) -> set[tuple[str, str]]:
                 continue
             for key in ("email", "note"):
                 _add_marker(markers, key, contact.get(key))
+    for company in full.get("companies") or []:
+        if not isinstance(company, dict):
+            continue
+        for key in ("company", "slug", "careers_url", "health_detail"):
+            _add_marker(markers, key, company.get(key))
+        recruiter = company.get("recruiter") or {}
+        if isinstance(recruiter, dict):
+            for key in ("email", "note"):
+                _add_marker(markers, key, recruiter.get(key))
 
     overview = full.get("overview") or {}
     for value in overview.get("targets") or []:

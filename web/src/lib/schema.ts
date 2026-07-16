@@ -73,6 +73,10 @@ export interface JobRow {
   tier: Tier
   base: string
   salary: string
+  salary_min: number | null
+  salary_max: number | null
+  salary_interval: string
+  currency: string
   size: string
   funding: string
   country: string
@@ -94,6 +98,7 @@ export interface JobRow {
   brief: string
   description: string
   contacts: Contact[]
+  recruiter: CompanyContact | null
 }
 
 export interface Overview {
@@ -185,6 +190,43 @@ export interface AppliedCompany {
   contacts: CompanyContact[]
 }
 
+export type MonitorStatus = 'active' | 'paused' | 'removed'
+export type MonitorResolution = 'resolved' | 'unresolved' | 'unsupported'
+export type ReviewState = 'pending' | 'saved' | 'dismissed'
+export type ReviewOrigin = 'monitored' | 'discovery' | 'legacy'
+
+export interface MonitoredCompany {
+  id: string
+  company: string
+  provider: string
+  slug: string
+  careers_url: string
+  status: MonitorStatus
+  resolution_status: MonitorResolution
+  added_from: string[]
+  checked_at: string
+  last_success_at: string
+  health_status: string
+  health_detail: string
+  board_count: number
+  open_matches: number
+  pending_count: number
+  saved_count: number
+  contact_domain: string
+  contacts_checked_at: string
+  recruiter_count: number
+  recruiter: CompanyContact | null
+}
+
+export interface JobReview {
+  job_id: string
+  state: ReviewState
+  origins: ReviewOrigin[]
+  monitor_ids: string[]
+  first_seen: string
+  reviewed_at: string
+}
+
 export interface DashboardData {
   generated: string
   total: number
@@ -193,6 +235,50 @@ export interface DashboardData {
   applications?: Application[]
   profile: Profile | null
   applied_outreach: AppliedCompany[]
+  companies: MonitoredCompany[]
+  reviews: JobReview[]
+}
+
+export function normalizeDashboardData(data: DashboardData): DashboardData {
+  const legacy = data as DashboardData & {
+    companies?: MonitoredCompany[]
+    reviews?: JobReview[]
+  }
+  return {
+    ...data,
+    rows: data.rows.map((row) => {
+      const legacyRow = row as JobRow & Partial<Pick<JobRow,
+        'salary_min' | 'salary_max' | 'salary_interval' | 'currency' | 'recruiter'>>
+      return {
+        ...row,
+        salary_min: legacyRow.salary_min ?? null,
+        salary_max: legacyRow.salary_max ?? null,
+        salary_interval: legacyRow.salary_interval ?? '',
+        currency: legacyRow.currency ?? '',
+        recruiter: legacyRow.recruiter ?? null,
+      }
+    }),
+    applications: data.applications ?? [],
+    companies: (legacy.companies ?? []).map((company) => {
+      const legacyCompany = company as MonitoredCompany & Partial<Pick<MonitoredCompany,
+        'contact_domain' | 'contacts_checked_at' | 'recruiter_count' | 'recruiter'>>
+      return {
+        ...company,
+        contact_domain: legacyCompany.contact_domain ?? '',
+        contacts_checked_at: legacyCompany.contacts_checked_at ?? '',
+        recruiter_count: legacyCompany.recruiter_count ?? 0,
+        recruiter: legacyCompany.recruiter ?? null,
+      }
+    }),
+    reviews: legacy.reviews?.length ? legacy.reviews : data.rows.map((row) => ({
+      job_id: row.id,
+      state: 'saved' as const,
+      origins: ['legacy' as const],
+      monitor_ids: [],
+      first_seen: row.first_seen || data.generated || '',
+      reviewed_at: row.first_seen || data.generated || '',
+    })),
+  }
 }
 
 export const TIERS: Tier[] = ['Strong', 'Good', 'Stretch', 'Skip']
