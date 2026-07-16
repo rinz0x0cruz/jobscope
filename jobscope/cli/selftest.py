@@ -114,7 +114,9 @@ def run() -> int:
          abs(sum(DEFAULT_CONFIG["match"]["weights"].values()) - 1.0) < 1e-9)
     cfg = load_config(None)
     c.ok("load_config returns defaults",
-         isinstance(cfg.get("ai"), dict) and DEFAULT_CONFIG["ai"]["provider"] == "groq")
+         isinstance(cfg.get("ai"), dict)
+         and DEFAULT_CONFIG["ai"]["provider"] == "openrouter"
+         and DEFAULT_CONFIG["ai"]["model"] == "nvidia/nemotron-3-ultra-550b-a55b:free")
     from ..core import ai as _ai
     c.ok("quorum strategy_generative default", _ai.strategy_for(DEFAULT_CONFIG, "generative") == "council")
     c.ok("quorum strategy_classify default", _ai.strategy_for(DEFAULT_CONFIG, "classify") == "ensemble")

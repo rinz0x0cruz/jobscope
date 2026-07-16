@@ -19,7 +19,8 @@ def test_default_weights_sum_to_one():
 
 def test_load_config_defaults_when_missing():
     cfg = load_config("does-not-exist.yaml")
-    assert cfg["ai"]["provider"] == "groq"
+    assert cfg["ai"]["provider"] == "openrouter"
+    assert cfg["ai"]["model"] == "nvidia/nemotron-3-ultra-550b-a55b:free"
     assert cfg["output"]["db_path"].endswith(".db")
 
 

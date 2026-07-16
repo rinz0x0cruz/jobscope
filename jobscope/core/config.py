@@ -87,9 +87,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "ai": {
         "enabled": False,
-        "provider": "groq",
-        "base_url": "https://api.groq.com/openai/v1",
-        "model": "llama-3.3-70b-versatile",
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "temperature": 0.3,
         "max_tokens": 1200,
         "api_key_env": "JOBSCOPE_AI_API_KEY",
@@ -103,8 +103,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # Per-task overrides (only used when quorum.enabled). Empty -> use `strategy`.
         "strategy_generative": "council",  # summary / cover letter / "why here" (higher quality)
         "strategy_classify": "ensemble",   # seniority / email labels (self-consistency vote)
-        "rate_limit_rpm": 0,   # 0 = unpaced; use ~18 for OpenRouter's 20 RPM free ceiling
-        "fallbacks": [],       # exact provider:model refs tried in order after a failed call
+        "rate_limit_rpm": 18,  # pace below OpenRouter's 20 RPM free ceiling
+        "fallbacks": [         # exact refs only; never a random free router
+            "openrouter:google/gemma-4-26b-a4b-it:free",
+            "openrouter:nvidia/nemotron-3-super-120b-a12b:free",
+        ],
     },
     "email": {
         "enabled": False,
