@@ -192,6 +192,9 @@ output:
   db_path: "data/jobscope.db"
   include_skip: false                 # false (default) hides Skip-tier (off-target/too-senior) roles from the dashboard; true publishes them
 
+retention:
+  reconciliation_audit_days: 730      # purge detailed decisions after N days; run summaries/tombstones persist
+
 # Local dashboard server (`jobscope serve`). The served page shows a
 # localhost-only "Refresh & Publish" button that syncs your Gmail inbox
 # (append-only), rescores matches, rebuilds the dashboard, and publishes the

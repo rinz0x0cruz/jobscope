@@ -6,11 +6,12 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AlarmClock, ArrowRight, Clock, Mail, MapPin } from 'lucide-react'
 import { Segmented, animate, prefersReducedMotion } from '@/ui'
 import type { BoardCard, BoardColumn, BoardStage } from '@/lib/board'
-import type { Tier } from '@/lib/schema'
+import type { ActivityAudit, Tier } from '@/lib/schema'
 
 export interface BoardProps {
   columns: BoardColumn[]
   onOpen: (jobId: string) => void
+  audit?: ActivityAudit
 }
 
 function cx(...classes: Array<string | false | null | undefined>): string {
@@ -33,7 +34,7 @@ type ApplicationFilter = 'all' | BoardStage | 'attention'
  * The Board surface: the applied pipeline as either a scannable table (default,
  * best for volume) or the stage-columned Kanban, toggled in the toolbar.
  */
-export function Board({ columns, onOpen }: BoardProps) {
+export function Board({ columns, onOpen, audit }: BoardProps) {
   const [view, setView] = useState<BoardView>('list')
   const [filter, setFilter] = useState<ApplicationFilter>('all')
   const allCards = columns.flatMap((column) => column.cards)
@@ -53,6 +54,8 @@ export function Board({ columns, onOpen }: BoardProps) {
   const offers = allCards
     .filter((c) => c.stage === 'offer' || c.salaryOffered || c.offerAccepted)
   const showOffers = view === 'offers' && offers.length > 0
+  const latestReconciliation = audit?.recent_runs[0]
+  const recoverableCount = audit?.recoverable_applications.length ?? 0
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col border-x border-line bg-panel">
       <header className="shrink-0 border-b border-line px-5 py-5 sm:px-7">
@@ -61,6 +64,14 @@ export function Board({ columns, onOpen }: BoardProps) {
           <div>
             <h2 className="text-xl font-semibold text-ink">Application inbox</h2>
             <p className="mt-1 text-[13px] text-ink-3">Track outcomes, spot stalled conversations, and reopen any role.</p>
+            {latestReconciliation && (
+              <p className="mt-1 text-[11px] text-ink-3" aria-label="Last reconciliation">
+                Last reconciliation · {latestReconciliation.applications_before} → {latestReconciliation.applications_after ?? '?'}
+                {recoverableCount > 0
+                  ? ` · ${recoverableCount} recoverable`
+                  : ''}
+              </p>
+            )}
           </div>
           <strong className="font-mono text-2xl font-semibold text-ink">{total}</strong>
         </div>

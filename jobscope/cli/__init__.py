@@ -21,9 +21,10 @@ Usage:
     python -m jobscope dashboard [--public]        Emit the dashboard JSON payload
     python -m jobscope serve [--port 8799 --open]  Serve the dashboard locally
     python -m jobscope track [--set job_id=status] Funnel + follow-up reminders
+    python -m jobscope applications [audit|recover] Reconciliation history + recovery
     python -m jobscope inbox [--dry-run|--reclassify]  Sync Gmail -> funnel (--reclassify: offline repair)
     python -m jobscope export [--format json|csv]  Export ranked jobs
-    python -m jobscope purge [--mail --applications --older-than N]  Wipe stored email PII / apps
+    python -m jobscope purge [--mail --applications --audit --tombstones]  Explicit data cleanup
     python -m jobscope prune [--yes]               Drop stored jobs outside your India/remote scope
     python -m jobscope secrets [set|list|rm|import-env]  Store secrets in the OS keychain
     python -m jobscope doctor                       Offline operational readiness checks
@@ -206,6 +207,60 @@ def cmd_track(args, cfg):
                          timeline=getattr(args, "timeline", None))
 
 
+def cmd_applications(args, cfg):
+    with _store(args, cfg) as store:
+        if args.action == "audit":
+            run_id = getattr(args, "run_id", None)
+            try:
+                runs = ([store.get_reconciliation_run(run_id)] if run_id else
+                        store.reconciliation_runs(limit=args.limit))
+            except ValueError as exc:
+                print(f"  {exc}", file=sys.stderr)
+                return 2
+            for run in runs:
+                after = run["applications_after"]
+                count_change = f"{run['applications_before']} -> {after if after is not None else '?'}"
+                print(
+                    f"  {run['started_at']} {run['action']:<10} {run['status']:<9} "
+                    f"applications {count_change}; tombstoned {run['tombstoned_count']}; "
+                    f"restored {run['restored_count']}"
+                )
+            if run_id:
+                for decision in store.reconciliation_decisions(run_id, limit=args.limit):
+                    print(
+                        f"    {decision['sequence']:04d} {decision['decision_type']} "
+                        f"{decision['reason_code']} {decision['application_id']}"
+                    )
+            recoverable = store.recoverable_applications(limit=args.limit)
+            print(f"  {len(recoverable)} recoverable application(s)")
+            for application in recoverable:
+                print(
+                    f"    {application['status']:<10} {application['job_id']} "
+                    f"[{application['tombstone_reason']}]"
+                )
+            return 0
+
+        if not args.job_id:
+            print("  job_id is required for `applications recover`", file=sys.stderr)
+            return 2
+        application = store.get_application(args.job_id, include_tombstoned=True)
+        if application is None or not application.get("tombstoned_at"):
+            print("  application is not recoverable")
+            return 0
+        terminal_statuses = {"rejected", "offer", "withdrawn", "closed"}
+        if application.get("status") in terminal_statuses and not args.yes:
+            print(
+                "  terminal application restore requires --yes confirmation",
+                file=sys.stderr,
+            )
+            return 2
+        from ..apply import recovery
+        result = recovery.restore_application(store, args.job_id, initiator="cli")
+        print("  application restored and marked reconciliation-exempt"
+              if result["restored"] else "  application was already active")
+        return 0
+
+
 def cmd_inbox(args, cfg):
     from ..ingest import inbox
     if getattr(args, "include_spam", False):
@@ -213,7 +268,8 @@ def cmd_inbox(args, cfg):
     with _store(args, cfg) as store:
         return inbox.run(cfg, store, dry_run=args.dry_run, account=args.account,
                          since=args.since, backfill=args.backfill,
-                         reclassify=getattr(args, "reclassify", False))
+                         reclassify=getattr(args, "reclassify", False),
+                         initiator=getattr(args, "initiator", "cli"))
 
 
 def cmd_new(args, cfg):
@@ -359,18 +415,39 @@ def cmd_secrets(args, cfg):
 
 def cmd_purge(args, cfg):
     """Delete sensitive local data (stored email PII and/or tracked applications)."""
-    if not (args.mail or args.applications or args.older_than is not None):
-        print("  nothing selected. Use --mail, --applications, and/or --older-than N",
+    audit = bool(getattr(args, "audit", False))
+    tombstones = bool(getattr(args, "tombstones", False))
+    mail = bool(args.mail or (args.older_than is not None and not audit and not tombstones))
+    if not (mail or args.applications or audit or tombstones):
+        print("  nothing selected. Use --mail, --applications, --audit, --tombstones, "
+              "and/or --older-than N",
               file=sys.stderr)
         return 2
+    if tombstones and not getattr(args, "yes", False):
+        print("  permanent tombstone purge requires --yes confirmation", file=sys.stderr)
+        return 2
+    audit_days = args.older_than
+    if audit and audit_days is None:
+        audit_days = int((cfg.get("retention", {}) or {}).get(
+            "reconciliation_audit_days", 730,
+        ) or 730)
     with _store(args, cfg) as store:
-        if args.mail or args.older_than is not None:
+        if mail:
             n = store.purge_mail_events(older_than_days=args.older_than)
             scope = f"older than {args.older_than}d" if args.older_than is not None else "all"
             print(f"  purged {n} stored email event(s) ({scope})")
         if args.applications:
             m = store.purge_applications()
-            print(f"  purged {m} tracked application(s)")
+            print(f"  purged {m} active application(s); tombstones retained")
+        if audit:
+            decisions = store.purge_reconciliation_decisions(audit_days)
+            print(
+                f"  purged {decisions} reconciliation decision(s) older than "
+                f"{audit_days}d; run summaries and tombstones retained"
+            )
+        if tombstones:
+            removed = store.purge_application_tombstones(args.older_than)
+            print(f"  permanently purged {removed} application tombstone(s)")
     return 0
 
 
@@ -528,6 +605,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Show the email timeline (mail_events) for an application")
     sp.set_defaults(func=cmd_track)
 
+    sp = sub.add_parser("applications", help="Inspect reconciliation audit or recover a tombstone")
+    sp.add_argument("action", choices=["audit", "recover"])
+    sp.add_argument("job_id", nargs="?", default=None,
+                    help="Tombstoned application ID for recover")
+    sp.add_argument("--run", dest="run_id", default=None,
+                    help="Show controlled decisions for one audit run")
+    sp.add_argument("--limit", type=int, default=20,
+                    help="Maximum runs, decisions, or recoverable rows to show")
+    sp.add_argument("--yes", action="store_true",
+                    help="Confirm recovery of a rejected/terminal application")
+    sp.set_defaults(func=cmd_applications)
+
     sp = sub.add_parser("inbox", help="Sync Gmail (IMAP) for application-status emails")
     sp.add_argument("--account", default=None, help="Only sync this configured email address")
     sp.add_argument("--since", default=None, metavar="YYYY-MM-DD",
@@ -540,6 +629,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Offline: re-check stored mail with the current rules + rebuild the funnel "
                          "(instance-split; no Gmail sync)")
     sp.add_argument("--dry-run", action="store_true", help="Classify and print, but write nothing")
+    sp.add_argument("--initiator", choices=["cli", "local_refresh", "cloud_refresh"],
+                    default="cli", help=argparse.SUPPRESS)
     sp.set_defaults(func=cmd_inbox)
 
     sp = sub.add_parser("new", help="Show new Strong/Good jobs since your last review")
@@ -598,8 +689,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Delete stored email events (recruiter PII + body snippets)")
     sp.add_argument("--applications", action="store_true",
                     help="Delete tracked applications (empties the funnel)")
+    sp.add_argument("--audit", action="store_true",
+                    help="Delete old reconciliation decisions; retain summaries and tombstones")
+    sp.add_argument("--tombstones", action="store_true",
+                    help="Permanently delete recoverable application tombstones")
+    sp.add_argument("--yes", action="store_true",
+                    help="Confirm irreversible tombstone deletion")
     sp.add_argument("--older-than", type=int, default=None, metavar="DAYS",
-                    help="Only delete stored email events older than DAYS")
+                    help="Only delete selected email/audit details older than DAYS")
     sp.set_defaults(func=cmd_purge)
 
     sp = sub.add_parser("prune", help="Delete stored jobs outside your India/remote scope")

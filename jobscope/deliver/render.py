@@ -114,6 +114,44 @@ def _reviews_data(store) -> list[dict[str, Any]]:
     } for review in store.list_job_reviews()]
 
 
+def _empty_activity_audit() -> dict[str, Any]:
+    return {
+        "recent_runs": [],
+        "selected_run_id": "",
+        "decisions": [],
+        "recoverable_applications": [],
+    }
+
+
+def _activity_audit_data(store) -> dict[str, Any]:
+    """Bounded reconciliation summaries with no email content or addresses."""
+    try:
+        runs = store.reconciliation_runs(limit=20)
+        selected_run_id = runs[0]["id"] if runs else ""
+        decisions = (
+            store.reconciliation_decisions(selected_run_id, limit=100)
+            if selected_run_id else []
+        )
+        recoverable = store.recoverable_applications(limit=100)
+    except Exception:  # noqa: BLE001 - audit is additive; never break the dashboard
+        return _empty_activity_audit()
+    return {
+        "recent_runs": runs,
+        "selected_run_id": selected_run_id,
+        "decisions": decisions,
+        "recoverable_applications": [{
+            **application,
+            "company": application.get("company") or "",
+            "title": application.get("title") or "",
+            "source": application.get("source") or "",
+            "tombstoned_at": application.get("tombstoned_at") or "",
+            "tombstone_reason": application.get("tombstone_reason") or "",
+            "reconciliation_run_id": application.get("reconciliation_run_id") or "",
+            "reconciliation_exempt": int(application.get("reconciliation_exempt") or 0),
+        } for application in recoverable],
+    }
+
+
 def build_data(cfg: dict, store, public: bool = False) -> dict:
     """Assemble the dashboard payload (rows + overview) as a plain dict.
 
@@ -127,7 +165,8 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
         return {"generated": now_iso(), "total": 0, "rows": [],
                 "overview": {"funnel": {}, "gaps": [], "considered": 0, "targets": []},
             "applications": [], "profile": None, "applied_outreach": [],
-            "companies": [], "reviews": []}
+            "companies": [], "reviews": [],
+            "activity_audit": _empty_activity_audit()}
     jobs = store.jobs(order_by_score=True)
     # Skip-tier roles (off-target / too-senior / filtered) are hidden from the
     # dashboard by default, so the pages show only actionable matches. Set
@@ -151,10 +190,11 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     applied_outreach = _applied_outreach_data(store)
     companies = _companies_data(store)
     reviews = _reviews_data(store)
+    activity_audit = _activity_audit_data(store)
     return {"generated": now_iso(), "total": len(rows), "rows": rows,
             "overview": overview, "applications": apps, "profile": profile,
             "applied_outreach": applied_outreach, "companies": companies,
-            "reviews": reviews}
+            "reviews": reviews, "activity_audit": activity_audit}
 
 
 def _json_path(cfg: dict, public: bool) -> str:

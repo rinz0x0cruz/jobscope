@@ -55,17 +55,27 @@ class _AccountSyncResult:
     ok: bool
 
 
+def _purge_reconciliation_audit(cfg: dict, store) -> int:
+    days = int((cfg.get("retention", {}) or {}).get(
+        "reconciliation_audit_days", 730,
+    ) or 0)
+    return store.purge_reconciliation_decisions(days) if days > 0 else 0
+
+
 def run(cfg: dict, store, *, dry_run: bool = False, account: Optional[str] = None,
         since: Optional[str] = None, backfill: bool = False,
-        reclassify: bool = False) -> int:
+    reclassify: bool = False, initiator: str = "cli") -> int:
     if reclassify:
         # Offline repair: re-check stored events against the current rules and
         # rebuild the funnel (instance-split), without touching Gmail.
         from . import reconcile
-        stats = reconcile.reclassify(store)
+        stats = reconcile.reclassify(store, initiator=initiator)
+        purged = _purge_reconciliation_audit(cfg, store)
         print(f"  reclassified {stats['reclassified']} event(s), dropped "
               f"{stats['dropped']} transactional, rebuilt {stats['instances']} "
               f"application instance(s) across {stats['groups']} thread(s).")
+        if purged:
+            print(f"  purged {purged} expired reconciliation decision(s).")
         return 0
     icfg = cfg.get("inbox", {}) or {}
     if not icfg.get("enabled"):
@@ -91,7 +101,8 @@ def run(cfg: dict, store, *, dry_run: bool = False, account: Optional[str] = Non
         # Rebuild the funnel from the timeline so a rejection for one application
         # never collapses a company that has other (or later) active applications.
         from . import reconcile
-        reconcile.recompute(store)
+        reconcile.recompute(store, initiator=initiator)
+        _purge_reconciliation_audit(cfg, store)
 
     verb = "would ingest" if dry_run else "ingested"
     print(f"\n  inbox: {verb} {total_new} job-related email(s) across "

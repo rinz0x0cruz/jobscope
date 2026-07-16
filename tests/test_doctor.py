@@ -1,5 +1,6 @@
 from jobscope.cli import doctor
 from jobscope.core.config import load_config
+from jobscope.core.model import Application, MailEvent
 from jobscope.core.store import Store
 
 
@@ -86,3 +87,37 @@ def test_doctor_reports_unresolved_company_monitors(tmp_path):
         check.name == "companies" and check.level == "warn"
         and "Unknown Labs" in check.detail for check in checks
     )
+
+
+def test_doctor_reports_reconciliation_integrity_problems(tmp_path):
+    cfg = _cfg(tmp_path)
+    with Store(cfg["output"]["db_path"]) as store:
+        running = store.begin_reconciliation_run(
+            "recompute", "cli", applications_before=100, events_before=1,
+        )
+        store.set_application(Application(
+            job_id="mail:bad", status="applied", company="Private Company", source="inbox",
+        ))
+        store.conn.execute(
+            "UPDATE applications SET tombstoned_at = '2026-07-16T00:00:00Z', "
+            "tombstone_reason = '', reconciliation_run_id = '', reconciliation_exempt = 1 "
+            "WHERE job_id = 'mail:bad'"
+        )
+        store.upsert_mail_event(MailEvent(
+            account="me@example.com", uid="1", signal="confirmation",
+            job_id="mail:missing",
+        ).ensure_id())
+        store.finalize_reconciliation_run(
+            running["id"], applications_after=10, events_after=1,
+        )
+
+    checks = doctor.inspect(cfg, which=lambda _name: "available", publish_ready=lambda: True)
+    details = " | ".join(
+        check.detail for check in checks if check.name == "audit" and check.level == "warn"
+    )
+
+    assert "tombstone missing reason/run" in details
+    assert "recovery-exempt" in details
+    assert "missing applications" in details
+    assert "100 -> 10" in details
+    assert "Private Company" not in details

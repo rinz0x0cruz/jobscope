@@ -32,6 +32,35 @@ describe('company actions', () => {
     expect(projected.companies.find((company) => company.company === 'Beta')?.health_detail).toBe('Queued for sync')
   })
 
+  it('projects an application restore and collapses duplicate restore actions', () => {
+    const restore = { type: 'application.restore', job_id: 'mail:recover' } as const
+    const data = dashboard({
+      activity_audit: {
+        recent_runs: [],
+        selected_run_id: '',
+        decisions: [],
+        recoverable_applications: [{
+          job_id: 'mail:recover',
+          company: 'Acme',
+          title: 'Security Engineer',
+          status: 'rejected',
+          source: 'inbox',
+          tombstoned_at: '2026-07-16T00:00:00Z',
+          tombstone_reason: 'orphan_mail_application',
+          reconciliation_run_id: 'reconcile:one',
+          reconciliation_exempt: 0,
+        }],
+      },
+    })
+
+    expect(collapseMonitoringActions([restore, restore])).toEqual([restore])
+    const projected = projectMonitoringActions(data, [restore])
+    expect(projected.applications?.[0]).toMatchObject({
+      job_id: 'mail:recover', status: 'rejected', company: 'Acme',
+    })
+    expect(projected.activity_audit.recoverable_applications).toEqual([])
+  })
+
   it('queues actions when local serve is unavailable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
     const result = await submitMonitoringActions([
@@ -51,5 +80,15 @@ describe('company actions', () => {
     acknowledgeMonitoringActions([saved])
 
     expect(queuedMonitoringActions()).toEqual([newer, added])
+  })
+
+  it('acknowledges only the exact restore action from a completed sync', () => {
+    const restored = { type: 'application.restore', job_id: 'mail:one' } as const
+    const pending = { type: 'application.restore', job_id: 'mail:two' } as const
+    localStorage.setItem(MONITORING_QUEUE_KEY, JSON.stringify([restored, pending]))
+
+    acknowledgeMonitoringActions([restored])
+
+    expect(queuedMonitoringActions()).toEqual([pending])
   })
 })

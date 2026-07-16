@@ -115,6 +115,12 @@ export function dashboard(over: Partial<DashboardData> = {}): DashboardData {
     applied_outreach: [],
     companies: [],
     reviews: [],
+    activity_audit: {
+      recent_runs: [],
+      selected_run_id: '',
+      decisions: [],
+      recoverable_applications: [],
+    },
     ...over,
   }
 }

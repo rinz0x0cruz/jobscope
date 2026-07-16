@@ -88,8 +88,10 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
         setWorkingData((current) => ({
           ...current,
           rows: result.rows ?? current.rows,
+          applications: result.applications ?? current.applications,
           companies: result.companies ?? current.companies,
           reviews: result.reviews ?? current.reviews,
+          activity_audit: result.activity_audit ?? current.activity_audit,
         }))
         const scan = result.scans?.[0]
         if (scan) {
@@ -215,11 +217,18 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
           </div>
         ) : view === 'applications' ? (
           <div className="h-full min-h-0 pb-16 lg:pb-0">
-            <Board columns={board} onOpen={open} />
+            <Board columns={board} onOpen={open} audit={workingData.activity_audit} />
           </div>
         ) : view === 'activity' ? (
           <div className="h-full min-h-0 pb-16 lg:pb-0">
-            <Timeline timeline={timeline} onOpen={open} />
+            <Timeline
+              timeline={timeline}
+              onOpen={open}
+              audit={workingData.activity_audit}
+              onRecover={(jobId) => void runMonitoringActions([
+                { type: 'application.restore', job_id: jobId },
+              ])}
+            />
           </div>
         ) : (
           <div className="min-h-full pb-16 lg:pb-0">

@@ -18,6 +18,96 @@ class Check:
     detail: str
 
 
+def _audit_checks(store) -> list[Check]:
+    checks: list[Check] = []
+    running = store.conn.execute(
+        "SELECT id FROM reconciliation_runs WHERE status = 'running' "
+        "ORDER BY started_at LIMIT 5"
+    ).fetchall()
+    if running:
+        checks.append(Check(
+            "warn", "audit",
+            "running reconciliation run(s): " + ", ".join(row["id"] for row in running),
+        ))
+
+    orphan_decisions = store.conn.execute(
+        "SELECT COUNT(*) AS count FROM reconciliation_decisions d "
+        "LEFT JOIN reconciliation_runs r ON r.id = d.run_id WHERE r.id IS NULL"
+    ).fetchone()["count"]
+    if orphan_decisions:
+        checks.append(Check(
+            "warn", "audit", f"{orphan_decisions} decision(s) reference a missing run",
+        ))
+
+    malformed = store.conn.execute(
+        "SELECT job_id FROM applications WHERE COALESCE(tombstoned_at, '') <> '' "
+        "AND (COALESCE(tombstone_reason, '') = '' "
+        "OR COALESCE(reconciliation_run_id, '') = '') LIMIT 5"
+    ).fetchall()
+    if malformed:
+        checks.append(Check(
+            "warn", "audit",
+            "tombstone missing reason/run: " + ", ".join(row["job_id"] for row in malformed),
+        ))
+
+    exempt_tombstones = store.conn.execute(
+        "SELECT job_id FROM applications WHERE COALESCE(tombstoned_at, '') <> '' "
+        "AND reconciliation_exempt = 1 LIMIT 5"
+    ).fetchall()
+    if exempt_tombstones:
+        checks.append(Check(
+            "warn", "audit",
+            "tombstoned application remains recovery-exempt: " +
+            ", ".join(row["job_id"] for row in exempt_tombstones),
+        ))
+
+    duplicate_active = store.conn.execute(
+        "SELECT job_id FROM applications WHERE COALESCE(tombstoned_at, '') = '' "
+        "GROUP BY job_id HAVING COUNT(*) > 1 LIMIT 5"
+    ).fetchall()
+    if duplicate_active:
+        checks.append(Check(
+            "warn", "audit",
+            "duplicate active application IDs: " +
+            ", ".join(row["job_id"] for row in duplicate_active),
+        ))
+
+    missing_links = store.conn.execute(
+        "SELECT e.id FROM mail_events e LEFT JOIN applications a ON a.job_id = e.job_id "
+        "WHERE COALESCE(e.job_id, '') <> '' AND a.job_id IS NULL "
+        "AND e.signal IN ('confirmation', 'recruiter', 'assessment', 'interview', "
+        "'offer', 'rejection') LIMIT 5"
+    ).fetchall()
+    if missing_links:
+        checks.append(Check(
+            "warn", "audit",
+            "mail event(s) link to missing applications: " +
+            ", ".join(row["id"] for row in missing_links),
+        ))
+
+    latest = store.conn.execute(
+        "SELECT applications_before, applications_after FROM reconciliation_runs "
+        "WHERE status = 'completed' AND baseline_only = 0 "
+        "AND applications_after IS NOT NULL ORDER BY completed_at DESC, rowid DESC LIMIT 1"
+    ).fetchone()
+    if latest:
+        before = int(latest["applications_before"] or 0)
+        after = int(latest["applications_after"] or 0)
+        dropped = before - after
+        if before and dropped >= 5 and dropped / before > 0.25:
+            checks.append(Check(
+                "warn", "audit",
+                f"latest reconciliation count dropped {before} -> {after} ({dropped} rows)",
+            ))
+
+    if not checks:
+        run_count = store.conn.execute(
+            "SELECT COUNT(*) AS count FROM reconciliation_runs"
+        ).fetchone()["count"]
+        checks.append(Check("ok", "audit", f"{run_count} reconciliation run(s); integrity clean"))
+    return checks
+
+
 def inspect(cfg: dict, *, secret_lookup: Callable[[dict, dict], str] = inbox_password,
             which: Callable[[str], str | None] = shutil.which,
             publish_ready: Callable[[], bool] | None = None) -> list[Check]:
@@ -75,6 +165,7 @@ def inspect(cfg: dict, *, secret_lookup: Callable[[dict, dict], str] = inbox_pas
             monitors = store.list_company_monitors()
             last_failure = store.meta_get("refresh:last_failure", "") or ""
             failed_stage = store.meta_get("refresh:last_failed_stage", "") or ""
+            audit_checks = _audit_checks(store)
         unhealthy = [row for row in health if row["status"] not in {
             "ok", "empty", "recovered",
         }]
@@ -103,6 +194,7 @@ def inspect(cfg: dict, *, secret_lookup: Callable[[dict, dict], str] = inbox_pas
                 "warn", "refresh", f"last failure {last_failure} at {failed_stage or 'unknown'}"))
         else:
             checks.append(Check("ok", "refresh", "no recorded refresh failure"))
+        checks.extend(audit_checks)
     return checks
 
 

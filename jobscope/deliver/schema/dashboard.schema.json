@@ -5,7 +5,7 @@
   "description": "Machine-readable mirror of render.build_data() (render.py). Single source of truth for the Python->TypeScript data contract (ARCHITECTURE.md section 9). Keep 1:1 with web/src/lib/schema.ts and tests/test_dashboard_json.py. Emitted by `jobscope dashboard --emit-json` to data/dashboard.json.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["generated", "total", "rows", "overview", "applications", "profile", "applied_outreach", "companies", "reviews"],
+  "required": ["generated", "total", "rows", "overview", "applications", "profile", "applied_outreach", "companies", "reviews", "activity_audit"],
   "properties": {
     "generated": {"type": "string", "description": "ISO timestamp (now_iso())."},
     "total": {"type": "integer", "description": "len(rows)."},
@@ -34,9 +34,85 @@
       "type": "array",
       "description": "Durable review state and source provenance; empty ([]) for the public build.",
       "items": {"$ref": "#/definitions/JobReview"}
+    },
+    "activity_audit": {
+      "$ref": "#/definitions/ActivityAudit"
     }
   },
   "definitions": {
+    "ActivityAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recent_runs", "selected_run_id", "decisions", "recoverable_applications"],
+      "properties": {
+        "recent_runs": {"type": "array", "maxItems": 20, "items": {"$ref": "#/definitions/ReconciliationRun"}},
+        "selected_run_id": {"type": "string"},
+        "decisions": {"type": "array", "maxItems": 100, "items": {"$ref": "#/definitions/ReconciliationDecision"}},
+        "recoverable_applications": {"type": "array", "maxItems": 100, "items": {"$ref": "#/definitions/RecoverableApplication"}}
+      }
+    },
+    "ReconciliationRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "action", "initiator", "started_at", "completed_at", "status", "applications_before", "applications_after", "events_before", "events_after", "groups_count", "instances_count", "reclassified_count", "dropped_count", "tombstoned_count", "restored_count", "error_code", "schema_version", "baseline_only"],
+      "properties": {
+        "id": {"type": "string"},
+        "action": {"type": "string", "enum": ["recompute", "reclassify", "restore"]},
+        "initiator": {"type": "string", "enum": ["cli", "local_refresh", "cloud_refresh", "user"]},
+        "started_at": {"type": "string"},
+        "completed_at": {"type": "string"},
+        "status": {"type": "string", "enum": ["running", "completed", "failed"]},
+        "applications_before": {"type": "integer"},
+        "applications_after": {"type": ["integer", "null"]},
+        "events_before": {"type": "integer"},
+        "events_after": {"type": ["integer", "null"]},
+        "groups_count": {"type": "integer"},
+        "instances_count": {"type": "integer"},
+        "reclassified_count": {"type": "integer"},
+        "dropped_count": {"type": "integer"},
+        "tombstoned_count": {"type": "integer"},
+        "restored_count": {"type": "integer"},
+        "error_code": {"type": "string"},
+        "schema_version": {"type": "integer"},
+        "baseline_only": {"type": "boolean"}
+      }
+    },
+    "ReconciliationDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "run_id", "sequence", "base_job_id", "application_id", "decision_type", "old_status", "new_status", "old_signal", "new_signal", "reason_code", "recoverable", "created_at"],
+      "properties": {
+        "id": {"type": "string"},
+        "run_id": {"type": "string"},
+        "sequence": {"type": "integer"},
+        "base_job_id": {"type": "string"},
+        "application_id": {"type": "string"},
+        "decision_type": {"type": "string"},
+        "old_status": {"type": "string"},
+        "new_status": {"type": "string"},
+        "old_signal": {"type": "string"},
+        "new_signal": {"type": "string"},
+        "reason_code": {"type": "string"},
+        "recoverable": {"type": "boolean"},
+        "created_at": {"type": "string"}
+      }
+    },
+    "RecoverableApplication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "status", "company", "title", "source", "tombstoned_at", "tombstone_reason", "reconciliation_run_id", "reconciliation_exempt"],
+      "properties": {
+        "job_id": {"type": "string"},
+        "status": {"type": "string"},
+        "company": {"type": "string"},
+        "title": {"type": "string"},
+        "source": {"type": "string"},
+        "tombstoned_at": {"type": "string"},
+        "tombstone_reason": {"type": "string"},
+        "reconciliation_run_id": {"type": "string"},
+        "reconciliation_exempt": {"type": "integer", "enum": [0, 1]}
+      }
+    },
     "MonitoredCompany": {
       "type": "object",
       "additionalProperties": false,

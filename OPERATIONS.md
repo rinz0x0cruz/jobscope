@@ -44,7 +44,8 @@ is due (or `full_scan=true`) → inbox → match → review sync → save encryp
 errors are optional/degraded and fail closed: only a complete non-empty board may mark linked jobs closed.
 
 Pages mutations require the existing fine-grained Actions read/write token. Save/Dismiss/company changes are
-collapsed by entity in browser storage and dispatched together. An active workflow or failed run keeps the
+collapsed by entity in browser storage and dispatched together; application recovery uses the same validated
+queue and the backend owns its restore run ID. An active workflow or failed run keeps the
 queue intact; only a successful refresh clears it. The workflow receives JSON through an environment variable
 and file, then validates it in Python—never through shell evaluation.
 
@@ -71,6 +72,50 @@ $env:JOBSCOPE_DB_KEY = '<same value as the repository secret>'
 
 The seed script validates SQLite, verifies encryption byte-for-byte, and creates
 both current and fallback generations.
+
+## Reconciliation Audit And Recovery
+
+The audit migration is additive. A pre-audit database gets one completed,
+count-only `baseline_only` run with no fabricated decisions. The current database
+state is the baseline; a historical transition cannot be reconstructed without a
+matching snapshot.
+
+Rehearse against a copy before migrating operational data:
+
+```powershell
+Copy-Item data/jobscope.db data/jobscope-audit-rehearsal.db
+python -m jobscope --db data/jobscope-audit-rehearsal.db inbox --reclassify
+python -m jobscope --db data/jobscope-audit-rehearsal.db inbox --reclassify
+python -m jobscope --db data/jobscope-audit-rehearsal.db applications audit
+```
+
+The second reclassification must preserve the same active/tombstone sets and show no
+unexplained mutation decisions. Inspect or recover against the selected database:
+
+```bash
+python -m jobscope applications audit
+python -m jobscope applications audit --run <run_id>
+python -m jobscope applications recover <job_id> --yes
+```
+
+Recovery is idempotent, records its own immutable run/decision, and marks the restored
+row reconciliation-exempt. Run `jobscope doctor` after reconciliation; it warns on
+stuck runs, orphan decisions, malformed tombstones, missing application links, and
+large count drops using bounded IDs/counts only.
+
+Detailed decisions follow `retention.reconciliation_audit_days` (default 730):
+
+```bash
+python -m jobscope purge --audit --older-than 730
+python -m jobscope purge --applications
+python -m jobscope purge --tombstones --yes
+```
+
+The first command retains run summaries and tombstones. Active-application purge also
+retains tombstones. The final command is the separate, irreversible recovery-data
+purge. Audit detail and tombstones persist to the encrypted `data` branch and encrypted
+site payload only; workflow output contains aggregate counts, never individual email or
+recruiter content.
 
 ## Snapshot Recovery
 
@@ -134,7 +179,7 @@ after the verifier confirms:
 - No private field/value serialization appears in text assets.
 - `deployment-manifest.json` records the source commit and SHA-256 of every artifact.
 
-The monitoring migration is additive. Rolling code back leaves monitor/review tables ignored but intact;
+The monitoring and audit migrations are additive. Rolling code back leaves monitor/review/audit tables ignored but intact;
 it does not delete raw jobs, application history, dismiss tombstones, or company provenance. The previous
 encrypted DB generation remains the first recovery option. `search.companies` is retained as seed/fallback
 input, so old code can still run direct ATS scans during a rollback.

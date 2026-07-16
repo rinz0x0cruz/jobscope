@@ -20,11 +20,12 @@ import pytest
 from jobscope.analyze import match as match_mod
 from jobscope.analyze import review as review_mod
 from jobscope.core.config import load_config
-from jobscope.core.model import Job, Resume
+from jobscope.core.model import Application, Job, Resume
 from jobscope.core.store import Store
 from jobscope.deliver import serve
 from jobscope.ingest import inbox as inbox_mod
 from jobscope.ingest import monitor as monitor_mod
+from jobscope.ingest import reconcile
 from jobscope.ingest import scrape as scrape_mod
 
 _INDEX_HTML = '<!doctype html><html><head></head><body><div id="root"></div></body></html>'
@@ -303,6 +304,46 @@ def test_api_outreach_preview_and_csrf():
             assert code == 200 and res["ok"] is True
             assert res["to"] == "careers@acme.com" and res["source"] == "role_inbox"
             assert "Security Engineer" in res["subject"] and "attached" in res["body"].lower()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_api_application_restore_requires_csrf_and_returns_audit():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        job_id = "mail:serve-recover"
+        with Store(cfg["output"]["db_path"]) as store:
+            store.set_application(Application(
+                job_id=job_id, status="rejected", company="Acme", source="inbox",
+            ))
+            reconcile.recompute(store)
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        payload = json.dumps({
+            "actions": [{"type": "application.restore", "job_id": job_id}],
+        })
+        try:
+            code, _ = _req(
+                "POST", base + "/api/monitoring/actions",
+                headers={"Content-Type": "application/json"}, data=payload,
+            )
+            assert code == 403
+
+            code, result = _req(
+                "POST", base + "/api/monitoring/actions",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Refresh-Token": token,
+                    "Origin": base,
+                },
+                data=payload,
+            )
+            assert code == 200 and result["ok"] is True
+            assert result["applications"][0]["job_id"] == job_id
+            assert result["activity_audit"]["recent_runs"][0]["action"] == "restore"
+            assert result["activity_audit"]["recoverable_applications"] == []
         finally:
             httpd.shutdown()
             httpd.server_close()

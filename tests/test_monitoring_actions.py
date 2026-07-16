@@ -4,11 +4,11 @@ import tempfile
 
 import pytest
 
-from jobscope.apply import monitoring
+from jobscope.apply import monitoring, recovery
 from jobscope.core.config import load_config
-from jobscope.core.model import Job, Resume
+from jobscope.core.model import Application, Job, Resume
 from jobscope.core.store import Store
-from jobscope.ingest import ats
+from jobscope.ingest import ats, reconcile
 
 
 def _setup():
@@ -138,4 +138,67 @@ def test_monitor_upsert_links_discovery_job_and_preserves_review_state(monkeypat
     assert review["state"] == "saved"
     assert review["origins"] == ["discovery", "monitored"]
     assert len(review["monitor_ids"]) == 1
+    store.close()
+
+
+def test_application_restore_action_owns_audit_run_and_is_idempotent():
+    cfg, store = _setup()
+    job_id = "mail:action-recover"
+    store.set_application(Application(
+        job_id=job_id, status="applied", company="Acme", source="inbox",
+    ))
+    reconcile.recompute(store)
+
+    result = monitoring.apply_actions(cfg, store, [
+        {"type": "application.restore", "job_id": job_id},
+    ])
+
+    assert result["ok"] and result["applied"] == 1
+    assert result["results"][0]["restored"] is True
+    assert result["applications"][0]["job_id"] == job_id
+    assert result["activity_audit"]["recent_runs"][0]["action"] == "restore"
+    assert result["activity_audit"]["recoverable_applications"] == []
+    assert store.get_application(job_id)["reconciliation_exempt"] == 1
+
+    repeated = monitoring.apply_actions(cfg, store, [
+        {"type": "application.restore", "job_id": job_id},
+    ])
+    assert repeated["results"][0]["restored"] is False
+    with pytest.raises(ValueError, match="unknown fields"):
+        monitoring.apply_actions(cfg, store, [{
+            "type": "application.restore", "job_id": job_id, "run_id": "client-run",
+        }])
+    store.close()
+
+
+def test_restore_failure_rolls_back_the_entire_action_batch(monkeypatch):
+    cfg, store = _setup()
+    review_job = Job(
+        source="indeed", title="Engineer", company="Beta", url="https://x/review",
+    ).ensure_id()
+    store.upsert_job(review_job)
+    store.set_job_review(review_job.id, "pending", origins=["discovery"])
+    recover_job = "mail:batch-recover"
+    store.set_application(Application(
+        job_id=recover_job, status="applied", company="Acme", source="inbox",
+    ))
+    reconcile.recompute(store)
+
+    def fail_restore(*_args, **_kwargs):
+        raise RuntimeError("injected restore failure")
+
+    monkeypatch.setattr(recovery, "_restore_application_in_run", fail_restore)
+
+    with pytest.raises(RuntimeError, match="injected restore failure"):
+        monitoring.apply_actions(cfg, store, [
+            {"type": "review.set", "job_id": review_job.id, "state": "saved"},
+            {"type": "application.restore", "job_id": recover_job},
+        ])
+
+    assert store.get_job_review(review_job.id)["state"] == "pending"
+    assert store.get_application(recover_job) is None
+    assert store.get_application(recover_job, include_tombstoned=True)["tombstoned_at"]
+    latest = store.reconciliation_runs()[0]
+    assert latest["action"] == "restore" and latest["status"] == "failed"
+    assert store.reconciliation_decisions(latest["id"]) == []
     store.close()
