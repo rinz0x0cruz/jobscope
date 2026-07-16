@@ -10,10 +10,11 @@ import { scoreToGrade } from '@/lib/gamification'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
 import { OfferEditor } from '@/components/OfferEditor'
 import { RecruiterOutreach } from '@/components/RecruiterOutreach'
+import { presentFitRationale, presentJobDescription, type DescriptionBlock } from '@/lib/jobPresentation'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="border-t border-border px-5 py-4">
+    <section className="border-t border-border px-5 py-5 sm:px-6">
       <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-mute">{title}</h3>
       {children}
     </section>
@@ -54,7 +55,8 @@ export function JobDescription({ text }: { text: string }) {
   const [q, setQ] = useState('')
   const [expanded, setExpanded] = useState(false)
   const query = q.trim()
-  const lines = useMemo(() => text.split(/\r?\n/), [text])
+  const blocks = useMemo(() => presentJobDescription(text), [text])
+  const lines = useMemo(() => blocks.map((block) => block.text), [blocks])
   const matches = useMemo(
     () => (query ? lines.filter((l) => l.toLowerCase().includes(query.toLowerCase())) : lines),
     [lines, query],
@@ -79,7 +81,7 @@ export function JobDescription({ text }: { text: string }) {
             <div className="mb-1 text-[11px] text-mute">
               {matches.length} matching line{matches.length === 1 ? '' : 's'}
             </div>
-            <div className="space-y-1 text-[13px] leading-relaxed text-dim">
+            <div className="space-y-2 font-reader text-[15px] leading-7 text-dim">
               {matches.map((l, i) => (
                 <p key={i} className="whitespace-pre-wrap">
                   {highlight(l, query)}
@@ -92,13 +94,13 @@ export function JobDescription({ text }: { text: string }) {
         )
       ) : (
         <>
-          <p
-            className={`whitespace-pre-wrap text-[13px] leading-relaxed text-dim ${
+          <div
+            className={`space-y-3 ${
               !expanded && long ? 'max-h-64 overflow-hidden' : ''
             }`}
           >
-            {text}
-          </p>
+            <DescriptionBlocks blocks={blocks} />
+          </div>
           {long && (
             <button
               type="button"
@@ -112,6 +114,35 @@ export function JobDescription({ text }: { text: string }) {
       )}
     </Section>
   )
+}
+
+function DescriptionBlocks({ blocks }: { blocks: DescriptionBlock[] }) {
+  const content: ReactNode[] = []
+  for (let index = 0; index < blocks.length;) {
+    const block = blocks[index]
+    if (block.type === 'bullet') {
+      const bullets: DescriptionBlock[] = []
+      while (index < blocks.length && blocks[index].type === 'bullet') {
+        bullets.push(blocks[index])
+        index += 1
+      }
+      content.push(
+        <ul key={`bullets-${index}`} className="list-disc space-y-1.5 pl-5 font-reader text-[15px] leading-7 text-dim marker:text-accent">
+          {bullets.map((bullet, bulletIndex) => <li key={bulletIndex}>{bullet.text}</li>)}
+        </ul>,
+      )
+      continue
+    }
+    content.push(
+      block.type === 'heading' ? (
+        <h4 key={index} className="pt-1 text-[12px] font-semibold uppercase text-fg">{block.text}</h4>
+      ) : (
+        <p key={index} className="font-reader text-[15px] leading-7 text-dim">{block.text}</p>
+      ),
+    )
+    index += 1
+  }
+  return content
 }
 
 function money(n: number, currency?: string): string {
@@ -180,26 +211,28 @@ function EmailTimeline({ events }: { events: ApplicationEvent[] }) {
  * out of the fresh feed): a compact header + the email timeline, so opening a
  * board card always surfaces the mail summary.
  */
-function ApplicationBody({ app }: { app: Application }) {
+export function ApplicationReader({ app, onClose }: { app: Application; onClose: () => void }) {
   return (
     <>
       <div className="flex items-start gap-3 px-5 py-4">
         <div className="min-w-0 flex-1">
-          <Dialog.Title className="text-[15px] font-semibold leading-snug">
+          <h2 className="text-lg font-semibold leading-snug">
             {app.title || app.company || 'Application'}
-          </Dialog.Title>
+          </h2>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[13px] text-dim">
             <span className="font-medium text-fg">{app.company || '—'}</span>
             <span style={{ color: statusColor(app.status) }}>· {statusLabel(app.status)}</span>
             {app.applied_at && <span className="text-mute">· applied {fmtEventDate(app.applied_at)}</span>}
           </div>
         </div>
-        <Dialog.Close
+        <button
+          type="button"
+          onClick={onClose}
           aria-label="Close"
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border text-dim transition hover:border-border-h hover:text-fg"
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-border text-dim transition hover:border-border-h hover:text-fg lg:h-8 lg:w-8"
         >
           <X size={15} />
-        </Dialog.Close>
+        </button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {app.timeline.length > 0 ? (
@@ -219,21 +252,24 @@ function ApplicationBody({ app }: { app: Application }) {
   )
 }
 
-function DrawerBody({
+export function RoleReader({
   job,
   application,
   allRows,
   onOpen,
+  onClose,
 }: {
   job: JobRow
   application?: Application | null
   allRows: JobRow[]
   onOpen: (id: string) => void
+  onClose: () => void
 }) {
   const e = job.enrich
   const stock = e.stock
   const comp = compLabel(job)
   const { format } = useScoreFormat()
+  const fit = useMemo(() => presentFitRationale(job.rationale), [job.rationale])
   const others = allRows.filter((r) => r.company === job.company && r.id !== job.id).slice(0, 8)
 
   const copyLink = async () => {
@@ -253,7 +289,7 @@ function DrawerBody({
           {format === 'grade' ? scoreToGrade(job.score) : Math.round(job.score)}
         </span>
         <div className="min-w-0 flex-1">
-          <Dialog.Title className="text-[15px] font-semibold leading-snug">{job.title}</Dialog.Title>
+          <h2 className="text-xl font-semibold leading-tight">{job.title}</h2>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[13px] text-dim">
             <span className="font-medium text-fg">{job.company || '—'}</span>
             {job.place && <span className="text-mute">· {job.place}</span>}
@@ -292,16 +328,18 @@ function DrawerBody({
             type="button"
             onClick={copyLink}
             aria-label="Copy link"
-            className="grid h-8 w-8 place-items-center rounded-lg border border-border text-dim transition hover:border-border-h hover:text-fg"
+            className="grid h-11 w-11 place-items-center rounded-lg border border-border text-dim transition hover:border-border-h hover:text-fg lg:h-8 lg:w-8"
           >
             <Link2 size={15} />
           </button>
-          <Dialog.Close
+          <button
+            type="button"
+            onClick={onClose}
             aria-label="Close"
-            className="grid h-8 w-8 place-items-center rounded-lg border border-border text-dim transition hover:border-border-h hover:text-fg"
+            className="grid h-11 w-11 place-items-center rounded-lg border border-border text-dim transition hover:border-border-h hover:text-fg lg:h-8 lg:w-8"
           >
             <X size={15} />
-          </Dialog.Close>
+          </button>
         </div>
       </div>
 
@@ -353,7 +391,7 @@ function DrawerBody({
 
         {job.brief && (
           <Section title="Company brief">
-            <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-dim">{job.brief}</p>
+            <p className="whitespace-pre-wrap font-reader text-[15px] leading-7 text-dim">{job.brief}</p>
           </Section>
         )}
 
@@ -478,7 +516,34 @@ function DrawerBody({
 
         {job.rationale && (
           <Section title="Why this ranks">
-            <p className="text-[13px] leading-relaxed text-dim">{job.rationale}</p>
+            {fit.metrics.length > 0 ? (
+              <div className="space-y-3">
+                <dl className="grid grid-cols-3 border-y border-border">
+                  {fit.metrics.map((metric, index) => (
+                    <div key={metric.label} className={`py-2.5 text-center ${index > 0 ? 'border-l border-border' : ''}`}>
+                      <dt className="text-[10px] uppercase text-mute">{metric.label}</dt>
+                      <dd className="mt-0.5 font-mono text-base font-semibold text-fg">{metric.value}%</dd>
+                    </div>
+                  ))}
+                </dl>
+                {fit.skills.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {fit.skills.map((skill) => (
+                      <span key={skill} className="rounded-full border border-border bg-bg px-2.5 py-1 text-[11px] text-dim">
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-mute">
+                  {fit.company && <span>{fit.company} company</span>}
+                  {fit.route && <span>{fit.route}</span>}
+                </div>
+                {fit.warning && <p className="text-[12px] text-hot">{fit.warning}</p>}
+              </div>
+            ) : (
+              <p className="font-reader text-[15px] leading-7 text-dim">{fit.fallback}</p>
+            )}
           </Section>
         )}
 
@@ -513,25 +578,34 @@ export function JobDrawer({
   allRows,
   onOpen,
   onClose,
+  enabled = true,
 }: {
   job: JobRow | null
   application?: Application | null
   allRows: JobRow[]
   onOpen: (id: string) => void
   onClose: () => void
+  enabled?: boolean
 }) {
   return (
-    <Dialog.Root open={!!job || !!application} onOpenChange={(o) => !o && onClose()}>
+    <Dialog.Root open={enabled && (!!job || !!application)} onOpenChange={(o) => !o && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="js-overlay fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="js-drawer fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-border bg-bg2 shadow-2xl outline-none"
+          aria-label={job ? `Role details: ${job.title}` : application ? `Application details: ${application.company}` : 'Details'}
+          className="js-drawer fixed right-0 top-0 z-50 flex h-full w-full max-w-xl flex-col border-l border-border bg-bg2 shadow-2xl outline-none"
         >
           {job ? (
-            <DrawerBody job={job} application={application} allRows={allRows} onOpen={onOpen} />
+            <RoleReader
+              job={job}
+              application={application}
+              allRows={allRows}
+              onOpen={onOpen}
+              onClose={onClose}
+            />
           ) : application ? (
-            <ApplicationBody app={application} />
+            <ApplicationReader app={application} onClose={onClose} />
           ) : null}
         </Dialog.Content>
       </Dialog.Portal>

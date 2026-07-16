@@ -3,6 +3,11 @@ import { createRoot } from 'react-dom/client'
 import { RouterProvider } from '@tanstack/react-router'
 import { router } from './router'
 import { ScoreFormatProvider } from './hooks/ScoreFormatProvider'
+import '@fontsource/ibm-plex-sans/latin-400.css'
+import '@fontsource/ibm-plex-sans/latin-500.css'
+import '@fontsource/ibm-plex-sans/latin-600.css'
+import '@fontsource/source-serif-4/latin-400.css'
+import '@fontsource/source-serif-4/latin-600.css'
 import './styles/theme.css'
 
 createRoot(document.getElementById('root')!).render(

@@ -108,4 +108,19 @@ describe('buildTimeline', () => {
   it('builds an agenda of follow-ups that need action', () => {
     expect(t.agenda.some((x) => x.text.startsWith('Follow up with Initech'))).toBe(true)
   })
+  it('keeps same-day signals uniquely addressable', () => {
+    const repeated = makeData({
+      applications: [
+        app({
+          job_id: 'same-day', company: 'Acme', status: 'applied', applied_at: ago(5),
+          timeline: [
+            { date: ago(1), signal: 'confirmation', subject: 'First', from: '', summary: '' },
+            { date: ago(1), signal: 'confirmation', subject: 'Second', from: '', summary: '' },
+          ],
+        }),
+      ],
+    })
+    const ids = buildTimeline(repeated, NOW).groups.flatMap((group) => group.events.map((event) => event.id))
+    expect(new Set(ids).size).toBe(ids.length)
+  })
 })

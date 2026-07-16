@@ -127,12 +127,12 @@ export function buildTimeline(data: DashboardData, now = Date.now()): Timeline {
         tone: 'neutral',
       })
     }
-    for (const e of a.timeline ?? []) {
+    for (const [eventIndex, e] of (a.timeline ?? []).entries()) {
       const mk = SIGNAL_TEXT[e.signal]
       const d = daysSince(e.date, now)
       if (!mk || d === null || d < 0) continue
       events.push({
-        id: `${a.job_id}:${e.signal}:${e.date}`,
+        id: `${a.job_id}:${e.signal}:${e.date}:${eventIndex}`,
         date: e.date,
         dateLabel: shortDate(e.date, d),
         signal: e.signal,

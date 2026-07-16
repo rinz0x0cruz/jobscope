@@ -80,8 +80,18 @@ describe('Settings lens', () => {
 
   it('shows the sync controls', () => {
     renderSettings()
-    expect(screen.getByText('Sync')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Data sync' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Pull latest' })).toBeInTheDocument()
+  })
+
+  it('scrolls between settings sections without replacing the route hash', () => {
+    const scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView')
+    location.hash = '#/?view=settings'
+    renderSettings()
+    fireEvent.click(screen.getByRole('button', { name: 'Data sync' }))
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+    expect(location.hash).toBe('#/?view=settings')
+    scrollIntoView.mockRestore()
   })
 
   it('connects and disconnects a GitHub token', () => {
