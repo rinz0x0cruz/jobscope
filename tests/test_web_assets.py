@@ -38,8 +38,8 @@ def test_web_v2_cockpit_is_wired() -> None:
     for token in ("--paper", "--panel", "--ink", "--brand-coral"):
         assert token in css
 
-    # The four cockpit lenses are present.
-    for lens in ("board", "briefing", "triage", "timeline"):
+    # The primary workspace lenses are present.
+    for lens in ("feed", "companies", "pipeline", "board", "timeline"):
         assert (ROOT / "web" / "src" / "features" / lens).is_dir()
 
 

@@ -13,9 +13,10 @@ from jobscope.ingest import ats
 
 def _setup():
     directory = tempfile.mkdtemp()
-    cfg = load_config(None)
+    cfg = load_config(os.path.join(directory, "missing-config.yaml"))
     cfg["output"]["db_path"] = os.path.join(directory, "actions.db")
     cfg["search"]["scope_to_home"] = False
+    cfg["search"]["terms"] = ["Security Engineer"]
     cfg["apply"]["outreach"]["monitor_scan"]["enabled"] = False
     store = Store(cfg["output"]["db_path"])
     store.save_resume(Resume(
