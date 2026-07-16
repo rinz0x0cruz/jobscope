@@ -7,6 +7,7 @@ guard on ``/api/refresh``. Fully offline: the networked steps, the publish
 subprocess, and the npm build are stubbed; the SPA is a one-line fixture.
 """
 import datetime as dt
+import base64
 import json
 import os
 import tempfile
@@ -17,11 +18,13 @@ import urllib.request
 import pytest
 
 from jobscope.analyze import match as match_mod
+from jobscope.analyze import review as review_mod
 from jobscope.core.config import load_config
 from jobscope.core.model import Job, Resume
 from jobscope.core.store import Store
 from jobscope.deliver import serve
 from jobscope.ingest import inbox as inbox_mod
+from jobscope.ingest import monitor as monitor_mod
 from jobscope.ingest import scrape as scrape_mod
 
 _INDEX_HTML = '<!doctype html><html><head></head><body><div id="root"></div></body></html>'
@@ -47,7 +50,8 @@ def _reset_state():
 
 
 def _patch_pipeline(monkeypatch):
-    calls = {"inbox": 0, "match": 0, "scrape": 0, "publish": 0, "render": 0,
+    calls = {"inbox": 0, "match": 0, "monitor": 0, "review": 0,
+             "scrape": 0, "publish": 0, "render": 0,
              "since": None, "order": []}
 
     def fake_inbox(cfg, store, **kw):
@@ -59,9 +63,18 @@ def _patch_pipeline(monkeypatch):
         calls["match"] += 1
         return 0
 
-    def fake_scrape(cfg, store):
+    def fake_scrape(cfg, store, **_kw):
         calls["scrape"] += 1
         return 0
+
+    def fake_monitor(cfg, store):
+        calls["monitor"] += 1
+        return {"companies": 0, "successful": 0, "matched": 0, "new": 0,
+                "closed": 0, "results": []}
+
+    def fake_review(store):
+        calls["review"] += 1
+        return {"created": 0, "pending_monitored": 0, "pending_discovery": 0}
 
     def fake_publish(cfg):
         calls["publish"] += 1
@@ -75,6 +88,8 @@ def _patch_pipeline(monkeypatch):
     monkeypatch.setattr(inbox_mod, "run", fake_inbox)
     monkeypatch.setattr(match_mod, "run", fake_match)
     monkeypatch.setattr(scrape_mod, "run", fake_scrape)
+    monkeypatch.setattr(monitor_mod, "scan_active_monitors", fake_monitor)
+    monkeypatch.setattr(review_mod, "sync_reviews", fake_review)
     monkeypatch.setattr(serve, "_publish", fake_publish)
     monkeypatch.setattr(serve, "_build_local_spa", fake_build_spa)
     return calls
@@ -90,8 +105,9 @@ def test_perform_refresh_runs_and_stamps(monkeypatch):
 
         assert res["state"] == "done"
         assert calls["inbox"] == 1 and calls["match"] == 1 and calls["publish"] == 1
+        assert calls["monitor"] == 1 and calls["review"] == 1
         assert calls["render"] == 1
-        assert calls["scrape"] == 0  # full scan off by default
+        assert calls["scrape"] == 1  # first broad discovery is due on an empty DB
         # Public publish happens before the local un-redacted rebuild.
         assert calls["order"] == ["publish", "render"]
         days = cfg["serve"]["inbox_days"]
@@ -244,7 +260,7 @@ def _get_text(url, headers=None):
         return resp.status, resp.read().decode("utf-8", "replace")
 
 
-def test_serves_spa_and_injects_widget(monkeypatch):
+def test_serves_spa_without_legacy_refresh_widget(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
         Store(cfg["output"]["db_path"]).close()
@@ -254,8 +270,7 @@ def test_serves_spa_and_injects_widget(monkeypatch):
             status, html = _get_text(base + "/")
             assert status == 200
             assert 'id="root"' in html          # the SPA shell is served
-            assert "jsRefreshFab" in html        # the Refresh widget is injected
-            assert "/api/refresh" in html
+            assert "jsRefreshFab" not in html    # React owns the Gmail action
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -324,6 +339,67 @@ def test_endpoints_and_csrf_guard(monkeypatch):
                                 headers={"X-Refresh-Token": token, "Origin": base,
                                          "Content-Type": "application/json"})
             assert status == 200 and body["state"] in ("started", "busy")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_resume_upload_builds_profiles_and_rejects_a_fourth():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        resume_text = """# Jane Doe
+## Summary
+Application security engineer with 4 years of experience.
+## Skills
+Python, AWS, threat modeling, application security
+"""
+
+        def payload(name):
+            return json.dumps({
+                "name": name,
+                "filename": f"{name}.md",
+                "content_base64": base64.b64encode(resume_text.encode()).decode(),
+            })
+
+        try:
+            code, _ = _req(
+                "POST", base + "/api/resume/upload",
+                headers={"Content-Type": "application/json"}, data=payload("research"),
+            )
+            assert code == 403
+            for name in ("research", "consulting", "product"):
+                code, result = _req(
+                    "POST", base + "/api/resume/upload",
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Refresh-Token": token,
+                        "Origin": base,
+                    },
+                    data=payload(name),
+                )
+                assert code == 200 and result["ok"] is True
+                assert result["profile"]["name"] == name
+                assert result["profile_count"] <= result["profile_limit"] == 3
+
+            code, _ = _req(
+                "POST", base + "/api/resume/upload",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Refresh-Token": token,
+                    "Origin": base,
+                },
+                data=payload("fourth"),
+            )
+            assert code == 409
+            with Store(cfg["output"]["db_path"]) as store:
+                assert len(store.list_resumes()) == 3
+            from jobscope.analyze import profile
+            assert profile.list_profiles(cfg) == ["consulting", "product", "research"]
+            assert profile.active_name(cfg) == "product"
         finally:
             httpd.shutdown()
             httpd.server_close()

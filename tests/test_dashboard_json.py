@@ -96,6 +96,7 @@ def test_emit_json_public_is_empty():
         # the separately-built encrypted blob.
         assert pub["rows"] == [] and pub["total"] == 0
         assert pub["applications"] == [] and pub["applied_outreach"] == []
+        assert pub["companies"] == [] and pub["reviews"] == []
         assert pub["profile"] is None
         assert pub["overview"]["funnel"] == {}
         # nothing from the seeded private data leaks into the public payload
@@ -120,12 +121,16 @@ _TOP_LEVEL = {
     "applications": list,
     "profile": (dict, type(None)),
     "applied_outreach": list,
+    "companies": list,
+    "reviews": list,
 }
 
 _JOB_ROW = {
     "id": str, "title": str, "company": str, "location": str,
     "remote": bool, "remote_scope": str, "url": str, "source": str,
     "score": (int, float), "tier": str, "base": str, "salary": str,
+    "salary_min": (int, float, type(None)), "salary_max": (int, float, type(None)),
+    "salary_interval": str, "currency": str,
     "size": str, "funding": str, "country": str, "place": str,
     "industry": (str, type(None)), "rationale": str, "blocked": bool,
     "posted": (str, type(None)), "first_seen": str, "status": str,
@@ -133,7 +138,7 @@ _JOB_ROW = {
     "posted_age_days": (int, type(None)), "stale": bool,
     "remote_mismatch": bool, "sources": list, "coverage_pct": (int, float, type(None)),
     "enrich": dict, "brief": str,
-    "description": str, "contacts": list,
+    "description": str, "contacts": list, "recruiter": (dict, type(None)),
 }
 
 _OVERVIEW = {
@@ -163,6 +168,21 @@ _COMPANY_CONTACT = {
 
 _APPLIED_COMPANY = {
     "company": str, "domain": str, "status": str, "applied_at": str, "contacts": list,
+}
+
+_MONITORED_COMPANY = {
+    "id": str, "company": str, "provider": str, "slug": str,
+    "careers_url": str, "status": str, "resolution_status": str,
+    "added_from": list, "checked_at": str, "last_success_at": str,
+    "health_status": str, "health_detail": str, "board_count": int,
+    "open_matches": int, "pending_count": int, "saved_count": int,
+    "contact_domain": str, "contacts_checked_at": str,
+    "recruiter_count": int, "recruiter": (dict, type(None)),
+}
+
+_JOB_REVIEW = {
+    "job_id": str, "state": str, "origins": list, "monitor_ids": list,
+    "first_seen": str, "reviewed_at": str,
 }
 
 # Optional sub-objects _enrich_summary() attaches; a present sub-object's keys
@@ -226,6 +246,10 @@ def _validate_contract(data):
         _require(ac, _APPLIED_COMPANY, f"applied_outreach[{i}]")
         for j, c in enumerate(ac["contacts"]):
             _require(c, _COMPANY_CONTACT, f"applied_outreach[{i}].contacts[{j}]")
+    for i, company in enumerate(data["companies"]):
+        _require(company, _MONITORED_COMPANY, f"companies[{i}]")
+    for i, review in enumerate(data["reviews"]):
+        _require(review, _JOB_REVIEW, f"reviews[{i}]")
 
 
 def test_build_data_matches_contract():
@@ -265,6 +289,15 @@ def test_build_data_matches_contract():
         store.set_company_contacts("Acme", "acme.com", [
             {"email": "careers@acme.com", "confidence": "low",
              "source": "role_inbox", "note": "conventional inbox"}])
+        monitor = store.upsert_company_monitor(
+            "Acme", provider="greenhouse", slug="acme", added_from="config",
+        )
+        store.link_monitor_job(monitor["id"], jid)
+        store.set_job_review(jid, "saved", origins=["monitored"])
+        store.set_source_health(
+            f"monitor:{monitor['id']}", provider="greenhouse", slug="acme",
+            status="ok", item_count=12,
+        )
 
         data = render.build_data(cfg, store, public=False)
 
@@ -279,6 +312,12 @@ def test_build_data_matches_contract():
         # applied-company HR contacts (behind the unlock) are emitted for Acme
         assert data["applied_outreach"] and data["applied_outreach"][0]["company"] == "Acme"
         assert data["applied_outreach"][0]["contacts"][0]["email"] == "careers@acme.com"
+        assert data["rows"][0]["recruiter"]["email"] == "careers@acme.com"
+        assert data["companies"][0]["company"] == "Acme"
+        assert data["companies"][0]["health_status"] == "ok"
+        assert data["companies"][0]["recruiter"]["email"] == "careers@acme.com"
+        assert data["reviews"][0]["state"] == "saved"
+        assert data["reviews"][0]["monitor_ids"] == [monitor["id"]]
 
         # the seed actually exercised each branch of the contract
         assert data["total"] == 1 and len(data["rows"]) == 1
@@ -394,6 +433,7 @@ def test_public_build_data_applications_empty():
         data = render.build_data(cfg, store, public=True)
         _validate_contract(data)
         assert data["applications"] == []
+        assert data["companies"] == [] and data["reviews"] == []
         store.close()
 
 
@@ -415,6 +455,8 @@ def test_dashboard_schema_artifact_matches_contract():
     assert set(defs["ApplicationEvent"]["required"]) == set(_TIMELINE_EVENT)
     assert set(defs["AppliedCompany"]["required"]) == set(_APPLIED_COMPANY)
     assert set(defs["CompanyContact"]["required"]) == set(_COMPANY_CONTACT)
+    assert set(defs["MonitoredCompany"]["required"]) == set(_MONITORED_COMPANY)
+    assert set(defs["JobReview"]["required"]) == set(_JOB_REVIEW)
 
 
 def test_render_dedupe_collapses_cross_source_duplicates():
@@ -496,6 +538,8 @@ def test_public_build_data_redacts_all_pii():
     assert pub["overview"]["targets"] == []
     assert pub["applications"] == []
     assert pub["applied_outreach"] == []
+    assert pub["companies"] == []
+    assert pub["reviews"] == []
     assert pub["profile"] is None
 
 

@@ -1,7 +1,7 @@
 // Shared factories for web unit tests. Not a test file itself (no `.test`), so
 // vitest won't try to run it.
 
-import type { Application, DashboardData, JobRow } from '@/lib/schema'
+import type { Application, DashboardData, JobReview, JobRow, MonitoredCompany } from '@/lib/schema'
 
 export function jobRow(over: Partial<JobRow> & Pick<JobRow, 'id'>): JobRow {
   return {
@@ -17,6 +17,10 @@ export function jobRow(over: Partial<JobRow> & Pick<JobRow, 'id'>): JobRow {
     tier: 'Good',
     base: '',
     salary: '',
+    salary_min: null,
+    salary_max: null,
+    salary_interval: '',
+    currency: '',
     size: '',
     funding: '',
     country: '',
@@ -38,6 +42,7 @@ export function jobRow(over: Partial<JobRow> & Pick<JobRow, 'id'>): JobRow {
     brief: '',
     description: '',
     contacts: [],
+    recruiter: null,
     ...over,
   }
 }
@@ -59,6 +64,46 @@ export function application(over: Partial<Application> & Pick<Application, 'job_
   }
 }
 
+export function review(over: Partial<JobReview> & Pick<JobReview, 'job_id'>): JobReview {
+  return {
+    job_id: over.job_id,
+    state: 'pending',
+    origins: ['monitored'],
+    monitor_ids: [],
+    first_seen: '2026-07-01T00:00:00Z',
+    reviewed_at: '',
+    ...over,
+  }
+}
+
+export function monitoredCompany(
+  over: Partial<MonitoredCompany> & Pick<MonitoredCompany, 'id' | 'company'>,
+): MonitoredCompany {
+  return {
+    id: over.id,
+    company: over.company,
+    provider: 'greenhouse',
+    slug: over.company.toLowerCase(),
+    careers_url: '',
+    status: 'active',
+    resolution_status: 'resolved',
+    added_from: ['user'],
+    checked_at: '',
+    last_success_at: '',
+    health_status: 'ok',
+    health_detail: '',
+    board_count: 0,
+    open_matches: 0,
+    pending_count: 0,
+    saved_count: 0,
+    contact_domain: '',
+    contacts_checked_at: '',
+    recruiter_count: 0,
+    recruiter: null,
+    ...over,
+  }
+}
+
 export function dashboard(over: Partial<DashboardData> = {}): DashboardData {
   return {
     generated: '2026-07-08T00:00:00Z',
@@ -68,6 +113,8 @@ export function dashboard(over: Partial<DashboardData> = {}): DashboardData {
     applications: [],
     profile: null,
     applied_outreach: [],
+    companies: [],
+    reviews: [],
     ...over,
   }
 }

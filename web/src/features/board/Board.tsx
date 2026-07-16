@@ -3,9 +3,9 @@
 // `@/lib/board`) and reports card opens upward. No data fetching, no mutation.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlarmClock, Clock, Mail, MapPin } from 'lucide-react'
+import { AlarmClock, ArrowRight, Clock, Mail, MapPin } from 'lucide-react'
 import { Segmented, animate, prefersReducedMotion } from '@/ui'
-import type { BoardCard, BoardColumn } from '@/lib/board'
+import type { BoardCard, BoardColumn, BoardStage } from '@/lib/board'
 import type { Tier } from '@/lib/schema'
 
 export interface BoardProps {
@@ -26,48 +26,126 @@ const TIER_COLOR: Record<Tier, string> = {
   Skip: 'var(--skip)',
 }
 
-type BoardView = 'table' | 'columns' | 'offers'
+type BoardView = 'list' | 'columns' | 'offers'
+type ApplicationFilter = 'all' | BoardStage | 'attention'
 
 /**
  * The Board surface: the applied pipeline as either a scannable table (default,
  * best for volume) or the stage-columned Kanban, toggled in the toolbar.
  */
 export function Board({ columns, onOpen }: BoardProps) {
-  const [view, setView] = useState<BoardView>('table')
-  const total = columns.reduce((n, col) => n + col.cards.length, 0)
+  const [view, setView] = useState<BoardView>('list')
+  const [filter, setFilter] = useState<ApplicationFilter>('all')
+  const allCards = columns.flatMap((column) => column.cards)
+  const total = allCards.length
+  const attention = allCards.filter((card) => card.followup === 'due' || card.followup === 'ghosted')
+  const visibleColumns = columns.map((column) => ({
+    ...column,
+    cards: column.cards.filter((card) => {
+      if (filter === 'all') return true
+      if (filter === 'attention') return card.followup === 'due' || card.followup === 'ghosted'
+      return card.stage === filter
+    }),
+  }))
+  const visibleTotal = visibleColumns.reduce((count, column) => count + column.cards.length, 0)
   // Roles with a recorded offer (offer stage, or comp/decision captured earlier),
   // gathered across stages for the side-by-side compare view.
-  const offers = columns
-    .flatMap((col) => col.cards)
+  const offers = allCards
     .filter((c) => c.stage === 'offer' || c.salaryOffered || c.offerAccepted)
   const showOffers = view === 'offers' && offers.length > 0
   return (
-    <div className="flex h-[calc(100dvh-7rem)] flex-col gap-3">
-      <div className="flex shrink-0 items-center justify-between gap-3">
-        <p className="text-sm text-ink-3">
-          {total} {total === 1 ? 'application' : 'applications'}
+    <section className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col border-x border-line bg-panel">
+      <header className="shrink-0 border-b border-line px-5 py-5 sm:px-7">
+        <p className="text-[10px] font-semibold uppercase text-ink-3">Applications</p>
+        <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-ink">Application inbox</h2>
+            <p className="mt-1 text-[13px] text-ink-3">Track outcomes, spot stalled conversations, and reopen any role.</p>
+          </div>
+          <strong className="font-mono text-2xl font-semibold text-ink">{total}</strong>
+        </div>
+      </header>
+
+      <div className="flex shrink-0 overflow-x-auto border-b border-line [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Application filters">
+        <SummaryFilter label="All" value={total} active={filter === 'all'} onClick={() => setFilter('all')} />
+        {columns.map((column) => (
+          <SummaryFilter
+            key={column.stage}
+            label={column.label}
+            value={column.cards.length}
+            color={column.color}
+            active={filter === column.stage}
+            onClick={() => setFilter(column.stage)}
+          />
+        ))}
+        <SummaryFilter
+          label="Needs attention"
+          value={attention.length}
+          color="var(--stretch)"
+          active={filter === 'attention'}
+          onClick={() => setFilter('attention')}
+        />
+      </div>
+
+      <div className="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-2 sm:px-7">
+        <p aria-label={`${visibleTotal} shown`} className="text-[12px] text-ink-3">
+          <span className="font-medium text-ink">{visibleTotal}</span> shown
+          {attention.length > 0 && <span> · {attention.length} need follow-up</span>}
         </p>
         <Segmented
           ariaLabel="Board view"
           value={view}
           onChange={(v) => setView(v as BoardView)}
           options={[
-            { value: 'table', label: 'Table' },
-            { value: 'columns', label: 'Columns' },
+            { value: 'list', label: 'List' },
+            { value: 'columns', label: 'Board' },
             ...(offers.length ? [{ value: 'offers', label: 'Offers' }] : []),
           ]}
         />
       </div>
-      <div className="min-h-0 flex-1">
+
+      <div className="min-h-0 flex-1 overflow-hidden">
         {showOffers ? (
           <OffersCompare offers={offers} onOpen={onOpen} />
         ) : view === 'columns' ? (
-          <BoardColumns columns={columns} onOpen={onOpen} />
+          <BoardColumns columns={visibleColumns} onOpen={onOpen} />
         ) : (
-          <BoardTable columns={columns} onOpen={onOpen} />
+          <ApplicationList columns={visibleColumns} onOpen={onOpen} />
         )}
       </div>
-    </div>
+    </section>
+  )
+}
+
+function SummaryFilter({
+  label,
+  value,
+  active,
+  onClick,
+  color = 'var(--brand-coral)',
+}: {
+  label: string
+  value: number
+  active: boolean
+  onClick: () => void
+  color?: string
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={`${label}: ${value}`}
+      aria-pressed={active}
+      onClick={onClick}
+      className={`relative min-w-28 shrink-0 border-r border-line px-4 py-3 text-left transition-colors last:border-r-0 sm:min-w-32 ${
+        active ? 'bg-inset' : 'hover:bg-inset/60'
+      }`}
+    >
+      {active && <span className="absolute inset-x-0 bottom-0 h-0.5" style={{ background: color }} aria-hidden="true" />}
+      <span className="block text-[10px] uppercase text-ink-3">{label}</span>
+      <strong className="mt-0.5 block font-mono text-lg font-semibold" style={{ color: active ? color : 'var(--ink)' }}>
+        {value}
+      </strong>
+    </button>
   )
 }
 
@@ -78,7 +156,7 @@ export function Board({ columns, onOpen }: BoardProps) {
  */
 function OffersCompare({ offers, onOpen }: { offers: BoardCard[]; onOpen: (jobId: string) => void }) {
   return (
-    <div className="flex h-full gap-3 overflow-x-auto overflow-y-hidden pb-1">
+    <div className="flex h-full gap-3 overflow-x-auto overflow-y-hidden p-3">
       {offers.map((o) => (
         <button
           key={o.id}
@@ -163,11 +241,11 @@ function BoardColumns({ columns, onOpen }: BoardProps) {
   }, [])
 
   return (
-    <div ref={scrollerRef} className="flex h-full gap-3 overflow-x-auto overflow-y-hidden lg:overflow-hidden">
+    <div ref={scrollerRef} className="flex h-full gap-3 overflow-x-auto overflow-y-hidden p-3 min-[1400px]:overflow-hidden">
       {columns.map((col) => (
         <section
           key={col.stage}
-          className="flex w-[80vw] flex-none flex-col overflow-hidden rounded-card border border-line sm:w-[46vw] lg:w-auto lg:min-w-0 lg:flex-1"
+          className="flex w-[80vw] flex-none flex-col overflow-hidden rounded-card border border-line sm:w-[46vw] min-[1400px]:w-auto min-[1400px]:min-w-0 min-[1400px]:flex-1"
           style={{ background: `color-mix(in srgb, ${col.color} 5%, var(--panel))` }}
         >
           <span className="h-1 shrink-0" style={{ background: col.color }} aria-hidden="true" />
@@ -202,69 +280,49 @@ interface TableRow extends BoardCard {
  *  Fit/location live on the un-redacted match rows, which applied roles have
  *  aged out of, so they're intentionally omitted here (see the Kanban card for
  *  the richer per-role detail). */
-function BoardTable({ columns, onOpen }: BoardProps) {
+function ApplicationList({ columns, onOpen }: BoardProps) {
   const rows: TableRow[] = columns.flatMap((col) =>
     col.cards.map((c) => ({ ...c, stageLabel: col.label, stageColor: col.color })),
   )
   if (rows.length === 0) {
-    return <p className="py-16 text-center text-sm text-ink-3">No applications yet</p>
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+        <p className="text-[14px] font-medium text-ink">No applications in this view</p>
+        <p className="mt-1 text-[12px] text-ink-3">Choose another stage or clear the attention filter.</p>
+      </div>
+    )
   }
   return (
-    <div className="h-full overflow-auto rounded-card border border-line">
-      <table className="w-full border-collapse text-sm">
-        <thead className="sticky top-0 z-10 bg-inset">
-          <tr className="text-left text-[11px] uppercase tracking-wide text-ink-3">
-            <th className="px-3 py-2.5 font-semibold">Role</th>
-            <th className="px-3 py-2.5 font-semibold">Stage</th>
-            <th className="whitespace-nowrap px-3 py-2.5 font-semibold">Applied</th>
-            <th className="px-3 py-2.5 font-semibold">Signals</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-line">
-          {rows.map((r) => (
-            <tr
-              key={r.id}
-              role="button"
-              tabIndex={0}
-              aria-label={`${r.company} — ${r.title}`}
-              onClick={() => onOpen(r.id)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  onOpen(r.id)
-                }
-              }}
-              className="cursor-pointer bg-panel outline-none transition-colors hover:bg-inset/60 focus-visible:bg-inset/60"
+    <div className="h-full overflow-auto">
+      <div className="sticky top-0 z-10 hidden grid-cols-[minmax(0,1.5fr)_8rem_7rem_minmax(9rem,.7fr)_1.5rem] border-b border-line bg-inset px-6 py-2 text-[10px] font-semibold uppercase text-ink-3 sm:grid">
+        <span>Role</span><span>Stage</span><span>Applied</span><span>Signals</span><span />
+      </div>
+      <ul>
+        {rows.map((row) => (
+          <li key={row.id} className="border-b border-line last:border-b-0">
+            <button
+              type="button"
+              aria-label={`${row.company} — ${row.title}`}
+              onClick={() => onOpen(row.id)}
+              className="group relative grid w-full gap-2 px-5 py-3 text-left outline-none transition-colors hover:bg-inset/60 focus-visible:bg-inset sm:grid-cols-[minmax(0,1.5fr)_8rem_7rem_minmax(9rem,.7fr)_1.5rem] sm:items-center sm:px-6"
             >
-              <td className="px-3 py-2.5">
-                <div className="font-semibold text-ink">{r.title || r.company}</div>
-                {r.title && <div className="line-clamp-1 text-[12px] text-ink-3">{r.company}</div>}
-              </td>
-              <td className="px-3 py-2.5">
-                <span
-                  className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium"
-                  style={{
-                    color: r.stageColor,
-                    background: `color-mix(in srgb, ${r.stageColor} 14%, transparent)`,
-                  }}
-                >
-                  {r.stageLabel}
-                </span>
-              </td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-ink-2">
-                {r.daysSinceApplied != null
-                  ? r.daysSinceApplied === 0
-                    ? 'today'
-                    : `${r.daysSinceApplied}d ago`
+              <span className="absolute inset-y-0 left-0 w-0.5" style={{ background: row.stageColor }} aria-hidden="true" />
+              <span className="min-w-0">
+                <span className="block truncate text-[14px] font-semibold text-ink">{row.title || row.company}</span>
+                {row.title && <span className="block truncate text-[12px] text-ink-3">{row.company}</span>}
+              </span>
+              <span className="text-[11px] font-medium" style={{ color: row.stageColor }}>{row.stageLabel}</span>
+              <span className="text-[12px] text-ink-2">
+                {row.daysSinceApplied != null
+                  ? row.daysSinceApplied === 0 ? 'today' : `${row.daysSinceApplied}d ago`
                   : '—'}
-              </td>
-              <td className="px-3 py-2.5">
-                <TableSignals card={r} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </span>
+              <TableSignals card={row} />
+              <ArrowRight size={14} className="hidden text-ink-3 transition-transform group-hover:translate-x-0.5 sm:block" aria-hidden="true" />
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

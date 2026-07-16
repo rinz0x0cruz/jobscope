@@ -22,24 +22,18 @@ if (typeof document !== 'undefined') {
  * Application root. The whole app lives behind {@link AuthGate}: a local
  * un-redacted build renders straight through, while the published (empty) build
  * shows the passphrase lock until the encrypted payload is unlocked in-browser.
- * The unlocked (or baked) data is handed to the {@link ShellV2} cockpit.
+ * The unlocked (or baked) data is handed to the Feed + Reader shell.
  */
 export default function App() {
   const { state, set } = useSearchState()
-  const openDrawer = (id: string) => set({ job: id })
-  const closeDrawer = () => set({ job: undefined })
-
   return (
     <AuthGate baked={dashboard} encrypted={encryptedSite}>
       {(data, lock) => (
         <ShellV2
           data={data}
-          search={state.q}
-          onSearch={(v) => set({ q: v }, { replace: true })}
+          state={state}
+          onStateChange={set}
           onLock={lock}
-          jobId={state.job}
-          onOpenJob={openDrawer}
-          onCloseJob={closeDrawer}
         />
       )}
     </AuthGate>

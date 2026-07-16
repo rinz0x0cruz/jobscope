@@ -160,9 +160,47 @@ CREATE TABLE IF NOT EXISTS company_contacts (
     contacts_json TEXT,
     discovered_at TEXT
 );
+CREATE TABLE IF NOT EXISTS company_monitors (
+    id TEXT PRIMARY KEY,
+    company_key TEXT NOT NULL UNIQUE,
+    company TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT '',
+    slug TEXT NOT NULL DEFAULT '',
+    careers_url TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'paused', 'removed')),
+    resolution_status TEXT NOT NULL DEFAULT 'unresolved'
+        CHECK (resolution_status IN ('resolved', 'unresolved', 'unsupported')),
+    origins_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_success_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS company_monitor_jobs (
+    monitor_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    PRIMARY KEY (monitor_id, job_id)
+);
+CREATE TABLE IF NOT EXISTS job_reviews (
+    job_id TEXT PRIMARY KEY,
+    state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (state IN ('pending', 'saved', 'dismissed')),
+    origins_json TEXT NOT NULL DEFAULT '[]',
+    first_seen TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL DEFAULT ''
+);
 CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
 CREATE INDEX IF NOT EXISTS idx_mail_events_job ON mail_events(job_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_company_monitors_board
+    ON company_monitors(provider, slug)
+    WHERE provider <> '' AND slug <> '';
+CREATE INDEX IF NOT EXISTS idx_company_monitor_jobs_job
+    ON company_monitor_jobs(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_reviews_state
+    ON job_reviews(state);
 """
 
 

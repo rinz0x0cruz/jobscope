@@ -46,6 +46,19 @@ describe('unlockDashboard', () => {
     expect(out.rows[0].rationale).toBe('strong fit')
     expect(out.applications).toHaveLength(1)
     expect(out.overview.funnel.applied).toBe(2)
+    expect(out.companies).toEqual([])
+    expect(out.reviews).toEqual([expect.objectContaining({
+      job_id: 'j1', state: 'saved', origins: ['legacy'],
+    })])
+  })
+
+  it('migrates explicit empty reviews on a nonempty legacy payload', async () => {
+    const blob = await makeBlob({ ...FULL, companies: [], reviews: [] }, 'legacy-empty')
+    const out = await unlockDashboard(blob, 'legacy-empty')
+
+    expect(out.reviews).toEqual([expect.objectContaining({
+      job_id: 'j1', state: 'saved', origins: ['legacy'],
+    })])
   })
 
   it('throws on a wrong passphrase (GCM tag mismatch)', async () => {

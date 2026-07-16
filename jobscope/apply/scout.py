@@ -10,17 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from jobscope.analyze.review import persist_scored_job, score_jobs
 from jobscope.ingest import ats
-
-
-def _active_resume(cfg: dict, store):
-    """The résumé the active profile points at, falling back to the primary."""
-    from jobscope.analyze import profile as _profile
-
-    prof = _profile.load(cfg) or {}
-    rname = prof.get("resume")
-    resume = store.get_resume(rname) if rname else None
-    return resume if resume is not None else store.get_resume()
 
 
 def scout(cfg: dict, store, company: str, *, provider: Optional[str] = None,
@@ -57,41 +48,22 @@ def scout(cfg: dict, store, company: str, *, provider: Optional[str] = None,
     if not board:
         return result
 
-    resume = _active_resume(cfg, store)
-    if resume is None:
-        return {"ok": False, "error": "no résumé imported -- run `resume import <path>` first"}
-
-    from jobscope.analyze import profile as _profile
-    from jobscope.analyze.match.filters import apply_filters
-    from jobscope.analyze.match.routing import select_base
-
-    prof = _profile.load(cfg) or {}
-    search = cfg.get("search", {}) or {}
-    match_cfg = dict(cfg.get("match", {}))
-    match_cfg["want_remote"] = bool(prof.get("remote", search.get("is_remote", True)))
-    match_cfg["country"] = search.get("country_indeed", "")
-    fcfg = cfg.get("filters", {}) or {}
-    resumes = [(prof.get("resume") or "default", resume)]
-
-    scored: list[tuple[float, str, str, Any]] = []
-    for job in board:
-        s, tier, rationale, _base = select_base(job, resumes, match_cfg)
-        reason = apply_filters(job, fcfg)
-        if reason:
-            tier, rationale = "Skip", f"{reason} | {rationale}"
-        scored.append((float(s), tier, rationale, job))
-    scored.sort(key=lambda x: x[0], reverse=True)
+    try:
+        scored = score_jobs(cfg, store, board)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
 
     saved = 0
     results: list[dict[str, Any]] = []
-    for score, tier, rationale, job in scored[: max(1, limit)]:
+    for item in scored[: max(1, limit)]:
+        job = item.job
         rec = {
             "title": job.title, "company": job.company, "location": job.location,
-            "url": job.url, "remote": bool(job.is_remote), "score": round(score, 1),
-            "tier": tier, "rationale": rationale, "saved": False,
+            "url": job.url, "remote": bool(job.is_remote), "score": round(item.score, 1),
+            "tier": item.tier, "rationale": item.rationale, "saved": False,
         }
-        if save and tier != "Skip" and job.title and job.company:
-            if store.upsert_job(job):
+        if save and item.tier != "Skip" and job.title and job.company:
+            if persist_scored_job(store, item):
                 saved += 1
             rec["saved"] = True
         results.append(rec)

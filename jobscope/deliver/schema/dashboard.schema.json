@@ -5,7 +5,7 @@
   "description": "Machine-readable mirror of render.build_data() (render.py). Single source of truth for the Python->TypeScript data contract (ARCHITECTURE.md section 9). Keep 1:1 with web/src/lib/schema.ts and tests/test_dashboard_json.py. Emitted by `jobscope dashboard --emit-json` to data/dashboard.json.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["generated", "total", "rows", "overview", "applications", "profile", "applied_outreach"],
+  "required": ["generated", "total", "rows", "overview", "applications", "profile", "applied_outreach", "companies", "reviews"],
   "properties": {
     "generated": {"type": "string", "description": "ISO timestamp (now_iso())."},
     "total": {"type": "integer", "description": "len(rows)."},
@@ -24,9 +24,59 @@
       "type": "array",
       "description": "Pre-computed HR contacts for active applied companies; empty ([]) for the public build, present behind the site unlock.",
       "items": {"$ref": "#/definitions/AppliedCompany"}
+    },
+    "companies": {
+      "type": "array",
+      "description": "Persistent company-monitor health and counts; empty ([]) for the public build.",
+      "items": {"$ref": "#/definitions/MonitoredCompany"}
+    },
+    "reviews": {
+      "type": "array",
+      "description": "Durable review state and source provenance; empty ([]) for the public build.",
+      "items": {"$ref": "#/definitions/JobReview"}
     }
   },
   "definitions": {
+    "MonitoredCompany": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "company", "provider", "slug", "careers_url", "status", "resolution_status", "added_from", "checked_at", "last_success_at", "health_status", "health_detail", "board_count", "open_matches", "pending_count", "saved_count", "contact_domain", "contacts_checked_at", "recruiter_count", "recruiter"],
+      "properties": {
+        "id": {"type": "string"},
+        "company": {"type": "string"},
+        "provider": {"type": "string"},
+        "slug": {"type": "string"},
+        "careers_url": {"type": "string"},
+        "status": {"type": "string", "enum": ["active", "paused", "removed"]},
+        "resolution_status": {"type": "string", "enum": ["resolved", "unresolved", "unsupported"]},
+        "added_from": {"type": "array", "items": {"type": "string"}},
+        "checked_at": {"type": "string"},
+        "last_success_at": {"type": "string"},
+        "health_status": {"type": "string"},
+        "health_detail": {"type": "string"},
+        "board_count": {"type": "integer"},
+        "open_matches": {"type": "integer"},
+        "pending_count": {"type": "integer"},
+        "saved_count": {"type": "integer"},
+        "contact_domain": {"type": "string"},
+        "contacts_checked_at": {"type": "string"},
+        "recruiter_count": {"type": "integer"},
+        "recruiter": {"oneOf": [{"$ref": "#/definitions/CompanyContact"}, {"type": "null"}]}
+      }
+    },
+    "JobReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "state", "origins", "monitor_ids", "first_seen", "reviewed_at"],
+      "properties": {
+        "job_id": {"type": "string"},
+        "state": {"type": "string", "enum": ["pending", "saved", "dismissed"]},
+        "origins": {"type": "array", "items": {"type": "string"}},
+        "monitor_ids": {"type": "array", "items": {"type": "string"}},
+        "first_seen": {"type": "string"},
+        "reviewed_at": {"type": "string"}
+      }
+    },
     "CompanyContact": {
       "type": "object",
       "additionalProperties": false,
@@ -72,11 +122,12 @@
       "additionalProperties": false,
       "required": [
         "id", "title", "company", "location", "remote", "remote_scope", "url",
-        "source", "score", "tier", "base", "salary", "size", "funding",
+        "source", "score", "tier", "base", "salary", "salary_min", "salary_max",
+        "salary_interval", "currency", "size", "funding",
         "country", "place", "industry", "rationale", "blocked", "posted",
         "first_seen", "status", "last_seen", "closed_at", "posted_age_days",
         "stale", "remote_mismatch", "sources", "coverage_pct", "enrich", "brief",
-        "description", "contacts"
+        "description", "contacts", "recruiter"
       ],
       "properties": {
         "id": {"type": "string"},
@@ -91,6 +142,10 @@
         "tier": {"$ref": "#/definitions/Tier"},
         "base": {"type": "string"},
         "salary": {"type": "string"},
+        "salary_min": {"type": ["number", "null"]},
+        "salary_max": {"type": ["number", "null"]},
+        "salary_interval": {"type": "string"},
+        "currency": {"type": "string"},
         "size": {"type": "string"},
         "funding": {"type": "string"},
         "country": {"type": "string"},
@@ -111,7 +166,8 @@
         "enrich": {"$ref": "#/definitions/EnrichSummary"},
         "brief": {"type": "string"},
         "description": {"type": "string", "description": "Trimmed JD snapshot (issue #30); \"\" in the public build."},
-        "contacts": {"type": "array", "items": {"$ref": "#/definitions/Contact"}}
+        "contacts": {"type": "array", "items": {"$ref": "#/definitions/Contact"}},
+        "recruiter": {"oneOf": [{"$ref": "#/definitions/CompanyContact"}, {"type": "null"}]}
       }
     },
     "Contact": {

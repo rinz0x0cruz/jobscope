@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { searchSchema, SEARCH_DEFAULTS, TAB_VALUES, FACET_KEYS } from '@/lib/urlState'
+import { activeView, searchSchema, SEARCH_DEFAULTS, TAB_VALUES, FACET_KEYS } from '@/lib/urlState'
 
 // Feature: shareable URL view-state (tabs, search, facets) with safe fallbacks.
 describe('urlState: schema + defaults', () => {
@@ -9,7 +9,20 @@ describe('urlState: schema + defaults', () => {
     expect(s.q).toBe('')
     expect(s.group).toBe(false)
     expect(s.hideClosed).toBe(true)
+    expect(s.sort).toBe('score')
+    expect(s.flags).toEqual([])
+    expect(s.tiers).toEqual([])
+    expect(s.reviewBucket).toBe('monitored')
     expect(s.resume).toEqual([])
+  })
+
+  it('maps legacy tabs onto the new primary views', () => {
+    expect(activeView(searchSchema.parse({ tab: 'applications' }))).toBe('applications')
+    expect(activeView(searchSchema.parse({ tab: 'overview' }))).toBe('pipeline')
+    expect(activeView(searchSchema.parse({ tab: 'Strong' }))).toBe('review')
+    expect(activeView(searchSchema.parse({ view: 'feed' }))).toBe('review')
+    expect(activeView(searchSchema.parse({ view: 'companies' }))).toBe('companies')
+    expect(activeView(searchSchema.parse({ view: 'activity', tab: 'applications' }))).toBe('activity')
   })
 
   it('coerces an invalid tab to "all" instead of throwing', () => {

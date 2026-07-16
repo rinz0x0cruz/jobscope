@@ -27,15 +27,16 @@ function setup(over: Partial<React.ComponentProps<typeof CommandPalette>> = {}) 
 describe('CommandPalette', () => {
   it('lists lenses, actions, and recent roles when open', () => {
     setup()
-    expect(screen.getByText('Home')).toBeInTheDocument()
+    expect(screen.getByText('Review')).toBeInTheDocument()
+    expect(screen.getByText('Companies')).toBeInTheDocument()
     expect(screen.getByText('Toggle theme')).toBeInTheDocument()
     expect(screen.getByText('Stripe')).toBeInTheDocument()
   })
 
   it('navigates to a lens and closes', () => {
     const p = setup()
-    fireEvent.click(screen.getByText('Board'))
-    expect(p.onNavigate).toHaveBeenCalledWith('board')
+    fireEvent.click(screen.getByText('Applications'))
+    expect(p.onNavigate).toHaveBeenCalledWith('applications')
     expect(p.onOpenChange).toHaveBeenCalledWith(false)
   })
 

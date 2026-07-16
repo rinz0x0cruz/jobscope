@@ -53,6 +53,13 @@ def import_resume(path: str, store, cfg: dict, name: str = "default") -> int:
     if not os.path.exists(path):
         print(f"  resume not found: {path}")
         return 1
+    from . import profile as _profile
+    existing_resumes = {resume_name for resume_name, _resume in store.list_resumes()}
+    if (name not in existing_resumes and
+            (len(existing_resumes) >= _profile.MAX_PROFILES or
+             not _profile.can_create_profile(cfg, name))):
+        print(f"  profile limit reached ({_profile.MAX_PROFILES}); reuse an existing name.")
+        return 1
     resume = parse_resume(path)
     # backfill contact fields from config profile if the resume omitted them
     prof = cfg.get("profile", {})
@@ -70,7 +77,6 @@ def import_resume(path: str, store, cfg: dict, name: str = "default") -> int:
         print("  note: no skills detected -- add a '## Skills' section for best matching")
     # Seed an editable, résumé-derived search profile the first time (drives `scan`);
     # never clobbers a profile you've already edited.
-    from . import profile as _profile
     seeded = _profile.ensure_seeded(cfg, resume, name)
     if seeded:
         print(f"  seeded search profile -> {seeded}  (edit it, then `jobscope scan`)")

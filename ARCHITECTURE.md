@@ -140,7 +140,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 |--------|-----|----------------|------------------|-------------|
 | [model.py](jobscope/core/model.py) | 228 | Core dataclasses + id/slug helpers | — | `Job`, `Resume`, `Application`, `Contact`, `MailEvent`, `job_id()`, `slugify()`, `derive_remote_scope()` |
 | [config.py](jobscope/core/config.py) | 200 | Load YAML/JSON, deep-merge over `DEFAULT_CONFIG`, env-only secrets, AI/quorum strategy defaults | — | `DEFAULT_CONFIG`, `load_config()`, `api_key()`, `smtp_password()`, `inbox_password()` |
-| [store/](jobscope/core/store/) | 527 | **Package** — SQLite persistence (10 tables) + additive migrations, split into `base` + `jobs`/`enrichment`/`applications`/`mail`/`profile`/`meta` mixins behind a `Store` facade | model | `Store`, `now_iso()` |
+| [store/](jobscope/core/store/) | — | SQLite persistence + additive migrations, including `company_monitors`, monitor↔job provenance, and durable job reviews; concern mixins compose behind `Store` | model | `Store`, `now_iso()` |
 | [companies.py](jobscope/core/companies.py) | 128 | Curated prestige/size/funding tiers (deterministic) | — | `company_quality()`, `company_size()`, `company_funding()` |
 | [httpx.py](jobscope/core/httpx.py) | 37 | Thin `requests` wrapper (UA, timeout, JSON) | — | `get()`, `get_json()`, `get_text()` |
 | [ai.py](jobscope/core/ai.py) | 105 | OpenAI-compatible chat (Groq/Ollama) + optional quorum delegation with per-call strategy/history/context; bridges the keychain-resolved key into the environment for embedded quorum | config | `available()`, `strategy_for()`, `chat()` |
@@ -149,8 +149,9 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [scrape.py](jobscope/ingest/scrape.py) | 153 | JobSpy + ATS boards → `Job` upserts (per-term isolation) | model, store | `run()`, `_row_to_job()` |
-| [ats.py](jobscope/ingest/ats.py) | 213 | Direct Greenhouse/Lever/Ashby board fetch | httpx, model, store | `fetch_company()`, `run()` |
+| [scrape.py](jobscope/ingest/scrape.py) | — | Cadence-gated broad JobSpy discovery; monitored sources are a separate mode | model, store | `run()`, `discovery_due()` |
+| [ats.py](jobscope/ingest/ats.py) | — | Typed Greenhouse/Lever/Ashby resolution, career-URL parsing, and board fetch | httpx, model | `resolve_board_result()`, `fetch_company_result()` |
+| [monitor.py](jobscope/ingest/monitor.py) | — | Seed/resolve/scan persistent company monitors; health + fail-closed reconciliation | ats, review, store | `seed_monitors()`, `scan_active_monitors()` |
 | [inbox.py](jobscope/ingest/inbox.py) | 402 | Gmail IMAP sync (read-only, incremental) → weighted classify (+ optional quorum tie-break) → `mail_events`; drops transactional/OTP mail; `--reclassify` offline repair; recomputes the funnel after each sync | ats, config, model, store, mailrules, reconcile, (ai lazy) | `run()` |
 | [mailrules.py](jobscope/ingest/mailrules.py) | 643 | Deterministic **weighted-keyword** email classification (smart-quote-normalized scoring + ambiguity flag) + transactional/OTP detection + company/role parsing (pure, no I/O) | — | `classify_signal()`, `classify_scored()`, `is_job_related()`, `is_transactional()`, `parse_company_role()`, `signal_to_status()`, `advance_status()`, `normalize_company()` |
 | [reconcile.py](jobscope/ingest/reconcile.py) | 170 | Rebuild the funnel from the mail timeline — instance-split (reapply / concurrent roles) + conservative reclassify (drop OTP, downgrade false interview/assessment) | model, store, mailrules | `recompute()`, `reclassify()`, `split_instances()` |
@@ -197,7 +198,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [render.py](jobscope/deliver/render.py) | 272 | The JSON data contract for the React app — per-job records, overview, and the **Applications** board data (pipeline + kanban + email timelines) | companies, store | `build_data()`, `emit_json()`, `_job_record()`, `_application_records()`, `_overview_data()` |
+| [render.py](jobscope/deliver/render.py) | — | Encrypted dashboard contract: jobs, applications, monitor summaries, reviews, profile, and outreach; public mode emits an empty shell | companies, store | `build_data()`, `emit_json()` |
 | [pdf.py](jobscope/deliver/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
 | [email.py](jobscope/deliver/email.py) | 36 | SMTP summaries (optional) | config | `send()` |
 | [serve.py](jobscope/deliver/serve.py) | ~430 | Serves the built SPA (`web/dist`) on 127.0.0.1 + a localhost-only, CSRF-guarded API: Refresh/publish (injects the Refresh widget), `/api/token`, and `/api/outreach` (recruiter preview/send) | render, store, (apply.outreach lazy) | `run()`, `perform_refresh()` |
@@ -206,9 +207,9 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 Plus [schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) — the JSON-Schema
 artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboard_json.py](tests/test_dashboard_json.py).
 
-> **Note:** `render.py` is now a slim JSON emitter (~270 lines). The **React app in `web/`** is the single
-> dashboard — served un-redacted locally by `jobscope serve` and published redacted to Pages — and owns the
-> **Applications board** (kanban + per-application email timelines) and pipeline funnel. The data-contract
+> **Note:** `render.py` is the JSON emitter. The **React app in `web/`** is the single dashboard — served
+> privately by `jobscope serve`, or as an empty Pages shell plus encrypted whole-site payload — and owns
+> Review, Companies, Pipeline, Applications, Activity, and Settings. The data-contract
 > logic (`build_data`/`_job_record`/`_application_records`/`_enrich_summary`/`_overview_data`/`emit_json`)
 > is pinned by a JSON-Schema artifact + a contract test (§9); the legacy inline HTML `_TEMPLATE` has been
 > removed.
@@ -229,29 +230,34 @@ artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboar
 
 ### web/ — React dashboard (SPA)
 
-The single dashboard is a Vite + React + TypeScript PWA in `web/` that consumes the baked `dashboard.json`
-(and, for a published build, a lazily-fetched AES-encrypted whole-site blob unlocked in-browser). It is served
-two ways: un-redacted via `jobscope serve` on localhost, and redacted to GitHub Pages by the publish scripts —
-where a passphrase swaps the redacted data for the full un-redacted payload at runtime.
+The single dashboard is a Vite + React + TypeScript PWA in `web/` that consumes baked `dashboard.json`
+locally or a lazily fetched AES-encrypted whole-site payload on Pages. `AuthGate` exposes no application
+surface until the payload is available; the public bundle contains only an empty shell.
 
-- **Data flow:** `web/src/data/index.ts` imports the baked JSON → `App.tsx` holds URL/localStorage view state
-  (`hooks/useSearchState`) → `lib/filters.ts` (tab pool → facets → fuzzy search) → the Overview / list /
-  Applications surfaces. `lib/schema.ts` mirrors the Python contract (§10).
-- **Surfaces:** a bento **Overview** (`components/overview/*` — Fit-distribution `Donut`, `Bars`,
-  `SkillConstellation`, `TopMatches`), the ranked **list** (`JobList`/`JobCard`/`JobDrawer` with an archived
-  job-description snapshot and, under local `serve`, an *Email recruiter* panel `RecruiterOutreach` →
-  `/api/outreach`), and an **Applications** board (`components/applications/*` — List/Compact/Table/Grouped
-  view switcher, Pipeline health, per-app email `ActivityFeed`, and an inline-SVG `PipelineFlow` Sankey).
-- **Whole-site unlock:** `lib/unlock.ts` fetches (lazily) + AES-GCM-decrypts the encrypted blob; a header
-  `UnlockControl` / `UnlockForm` (and the Applications `ApplicationsGate`) take the passphrase and swap the full
-  un-redacted payload into `App` state (cached in sessionStorage for the tab).
-- **Chrome:** `Header` (logo + search + ⌘K command pill + Refresh button), a generative `HeroBackdrop`
-  (six `?hero=` variants, reduced-motion aware; touch / small screens default to the CSS `aurora`, and the canvas
-  variants freeze + rescale under a pinch-zoom so the backdrop never glitches on mobile), and a `cmdk` command
-  palette (`SearchPalette`).
-- **Refresh:** `lib/refresh.ts` drives the header Refresh button — pull-latest (service-worker update + reload)
-  and an on-demand Gmail rescan that POSTs `workflow_dispatch` when a fine-grained token is stored (else
-  deep-links to GitHub), throttle-safe via a client cooldown + run de-dupe.
+**Company-first data flow:** `company_monitors` owns watched portals; `company_monitor_jobs` records
+provenance; `job_reviews` owns pending/saved/dismissed state. Monitor scans and daily broad discovery both
+upsert raw jobs, deterministic matching assigns scores, then `review.sync_reviews()` creates only missing
+pending records. Existing saved/dismissed decisions are never reset. The encrypted payload emits `companies[]`
+and `reviews[]`; cached pre-feature payloads normalize existing rows to Saved/legacy.
+
+**Mutation transports:** `apply/monitoring.py` is the validated service shared by CLI, local serve, and CI.
+Local `/api/companies/resolve` and `/api/monitoring/actions` are loopback + CSRF guarded. Pages batches queued
+actions into `refresh.yml`'s bounded `mutations_json` input; the workflow restores the encrypted DB, applies
+the batch, scans, matches, saves the DB, verifies the artifact, and republishes.
+
+- **Data flow:** `data/index.ts` normalizes current or cached payloads → `App.tsx`/`AuthGate` unlocks →
+  `ShellV2` derives Review, Companies, Pipeline, Applications, and Activity models. `urlState.ts` owns
+  shareable view/bucket/filter state; `schema.ts` mirrors the Python contract (§10).
+- **Surfaces:** **Review** (monitored/discovery/saved/dismissed queue + persistent role reader), **Companies**
+  (portal health/list/detail), **Pipeline** (Sankey + outcome register), **Applications** (inbox/list/board/offers),
+  **Activity** (action queue + event stream), and **Settings**. Desktop has six destinations; mobile keeps
+  Review/Companies/Pipeline/Apps plus a More sheet for Activity/Settings.
+- **Whole-site unlock:** `lib/unlock.ts` fetches + AES-GCM-decrypts `site.enc.json`; `AuthGate` caches the
+  normalized payload in sessionStorage and can clear it on lock.
+- **Chrome:** `AppShell` owns search, command palette, Refresh, theme, lock, queued-change Sync, responsive
+  desktop/mobile navigation, and the shared IBM Plex/Source Serif token system.
+- **Refresh/actions:** `lib/refresh.ts` dispatches and polls `refresh.yml`; `companyActions.ts` applies local
+  loopback changes immediately or collapses encrypted-Pages decisions into a durable browser queue.
 - **Tests:** a Vitest + Testing-Library suite in `web/test/` (kept outside `src/` so the production `tsc -b`
   never compiles it) covers the lib modules + the Refresh button. Runs via `npm test` and the `web` job in
   `.github/workflows/ci.yml`.
@@ -331,9 +337,9 @@ uses the existing prompt/cache path.
 ## 7. Persistence model (`core/store/`)
 
 A single `Store` **facade** over SQLite, composed from per-concern mixins (`base` + `jobs`/
-`enrichment`/`applications`/`mail`/`profile`/`meta`) over one shared connection. **10 tables**: `jobs`,
-`enrichment`, `contacts`,
-`applications`, `profile`, `resumes`, `meta`, `ai_cache`, `runs`, `mail_events`.
+`enrichment`/`applications`/`mail`/`profile`/`meta`/`monitoring`) over one shared connection. **13 tables**:
+the existing jobs/enrichment/applications/profile/resume/meta/cache/run/mail data plus `company_monitors`,
+`company_monitor_jobs`, and `job_reviews`.
 
 **Migration pattern** — `_ensure_columns()` reads `PRAGMA table_info(...)` and issues
 `ALTER TABLE ... ADD COLUMN` for any missing field. New columns (e.g. `resume_base`,
@@ -343,71 +349,49 @@ upgrade silently and older code ignores unknown columns.
 Representative API: `upsert_job()`, `update_score()`, `update_ai_seniority()`, `jobs()`,
 `get_job()`, `save_enrichment()`, `get_enrichment()`, `save_contacts()`, `contacts_for()`,
 `set_application()`, `applications()`, `get_application()`, `upsert_mail_event()`, `mail_events()`,
+`upsert_company_monitor()`, `link_monitor_job()`, `ensure_job_review()`, `company_monitor_summaries()`,
 `ai_cache_get/put()`, `log_run()`.
 
 ---
 
-## 8. Web dashboard (`web/` + encrypted apps shell)
+## 8. Web dashboard (`web/` + encrypted whole-site payload)
 
-Vite + React 19 + TS + Tailwind v4 + TanStack Router (hash) + Motion + Lottie. The build bakes in
-[web/src/data/dashboard.json](web/src/data/dashboard.json) (emitted by `jobscope dashboard --emit-json`).
-The public Pages build is redacted; with `-Encrypted`, applications are baked in as an AES-256-GCM blob
-([web/src/data/applications.encrypted.json](web/src/data/index.ts)) that the Applications tab decrypts
-in-browser. [scripts/apps-template.html](scripts/apps-template.html) remains a standalone reference shell.
+Vite + React 19 + TypeScript + Tailwind v4 + TanStack Router (hash) + Radix Dialog + TanStack Virtual.
+Local builds bake the private dashboard payload. Published builds bake only an empty schema-valid shell and
+a pointer to `site.enc.json`; `AuthGate` decrypts and normalizes the full payload before mounting `ShellV2`.
 
 | Area | Files | Responsibility |
 |------|-------|----------------|
-| **Entry** | [main.tsx](web/src/main.tsx), [router.tsx](web/src/router.tsx), [App.tsx](web/src/App.tsx) | Mount; hash route `/` with zod-validated search params; wire filters→search→display |
-| **Data** | [data/index.ts](web/src/data/index.ts) | Static import of `dashboard.json` (+ optional `applications.encrypted.json` blob) typed as `DashboardData` |
-| **Contract** | [lib/schema.ts](web/src/lib/schema.ts) | TS mirror of the Python payload (keep 1:1) |
-| **State** | [lib/urlState.ts](web/src/lib/urlState.ts), [hooks/useSearchState.ts](web/src/hooks/useSearchState.ts) | URL = single source of truth; `FACETS`, `searchSchema`, `TAB_VALUES` |
-| **Filter/search** | [lib/filters.ts](web/src/lib/filters.ts), [lib/search.ts](web/src/lib/search.ts), [lib/overview.ts](web/src/lib/overview.ts), [lib/format.ts](web/src/lib/format.ts) | `tabPool`→`applyFacets`→`makeFuse`→`fuzzy`→`buildDisplayItems`; Fuse.js; formatting |
-| **Components** | `Header`, `SignalLottie`, `CyberSakura`, `Tabs`, `Switch`, `JobList`, `JobCard`, `JobDrawer`, `Kpis`, `applications/*`, `filters/*`, `overview/*` | Virtualized list, deep-linkable drawer, facets, KPI/donut/bars, Applications board, animated visual shell |
-| **Hooks** | [hooks/useTheme.ts](web/src/hooks/useTheme.ts) | Dark/light toggle |
-| **Motion helpers** | [lib/spotlight.ts](web/src/lib/spotlight.ts), [styles/theme.css](web/src/styles/theme.css) | Cursor-follow card spotlight, animated gradients, status rails, cyber-sakura leaves, reduced-motion guard |
-
-**State pipeline** (all in `App.tsx`, driven by the URL):
+| **Entry/auth** | [main.tsx](web/src/main.tsx), [router.tsx](web/src/router.tsx), [App.tsx](web/src/App.tsx), `app/AuthGate.tsx` | Mount, hash state, whole-site unlock/session cache |
+| **Shell** | `app/AppShell.tsx`, `app/ShellV2.tsx` | Six desktop views, five-slot mobile nav, shared search/commands, optimistic state |
+| **Contract** | [data/index.ts](web/src/data/index.ts), [lib/schema.ts](web/src/lib/schema.ts), [lib/unlock.ts](web/src/lib/unlock.ts) | Normalize current/legacy private payloads and decrypt Pages data |
+| **Review** | `features/feed/FeedView.tsx`, [lib/feed.ts](web/src/lib/feed.ts) | Durable monitored/discovery/saved/dismissed queues and role actions |
+| **Companies** | `features/companies/CompaniesView.tsx`, [lib/companies.ts](web/src/lib/companies.ts) | Monitor list/detail, resolution, source health, per-company jobs |
+| **Actions/refresh** | [lib/companyActions.ts](web/src/lib/companyActions.ts), [lib/refresh.ts](web/src/lib/refresh.ts) | Local CSRF API or collapsed Pages queue; correlated workflow dispatch/poll |
+| **Applications** | `features/board/*`, `features/pipeline/*`, `features/timeline/*` | Operational applications, Sankey, action queue, event stream |
 
 ```mermaid
 flowchart LR
-    URL[(URL search params)] --> S["useSearchState()"]
-    S --> tabPool --> applyFacets --> makeFuse --> fuzzy --> buildDisplayItems --> JobList
-    S --> JobDrawer
+  URL[(Hash search state)] --> Shell[ShellV2]
+  Private[(Private DashboardData)] --> Shell
+  Shell --> Review
+  Shell --> Companies
+  Shell --> Pipeline
+  Shell --> Applications
+  Shell --> Activity
+  Action[Save / dismiss / monitor] --> Local[Local CSRF API]
+  Action --> Queue[Pages localStorage queue]
+  Queue --> Workflow[refresh.yml mutation batch]
 ```
 
-**Visual/motion layer:** the dashboard has a self-contained animated treatment: `SignalLottie` renders a
-briefcase/scope mark over local Lottie data, `CyberSakura` draws a right-rail SVG cyber tree with falling
-leaf spans, `SkillConstellation` renders the Overview skill-gap graph with selectable nodes, and `theme.css`
-owns the aurora gradients, cursor spotlight, status rails, custom scrollbars, and reduced-motion fallbacks.
-None of this changes the JSON contract or deterministic backend behavior.
+Desktop Review uses a persistent feed/reader split; Companies uses list/detail at `lg`. Mobile opens role and
+company details full-screen and exposes Activity/Settings through the More sheet. Responsive browser checks
+must cover 390, 768, and wide desktop widths with zero horizontal overflow.
 
-**Layout width:** the React dashboard's main content rail is controlled in [web/src/App.tsx](web/src/App.tsx)
-by the Tailwind max-width class on `<main>` (`max-w-6xl` as of this map). The cyber-sakura right rail is
-positioned in [web/src/styles/theme.css](web/src/styles/theme.css) and should be checked in browser after
-any width change so it stays decorative and never overlaps controls.
-
-**Resume facet visibility:** `JobRow.base` is emitted from `job.resume_base`, exposed as the `resume` facet
-in [web/src/lib/urlState.ts](web/src/lib/urlState.ts), and rendered by [FacetBar.tsx](web/src/components/filters/FacetBar.tsx)
-only when there are 2+ available options. If it looks missing, the dataset probably has one distinct resume
-base or the user has not rerun `match` after importing multiple named resumes.
-
-**Encrypted applications shell (optional standalone):** the default `-Encrypted` publish bakes the blob into
-the SPA's Applications tab ([web/src/components/applications/ApplicationsGate.tsx](web/src/components/applications/ApplicationsGate.tsx)
-decrypts it in-browser). [scripts/apps-template.html](scripts/apps-template.html) is intentionally not part of
-the Vite bundle; `scripts/build-secure-apps.mjs` can still inject an encrypted payload into it to produce a
-standalone page. The shell has its own CSS/JS for pipeline bars, status rails, and cursor spotlight, and must
-preserve `window.__ENC__ = __ENC_BLOB__;` so the sensitive payload remains encrypted at rest on Pages.
-
-**Cloud auto-refresh ([.github/workflows/refresh.yml](.github/workflows/refresh.yml)).** The site can refresh
-without a local machine: a scheduled + `workflow_dispatch` Action restores the encrypted DB, runs
-`inbox → match` (AI off), re-saves the DB, and publishes — so a phone (the GitHub mobile *Run workflow*
-button) can trigger a scan. The DB never leaves in the clear: it is AES-256-GCM/PBKDF2-encrypted by
-[scripts/crypt-file.mjs](scripts/crypt-file.mjs) and force-pushed as a single blob to a private **`data`**
-branch (seeded once from local by [scripts/seed-cloud-db.ps1](scripts/seed-cloud-db.ps1)); only the redacted
-dashboard + the passphrase-encrypted applications blob reach `gh-pages`. Five repo secrets gate it
-(`JOBSCOPE_CONFIG`, `JOBSCOPE_DB_KEY`, `JOBSCOPE_APPS_PASSPHRASE`, `JOBSCOPE_GMAIL_APP_PW[_2]`); missing any,
-the job no-ops. Note the workflow only **pushes** `gh-pages` — the actual publish is GitHub's separate
-"pages build and deployment" run, so a green refresh does not by itself prove a live update.
+The cloud workflow restores the encrypted DB, seeds monitors, validates/applies an optional bounded mutation
+batch, scans resolved monitors, cadence-gates broad discovery, syncs inbox/matches/reviews, saves the encrypted
+DB with a lease, verifies the empty-shell/ciphertext artifact, and publishes. Mutation dispatches carry a unique
+run title; the browser acknowledges only the exact actions included in that successful run.
 
 ---
 
@@ -422,6 +406,8 @@ flowchart LR
         build_data --> job["_job_record"]
         build_data --> ov["_overview_data"]
         build_data --> apprec["_application_records"]
+      build_data --> companies["_companies_data"]
+      build_data --> reviews["_reviews_data"]
         job --> es["_enrich_summary"]
         build_data --> emit["emit_json"]
     end
@@ -430,9 +416,9 @@ flowchart LR
     ts --> react["App.tsx + components"]
 ```
 
-`build_data(cfg, store, public)` → `{ generated, total, rows[], overview, applications[] }`;
-`emit_json` writes it to `data/dashboard.json`. `_redact_public()` clears `contacts`,
-`rationale`, `base`, `overview.funnel`, and `overview.targets` for the public build.
+`build_data(cfg, store, public)` emits `rows[]`, `overview`, `applications[]`, `profile`,
+`applied_outreach[]`, `companies[]`, and `reviews[]`. Public mode emits the same top-level schema with
+empty arrays/null profile rather than a partial redaction.
 
 ### Coupling seams (edit both sides together)
 
@@ -441,23 +427,23 @@ flowchart LR
 | 1 | `Tier` enum | `TIER_COLORS` keys + `job.tier` | `Tier`, `TIER_COLOR`, `--strong/good/stretch/skip` in `theme.css` | New/renamed tier breaks colors, filters, sort |
 | 2 | `JobRow` fields (27) | `_job_record()` dict keys | `JobRow` interface | A renamed Python key silently becomes `undefined` in TS |
 | 3 | `EnrichSummary` (nested) | `_enrich_summary()` | `EnrichSummary`/`StockSummary`/`CompSummary`/`RedditSummary`/`NewsItem` | Structural drift cascades |
-| 4 | `Overview` | `_overview_data()` | `Overview` | `funnel`/`gaps`/`considered`/`targets` must line up |
-| 5 | **`applications[]`** ✅ | `_application_records()` → `applications[]` (emitted **and** rendered in the HTML dashboard's Applications board) | `Application` + `ApplicationEvent` interfaces; `applications?` on `DashboardData` | **Closed** — the TS types exist and [tests/test_dashboard_json.py](tests/test_dashboard_json.py) guards the emitted shape; the React app can now mirror the HTML board |
-| 6 | Facet keys | job fields (`base`,`country`,`place`,`remote`,`funding`,`remote_scope`) | `FACETS`, `FacetKey`, `searchSchema`, `FacetBar` | A new facet = 4 TS edits |
-| 7 | Country/place values | `_country_of()`, `_place_of()` | displayed as-is | Grouping changes fragment facet options |
-| 8 | Salary string | `_fmt_salary()` | `format.ts:compLabel()` | Python owns the format; TS cannot reparse |
-| 9 | Stock/comp field pick | `_enrich_summary()` key subset | `format.ts:stockLabel()` | Added stock field invisible until schema updated |
-| 10 | Public redaction | `_redact_public()` | no type-level public/private distinction | A missed field could leak private data |
-| 11 | `gaps` tuple | `[[skill, count]]` | `[string, number][]` | Structural change breaks index access |
-| 12 | Visual shell classes | `web/src/components/*`, `scripts/apps-template.html` | `theme.css` + encrypted apps inline CSS | Class drift silently drops animation/status affordances |
+| 4 | `Overview` | `_overview_data()` | `Overview` | Legacy analytics still feed Pipeline/supporting models |
+| 5 | `applications[]` | `_application_records()` | `Application` + `ApplicationEvent` | Timeline identity and optional legacy input require normalization |
+| 6 | `companies[]` | `_companies_data()` | `MonitoredCompany`, `buildCompanies()` | Health/count/provenance drift breaks operational controls |
+| 7 | `reviews[]` | `_reviews_data()` | `JobReview`, `buildFeed()` | Durable state/origin drift can hide or requeue roles |
+| 8 | URL state | n/a | `searchSchema`, `activeView()` | View/bucket aliases must remain backward compatible |
+| 9 | Salary string | `_fmt_salary()` | `format.ts:compLabel()` | Python owns the format; TS cannot reparse |
+| 10 | Stock/comp field pick | `_enrich_summary()` key subset | formatting/readers | Added fields remain invisible until mirrored |
+| 11 | Empty public shell | `build_data(public=True)` | `AuthGate` | Any nonempty private field is a publication failure |
+| 12 | Legacy payload normalization | prior encrypted contracts | `normalizeDashboardData()` | Missing companies/reviews must remain readable without implying data loss |
 
 > **Mitigation (P-A · done):** a JSON-Schema artifact lives at
 > [jobscope/deliver/schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) and a
 > structural contract test ([tests/test_dashboard_json.py](tests/test_dashboard_json.py)) asserts the
-> emitted `dashboard.json` matches the shape (and that the public build is redacted). *Opportunistic
+> emitted `dashboard.json` matches the shape (and that the public build is empty). *Opportunistic
 > next:* generate `schema.ts` from Python so the mirror can't drift.
-> The visual shell has a lightweight source-asset guard in [tests/test_web_assets.py](tests/test_web_assets.py)
-> for Lottie/cyber-sakura/spotlight wiring and encrypted applications shell markers.
+> [jobscope/deliver/publish_artifact.py](jobscope/deliver/publish_artifact.py) additionally checks the empty
+> shell, encrypted envelope, copied ciphertext hash, private marker absence, and deployment manifest.
 
 ---
 
@@ -519,7 +505,7 @@ section is now a record of what shipped (plus the few genuinely-optional ideas l
   ([web/src/lib/schema.ts](web/src/lib/schema.ts)); a JSON-Schema artifact
   ([jobscope/deliver/schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json))
   and a structural contract test ([tests/test_dashboard_json.py](tests/test_dashboard_json.py))
-  assert the emitted `dashboard.json` matches the shape and that the public build is redacted
+  assert the emitted `dashboard.json` matches the shape and that the public build is empty
   (seam #5 closed). *Invariant held:* the JSON shape stays identical.
 - **P-B · Enrichment registry — done.** [enrich/__init__.py](jobscope/enrich/__init__.py) iterates
   `SECTION_SOURCES`; each source self-registers via the `@source(...)` decorator in
@@ -568,7 +554,7 @@ was updated.
 - Split `resume.py` per-format parsers; split `tailor.py` (deterministic `analyze` vs AI rewrite);
   inline the thin [apply/brief.py](jobscope/apply/brief.py) wrapper.
 - ~~Retire `render.py`'s inline HTML `_TEMPLATE`~~ **done** — `render.py` is now a slim JSON emitter; the
-  React app in `web/` is the single dashboard (un-redacted locally via `jobscope serve`, redacted on Pages).
+  React app in `web/` is the single dashboard (private locally; empty shell + encrypted payload on Pages).
 - Generate `schema.ts` from the Python shapes (or the JSON Schema) so the TS mirror can't drift.
 
 **Invariants held across every tier:** deterministic-first, additive migrations, zero circular

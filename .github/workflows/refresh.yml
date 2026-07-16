@@ -3,13 +3,13 @@
 # mail scan runs here on GitHub's runners rather than localhost, so it needs a few
 # repository Secrets -- see the SETUP block at the bottom of this file.
 #
-# Privacy model: the SQLite DB (your mail + application history) is kept AES-256-GCM
+# Privacy model: the SQLite DB (jobs, monitors, reviews, mail, and applications) is kept AES-256-GCM
 # encrypted on the private `data` branch -- the latest and one last-known-good
-# encrypted blob are stored, and both are useless without JOBSCOPE_DB_KEY. Only the redacted
-# dashboard + the passphrase-encrypted applications blob are published to gh-pages,
-# exactly like the local publish. AI is left off here (deterministic scoring).
+# encrypted blob are stored, and both are useless without JOBSCOPE_DB_KEY. Pages receives
+# an empty public shell plus the passphrase-encrypted whole-site payload. AI is left off here.
 
 name: refresh
+run-name: ${{ inputs.mutation_nonce && format('Monitoring sync {0}', inputs.mutation_nonce) || format('Refresh ({0})', github.event_name) }}
 
 on:
   schedule:
@@ -24,6 +24,14 @@ on:
         description: "Re-scan ALL inbox history and re-score (one-time heal; slower)"
         type: boolean
         default: false
+      mutations_json:
+        description: "Validated company/review action batch (normally sent by the encrypted dashboard)"
+        type: string
+        default: ""
+      mutation_nonce:
+        description: "Internal browser correlation token"
+        type: string
+        default: ""
 
 concurrency:
   group: refresh
@@ -126,9 +134,18 @@ jobs:
           JOBSCOPE_SMTP_PASSWORD: ${{ secrets.JOBSCOPE_SMTP_PASSWORD }}
           JOBSCOPE_HUNTER_API_KEY: ${{ secrets.JOBSCOPE_HUNTER_API_KEY }}
           JOBSCOPE_APOLLO_API_KEY: ${{ secrets.JOBSCOPE_APOLLO_API_KEY }}
+          JOBSCOPE_MUTATIONS_JSON: ${{ inputs.mutations_json }}
         run: |
+          python -m jobscope companies seed
+          if [ -n "$JOBSCOPE_MUTATIONS_JSON" ]; then
+            printf '%s' "$JOBSCOPE_MUTATIONS_JSON" > data/monitoring-actions.json
+            python -m jobscope companies apply --actions-file data/monitoring-actions.json
+          fi
+          python -m jobscope companies scan || echo "::warning::one or more company monitors need attention"
           if [ "${{ inputs.full_scan }}" = "true" ]; then
-            python -m jobscope scan || echo "::warning::job-board scan failed (non-fatal)"
+            python -m jobscope scan --mode discovery --force-discovery || echo "::warning::broad discovery failed (non-fatal)"
+          else
+            python -m jobscope scan --mode discovery || echo "::warning::broad discovery failed (non-fatal)"
           fi
           if [ "${{ inputs.inbox_backfill }}" = "true" ]; then
             python -m jobscope inbox --backfill --include-spam
@@ -137,6 +154,8 @@ jobs:
           fi
           python -m jobscope inbox --reclassify
           python -m jobscope match
+          python -m jobscope reviews sync
+          python -m jobscope enrich || echo "::warning::public enrichment failed (non-fatal)"
           python -m jobscope new --email || echo "::warning::new-match digest failed (non-fatal)"
           python -m jobscope outreach-scan || echo "::warning::outreach scan failed (non-fatal)"
 
@@ -181,7 +200,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-      - name: Publish redacted + encrypted site to gh-pages
+      - name: Publish empty shell + encrypted site to gh-pages
         if: steps.guard.outputs.ready == 'true'
         env:
           PYTHONPATH: "."

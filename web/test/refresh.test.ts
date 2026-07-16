@@ -21,7 +21,9 @@ import {
   pullLatestData,
   GH_TOKEN_KEY,
   SCAN_COOLDOWN_MS,
+  syncMonitoringQueue,
 } from '@/lib/refresh'
+import { MONITORING_QUEUE_KEY } from '@/lib/companyActions'
 
 beforeEach(() => {
   localStorage.clear()
@@ -82,6 +84,28 @@ describe('refresh: scan cooldown', () => {
 
 // Feature: direct workflow_dispatch when a token is connected, with run de-dupe.
 describe('refresh: scanNewMail dispatch (token path)', () => {
+  it('prefers the local guarded refresh endpoint when jobscope serve is available', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: { method?: string }) => {
+      if (url.endsWith('/api/token')) {
+        return { ok: true, status: 200, json: async () => ({ token: 'local-token' }) } as Response
+      }
+      if (url.endsWith('/api/refresh') && opts?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ state: 'started' }) } as Response
+      }
+      throw new Error(`unexpected URL: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await scanNewMail()
+
+    const refreshCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/refresh'))
+    expect(refreshCall).toBeTruthy()
+    expect(JSON.parse(String((refreshCall?.[1] as RequestInit).body))).toEqual({
+      force: true, full_scan: false,
+    })
+    expect(toast.success).toHaveBeenCalledWith('Gmail scan started')
+  })
+
   it('checks for a running run, then POSTs workflow_dispatch', async () => {
     vi.useFakeTimers() // freeze the post-dispatch poll timer
     localStorage.setItem(GH_TOKEN_KEY, 'ghp_token')
@@ -117,6 +141,132 @@ describe('refresh: scanNewMail dispatch (token path)', () => {
 
     const posted = fetchMock.mock.calls.some((c) => (c[1] as { method?: string })?.method === 'POST')
     expect(posted).toBe(false) // never POSTs a dispatch on top of an active run
+  })
+})
+
+describe('refresh: queued monitoring changes', () => {
+  const queued = [{ type: 'review.set', job_id: 'job-1', state: 'saved' }]
+
+  it('dispatches one workflow input for the collapsed queue', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem(GH_TOKEN_KEY, 'ghp_token')
+    localStorage.setItem(MONITORING_QUEUE_KEY, JSON.stringify(queued))
+    const fetchMock = vi.fn(async (_url: string, opts?: { method?: string }) => {
+      if (opts?.method === 'POST') return { status: 204 } as Response
+      return { ok: true, status: 200, json: async () => ({ workflow_runs: [] }) } as unknown as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await syncMonitoringQueue()
+
+    const post = fetchMock.mock.calls.find((call) => (call[1] as { method?: string })?.method === 'POST')
+    const body = JSON.parse(String((post![1] as RequestInit).body))
+    expect(JSON.parse(body.inputs.mutations_json)).toEqual(queued)
+    expect(localStorage.getItem(MONITORING_QUEUE_KEY)).not.toBeNull()
+  })
+
+  it('keeps the queue when another refresh is active', async () => {
+    localStorage.setItem(GH_TOKEN_KEY, 'ghp_token')
+    localStorage.setItem(MONITORING_QUEUE_KEY, JSON.stringify(queued))
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ workflow_runs: [{ status: 'in_progress', conclusion: null }] }),
+    }) as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    await syncMonitoringQueue()
+
+    expect(fetchMock.mock.calls.some((call) => (call[1] as { method?: string })?.method === 'POST')).toBe(false)
+    expect(localStorage.getItem(MONITORING_QUEUE_KEY)).not.toBeNull()
+  })
+
+  it('clears the queue only after the dispatched run succeeds', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem(GH_TOKEN_KEY, 'ghp_token')
+    localStorage.setItem(MONITORING_QUEUE_KEY, JSON.stringify(queued))
+    let runChecks = 0
+    let expectedTitle = ''
+    const fetchMock = vi.fn(async (_url: string, opts?: { method?: string; body?: BodyInit | null }) => {
+      if (opts?.method === 'POST') {
+        const body = JSON.parse(String(opts.body))
+        expectedTitle = `Monitoring sync ${body.inputs.mutation_nonce}`
+        return { status: 204 } as Response
+      }
+      runChecks += 1
+      return {
+        ok: true, status: 200,
+        json: async () => ({ workflow_runs: runChecks === 1 ? [] : [{
+          status: 'completed', conclusion: 'success', display_title: expectedTitle,
+        }] }),
+      } as unknown as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await syncMonitoringQueue()
+    expect(localStorage.getItem(MONITORING_QUEUE_KEY)).not.toBeNull()
+    await vi.advanceTimersByTimeAsync(6500)
+    expect(localStorage.getItem(MONITORING_QUEUE_KEY)).toBeNull()
+  })
+
+  it('ignores an older successful refresh while waiting for its mutation run', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem(GH_TOKEN_KEY, 'ghp_token')
+    localStorage.setItem(MONITORING_QUEUE_KEY, JSON.stringify(queued))
+    let runChecks = 0
+    let expectedTitle = ''
+    const oldRun = {
+      status: 'completed', conclusion: 'success', display_title: 'Refresh (schedule)',
+    }
+    const fetchMock = vi.fn(async (_url: string, opts?: { method?: string; body?: BodyInit | null }) => {
+      if (opts?.method === 'POST') {
+        const body = JSON.parse(String(opts.body))
+        expectedTitle = `Monitoring sync ${body.inputs.mutation_nonce}`
+        return { status: 204 } as Response
+      }
+      runChecks += 1
+      return {
+        ok: true, status: 200,
+        json: async () => ({ workflow_runs: runChecks < 3 ? [oldRun] : [
+          { status: 'completed', conclusion: 'success', display_title: expectedTitle },
+          oldRun,
+        ] }),
+      } as unknown as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await syncMonitoringQueue()
+    await vi.advanceTimersByTimeAsync(6500)
+    expect(localStorage.getItem(MONITORING_QUEUE_KEY)).not.toBeNull()
+    await vi.advanceTimersByTimeAsync(12500)
+    expect(localStorage.getItem(MONITORING_QUEUE_KEY)).toBeNull()
+  })
+
+  it('preserves decisions queued after the dispatched snapshot', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem(GH_TOKEN_KEY, 'ghp_token')
+    localStorage.setItem(MONITORING_QUEUE_KEY, JSON.stringify(queued))
+    let expectedTitle = ''
+    const fetchMock = vi.fn(async (_url: string, opts?: { method?: string; body?: BodyInit | null }) => {
+      if (opts?.method === 'POST') {
+        const body = JSON.parse(String(opts.body))
+        expectedTitle = `Monitoring sync ${body.inputs.mutation_nonce}`
+        return { status: 204 } as Response
+      }
+      return {
+        ok: true, status: 200,
+        json: async () => ({ workflow_runs: expectedTitle ? [{
+          status: 'completed', conclusion: 'success', display_title: expectedTitle,
+        }] : [] }),
+      } as unknown as Response
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await syncMonitoringQueue()
+    const later = { type: 'review.set', job_id: 'job-2', state: 'dismissed' }
+    localStorage.setItem(MONITORING_QUEUE_KEY, JSON.stringify([...queued, later]))
+    await vi.advanceTimersByTimeAsync(6500)
+
+    expect(JSON.parse(localStorage.getItem(MONITORING_QUEUE_KEY) || '[]')).toEqual([later])
   })
 })
 

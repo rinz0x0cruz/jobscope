@@ -15,6 +15,8 @@ import re
 
 from jobscope.core.model import Resume
 
+MAX_PROFILES = 3
+
 # Seniority words we strip so a résumé title broadens into a searchable role
 # ("Security Researcher Intern" -> "Security Researcher").
 _SENIORITY_WORDS = re.compile(
@@ -197,6 +199,13 @@ def list_profiles(cfg: dict) -> list[str]:
     return sorted(f[:-5] for f in os.listdir(dirp) if f.endswith(".yaml"))
 
 
+def can_create_profile(cfg: dict, name: str) -> bool:
+    """Whether a named profile may be created without exceeding the product cap."""
+    normalized = _slug(name)
+    names = list_profiles(cfg)
+    return normalized in names or len(names) < MAX_PROFILES
+
+
 def active_name(cfg: dict) -> str | None:
     """The active profile name: the ``.active`` pointer, else the first stored one."""
     _migrate_legacy(cfg)
@@ -233,6 +242,8 @@ def ensure_seeded(cfg: dict, resume: Resume, name: str) -> str | None:
     _migrate_legacy(cfg)
     path = _profile_file(cfg, name)
     if os.path.exists(path):
+        return None
+    if not can_create_profile(cfg, name):
         return None
     write_profile(path, build_profile(resume, cfg, name))
     if not os.path.exists(_active_path(cfg)):
@@ -311,6 +322,9 @@ def run(cfg: dict, store, *, action: str = "show",
             return 1
         built_from = resume_name or _primary_name(store)
         pname = _slug(name or built_from)
+        if not can_create_profile(cfg, pname):
+            print(f"  profile limit reached ({MAX_PROFILES}); remove or reuse a profile name.")
+            return 1
         path = _profile_file(cfg, pname)
         if os.path.exists(path) and not force:
             print(f"  profile '{pname}' already exists: {path}")

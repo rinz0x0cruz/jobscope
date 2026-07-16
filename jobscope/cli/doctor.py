@@ -72,6 +72,7 @@ def inspect(cfg: dict, *, secret_lookup: Callable[[dict, dict], str] = inbox_pas
             check.level == "error" and check.name == "database" for check in checks):
         with Store(str(db_path)) as store:
             health = store.source_health()
+            monitors = store.list_company_monitors()
             last_failure = store.meta_get("refresh:last_failure", "") or ""
             failed_stage = store.meta_get("refresh:last_failed_stage", "") or ""
         unhealthy = [row for row in health if row["status"] not in {
@@ -85,6 +86,18 @@ def inspect(cfg: dict, *, secret_lookup: Callable[[dict, dict], str] = inbox_pas
             checks.append(Check("ok", "sources", f"{len(health)} source record(s) healthy"))
         else:
             checks.append(Check("warn", "sources", "no source-health records yet"))
+        unresolved = [
+            monitor for monitor in monitors
+            if monitor["status"] == "active" and monitor["resolution_status"] != "resolved"
+        ]
+        active = [monitor for monitor in monitors if monitor["status"] == "active"]
+        if unresolved:
+            names = ", ".join(monitor["company"] for monitor in unresolved[:8])
+            checks.append(Check("warn", "companies", f"needs portal setup: {names}"))
+        elif active:
+            checks.append(Check("ok", "companies", f"{len(active)} active monitor(s) resolved"))
+        else:
+            checks.append(Check("warn", "companies", "no active company monitors; run `companies seed`"))
         if last_failure:
             checks.append(Check(
                 "warn", "refresh", f"last failure {last_failure} at {failed_stage or 'unknown'}"))

@@ -1,217 +1,260 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Toaster } from 'sonner'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Toaster, toast } from 'sonner'
 import { AppShell } from '@/app/AppShell'
-import type { Section } from '@/app/AppShell'
 import { Board } from '@/features/board'
-import { Home } from '@/features/home'
-import { Triage } from '@/features/triage'
+import { FeedView } from '@/features/feed'
+import { CompaniesView } from '@/features/companies'
+import { PipelinePreview, PipelineView } from '@/features/pipeline'
 import { Timeline } from '@/features/timeline'
 import { Settings } from '@/features/settings'
 import { CommandPalette } from '@/features/command'
+import { ApplicationReader, JobDrawer, RoleReader } from '@/components/JobDrawer'
 import { buildBoard } from '@/lib/board'
-import { buildBriefing } from '@/lib/briefing'
-import { buildOverview } from '@/lib/overview'
-import { buildTriage } from '@/lib/triage'
+import { buildFeed } from '@/lib/feed'
+import { buildCompanies } from '@/lib/companies'
 import { buildTimeline } from '@/lib/timeline'
 import { filterData } from '@/lib/viewFilter'
-import { scanNewMail } from '@/lib/refresh'
-import { animate, viewTransition } from '@/ui'
-import { JobDrawer } from '@/components/JobDrawer'
+import { activeView, type SearchState, type ViewValue } from '@/lib/urlState'
+import { scanNewMail, syncMonitoringQueue } from '@/lib/refresh'
+import { viewTransition } from '@/ui'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import type { DashboardData } from '@/lib/schema'
+import {
+  MONITORING_QUEUE_EVENT,
+  projectMonitoringActions,
+  queuedMonitoringActions,
+  resolveCompany,
+  submitMonitoringActions,
+  type MonitoringAction,
+} from '@/lib/companyActions'
 
 export interface ShellV2Props {
   data: DashboardData
-  search: string
-  onSearch: (v: string) => void
+  state: SearchState
+  onStateChange: (patch: Partial<SearchState>, options?: { replace?: boolean }) => void
   onLock: () => void
-  onOpenJob: (id: string) => void
-  jobId?: string
-  onCloseJob: () => void
 }
 
-const TITLES: Record<Section, string> = {
-  home: 'Home',
-  triage: 'To apply',
-  board: 'Board',
-  timeline: 'Timeline',
-  settings: 'Settings',
-}
+const VIEW_ORDER: ViewValue[] = ['review', 'companies', 'pipeline', 'applications', 'activity', 'settings']
 
-/** Lens order for the digit (1-5) keyboard shortcuts - mirrors the sidebar. */
-const LENS_ORDER: Section[] = ['home', 'triage', 'board', 'timeline', 'settings']
-
-/** Toggle the v2 light/dark theme and persist the choice across reloads. */
 function toggleTheme() {
   viewTransition(() => {
-    const el = document.documentElement
-    const nextLight = !el.classList.contains('light')
-    el.classList.remove('dark', 'light')
-    el.classList.add(nextLight ? 'light' : 'dark')
+    const element = document.documentElement
+    const light = !element.classList.contains('light')
+    element.classList.remove('dark', 'light')
+    element.classList.add(light ? 'light' : 'dark')
     try {
-      localStorage.setItem('jobscope-theme', nextLight ? 'light' : 'dark')
+      localStorage.setItem('jobscope-theme', light ? 'light' : 'dark')
     } catch {
-      /* storage unavailable — the toggle still applies for this session */
+      // The theme still applies for this tab.
     }
   })
 }
 
-/**
- * v2 "cockpit" shell. Owns lens navigation, the global-search view, and the ⌘K
- * command palette; renders a distinct surface per lens over the one hunt
- * pipeline. Keyboard: ⌘K/Ctrl-K palette, "/" focuses search, digits 1–6 switch
- * lenses.
- */
-export function ShellV2({
-  data,
-  search,
-  onSearch,
-  onLock,
-  onOpenJob,
-  jobId,
-  onCloseJob,
-}: ShellV2Props) {
-  const [lens, setLens] = useState<Section>('home')
-  const [cmdOpen, setCmdOpen] = useState(false)
-
-  const openJob = useMemo(() => data.rows.find((r) => r.id === jobId) ?? null, [data.rows, jobId])
-  const openApp = useMemo(
-    () => (jobId ? (data.applications ?? []).find((a) => a.job_id === jobId) ?? null : null),
-    [data.applications, jobId],
+export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [pendingChanges, setPendingChanges] = useState(() => queuedMonitoringActions().length)
+  const [workingData, setWorkingData] = useState(() =>
+    projectMonitoringActions(data, queuedMonitoringActions()),
   )
-
-  // One filtered "view" drives every lens, so global search narrows the whole
-  // cockpit consistently (the drawer + palette still see all rows).
-  const view = useMemo(() => filterData(data, search), [data, search])
-  const columns = useMemo(() => buildBoard(view), [view])
-  const briefing = useMemo(() => buildBriefing(view), [view])
-  const overviewModel = useMemo(() => buildOverview(view), [view])
-  const triage = useMemo(() => buildTriage(view), [view])
-  const timeline = useMemo(() => buildTimeline(view), [view])
-
+  const mobileReader = useMediaQuery('(max-width: 1399px)')
+  const view = activeView(state)
+  const selectedJob = useMemo(
+    () => workingData.rows.find((row) => row.id === state.job) ?? null,
+    [workingData.rows, state.job],
+  )
+  const selectedApplication = useMemo(
+    () =>
+      state.job
+        ? (workingData.applications ?? []).find((application) => application.job_id === state.job) ?? null
+        : null,
+    [workingData.applications, state.job],
+  )
+  const searchedData = useMemo(() => filterData(workingData, state.q), [workingData, state.q])
+  const feed = useMemo(() => buildFeed(workingData, state), [workingData, state])
+  const companies = useMemo(() => buildCompanies(workingData, state.q), [workingData, state.q])
+  const board = useMemo(() => buildBoard(searchedData), [searchedData])
+  const timeline = useMemo(() => buildTimeline(searchedData), [searchedData])
+  const navigate = (next: ViewValue) => onStateChange({ view: next, job: undefined, company: undefined })
+  const open = (jobId: string) => onStateChange({ job: jobId })
+  const close = () => onStateChange({ job: undefined }, { replace: true })
   const refresh = useCallback(() => void scanNewMail(), [])
+  const runMonitoringActions = async (actions: MonitoringAction[]) => {
+    const previous = workingData
+    setWorkingData((current) => projectMonitoringActions(current, actions))
+    try {
+      const result = await submitMonitoringActions(actions)
+      if (result.mode === 'local' && result.companies && result.reviews) {
+        setWorkingData((current) => ({
+          ...current,
+          rows: result.rows ?? current.rows,
+          companies: result.companies ?? current.companies,
+          reviews: result.reviews ?? current.reviews,
+        }))
+        const scan = result.scans?.[0]
+        if (scan) {
+          const recruiter = scan.recruiter?.email
+          toast.success(`Scanned ${scan.company}`, {
+            description: `${scan.matched ?? 0} matched role${scan.matched === 1 ? '' : 's'} · ${recruiter || 'no verified recruiter found'}`,
+          })
+        } else {
+          toast.success('Changes saved locally')
+        }
+      } else {
+        toast.success('Change queued', { description: 'Sync queued changes to update the encrypted dashboard.' })
+      }
+    } catch (error) {
+      setWorkingData(previous)
+      toast.error(error instanceof Error ? error.message : 'Could not apply change')
+    }
+  }
 
-  // Gentle fade+rise of the lens content on each switch, then move focus to the
-  // region so keyboard/SR users land on the new content. `animate` no-ops under
-  // prefers-reduced-motion, leaving the final state.
-  const contentRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    animate(
-      contentRef.current,
-      [
-        { opacity: 0, transform: 'translateY(8px)' },
-        { opacity: 1, transform: 'translateY(0)' },
-      ],
-      { duration: 280, easing: 'cubic-bezier(.2,0,0,1)' },
-    )
-    contentRef.current?.focus({ preventScroll: true })
-  }, [lens])
+    const updateCount = () => setPendingChanges(queuedMonitoringActions().length)
+    window.addEventListener(MONITORING_QUEUE_EVENT, updateCount)
+    return () => window.removeEventListener(MONITORING_QUEUE_EVENT, updateCount)
+  }, [])
 
-  // Global keyboard shortcuts.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
-        e.preventDefault()
-        setCmdOpen((o) => !o)
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandOpen((open) => !open)
         return
       }
-      const el = document.activeElement
+      const target = event.target
       const typing =
-        el instanceof HTMLElement &&
-        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
-      if (typing || e.metaKey || e.ctrlKey || e.altKey) return
-      if (e.key === '/') {
-        const input = document.querySelector<HTMLInputElement>('input[type="search"]')
-        if (input) {
-          e.preventDefault()
-          input.focus()
-        }
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.key === '/') {
+        event.preventDefault()
+        document.querySelector<HTMLInputElement>('input[type="search"]')?.focus()
         return
       }
-      if (e.key >= '1' && e.key <= '6') {
-        const target = LENS_ORDER[Number(e.key) - 1]
-        if (target) {
-          e.preventDefault()
-          setLens(target)
-        }
+      if (event.key === 'Escape' && state.job) {
+        close()
+        return
+      }
+      if (event.key >= '1' && event.key <= '6') {
+        const next = VIEW_ORDER[Number(event.key) - 1]
+        if (next) navigate(next)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  })
 
   return (
     <>
       <AppShell
-        active={lens}
-        onNavigate={setLens}
-        title={TITLES[lens]}
-        search={search}
-        onSearch={onSearch}
-        onOpenCommand={() => setCmdOpen(true)}
+        active={view}
+        onNavigate={navigate}
+        search={state.q}
+        onSearch={(query) => onStateChange({ q: query }, { replace: true })}
+        onOpenCommand={() => setCommandOpen(true)}
         onRefresh={refresh}
         onToggleTheme={toggleTheme}
         onLock={onLock}
-        onProfile={() => setLens('settings')}
-        profile={data.profile ? { name: `résumé: ${data.profile.resume}` } : null}
+        pendingChanges={pendingChanges}
+        onSyncChanges={() => void syncMonitoringQueue()}
       >
-        {/* Announce the active lens to assistive tech on each switch. */}
-        <div aria-live="polite" className="sr-only">
-          {TITLES[lens]}
-        </div>
-        <div ref={contentRef} tabIndex={-1} className="outline-none">
-          {lens === 'home' ? (
-            <Home
-              model={overviewModel}
-              briefing={briefing}
-              apps={view.applications ?? []}
-              onOpen={onOpenJob}
+        {view === 'review' ? (
+          <div className="mx-auto grid h-full min-h-0 w-full max-w-[1600px] grid-cols-1 pb-16 lg:pb-0 min-[1400px]:grid-cols-[minmax(600px,1.08fr)_minmax(500px,.92fr)]">
+            <FeedView
+              model={feed}
+              state={state}
+              selectedId={state.job}
+              onSelect={open}
+              onStateChange={onStateChange}
+              onReviewState={(jobId, reviewState) => void runMonitoringActions([
+                { type: 'review.set', job_id: jobId, state: reviewState },
+              ])}
+              onMonitorCompany={(jobId, company, postingUrl) => void runMonitoringActions([
+                { type: 'monitor.upsert', company, careers_url: postingUrl, job_id: jobId },
+              ])}
             />
-          ) : lens === 'triage' ? (
-            <Triage queue={triage} onOpen={onOpenJob} />
-          ) : lens === 'board' ? (
-            <Board columns={columns} onOpen={onOpenJob} />
-          ) : lens === 'timeline' ? (
-            <Timeline timeline={timeline} onOpen={onOpenJob} />
-          ) : (
+            <aside
+              className="hidden min-h-0 flex-col border-r border-line bg-bg2 min-[1400px]:flex"
+              aria-label="Role reader"
+            >
+              {selectedJob ? (
+                <RoleReader
+                  job={selectedJob}
+                  application={selectedApplication}
+                  allRows={data.rows}
+                  onOpen={open}
+                  onClose={close}
+                />
+              ) : selectedApplication ? (
+                <ApplicationReader app={selectedApplication} onClose={close} />
+              ) : (
+                <PipelinePreview
+                  applications={workingData.applications ?? []}
+                  onOpenPipeline={() => navigate('pipeline')}
+                />
+              )}
+            </aside>
+          </div>
+        ) : view === 'companies' ? (
+          <div className="h-full min-h-0 pb-16 lg:pb-0">
+            <CompaniesView
+              model={companies}
+              filter={state.companyFilter}
+              selectedId={state.company}
+              onFilter={(companyFilter) => onStateChange({ companyFilter }, { replace: true })}
+              onSelect={(company) => onStateChange({ company })}
+              onOpenJob={open}
+              onResolve={resolveCompany}
+              onActions={(actions) => runMonitoringActions(actions)}
+            />
+          </div>
+        ) : view === 'pipeline' ? (
+          <div className="px-3 pb-20 pt-4 sm:px-5 lg:px-7 lg:pb-6">
+            <PipelineView applications={searchedData.applications ?? []} onOpen={open} />
+          </div>
+        ) : view === 'applications' ? (
+          <div className="h-full min-h-0 pb-16 lg:pb-0">
+            <Board columns={board} onOpen={open} />
+          </div>
+        ) : view === 'activity' ? (
+          <div className="h-full min-h-0 pb-16 lg:pb-0">
+            <Timeline timeline={timeline} onOpen={open} />
+          </div>
+        ) : (
+          <div className="min-h-full pb-16 lg:pb-0">
             <Settings
-              profile={data.profile}
-              generated={data.generated}
-              total={data.total}
+              profile={workingData.profile}
+              generated={workingData.generated}
+              total={workingData.total}
               onLock={onLock}
+              onProfileChange={(profile) => setWorkingData((current) => ({ ...current, profile }))}
             />
-          )}
-        </div>
+          </div>
+        )}
       </AppShell>
 
       <CommandPalette
-        key={cmdOpen ? 'open' : 'closed'}
-        open={cmdOpen}
-        onOpenChange={setCmdOpen}
-        rows={data.rows}
-        onNavigate={setLens}
-        onOpenJob={onOpenJob}
+        key={commandOpen ? 'open' : 'closed'}
+        open={commandOpen}
+        onOpenChange={setCommandOpen}
+        rows={workingData.rows}
+        onNavigate={navigate}
+        onOpenJob={open}
         onRefresh={refresh}
         onToggleTheme={toggleTheme}
         onLock={onLock}
       />
 
       <JobDrawer
-        job={openJob}
-        application={openApp}
-        allRows={data.rows}
-        onOpen={onOpenJob}
-        onClose={onCloseJob}
+        job={selectedJob}
+        application={selectedApplication}
+        allRows={workingData.rows}
+        onOpen={open}
+        onClose={close}
+        enabled={view !== 'review' || mobileReader}
       />
-      <Toaster
-        position="bottom-right"
-        toastOptions={{
-          style: {
-            background: 'var(--card)',
-            color: 'var(--fg)',
-            border: '1px solid var(--border)',
-          },
-        }}
-      />
+      <Toaster position="bottom-right" />
     </>
   )
 }

@@ -6,7 +6,7 @@ email is enabled, sends a single digest instead of one message per job.
 from __future__ import annotations
 
 from .. import enrich
-from ..analyze import match
+from ..analyze import match, review
 from ..apply import apply
 from ..deliver import email
 from ..ingest import scrape
@@ -17,6 +17,7 @@ def run(cfg: dict, store, do_prep: bool = True) -> int:
     scrape.run(cfg, store)
     print("\n== match ==")
     match.run(cfg, store)
+    review.sync_reviews(store)
     print("\n== enrich ==")
     enrich.run(cfg, store)
 

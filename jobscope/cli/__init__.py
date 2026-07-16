@@ -76,10 +76,46 @@ def cmd_scout(args, cfg):
                          limit=getattr(args, "limit", 20))
 
 
+def cmd_companies(args, cfg):
+    from ..ingest import monitor
+    with _store(args, cfg) as store:
+        if args.action == "seed":
+            return monitor.run_seed(cfg, store, force=getattr(args, "force", False))
+        if args.action == "scan":
+            return monitor.run_scan(cfg, store, company=getattr(args, "company", None))
+        if args.action == "apply":
+            from ..apply import monitoring
+            if not getattr(args, "actions_file", None):
+                print("  --actions-file is required for `companies apply`")
+                return 1
+            return monitoring.run_actions_file(cfg, store, args.actions_file)
+        return monitor.run_list(store, include_removed=getattr(args, "all", False))
+
+
 def cmd_scan(args, cfg):
     from ..ingest import scrape
     with _store(args, cfg) as store:
-        return scrape.run(cfg, store)
+        return scrape.run(
+            cfg, store, mode=getattr(args, "mode", "all"),
+            force_discovery=getattr(args, "force_discovery", False),
+        )
+
+
+def cmd_reviews(args, cfg):
+    from ..analyze import review
+    with _store(args, cfg) as store:
+        if args.action == "sync":
+            result = review.sync_reviews(store)
+            print(
+                f"  review queue: {result['pending_monitored']} monitored, "
+                f"{result['pending_discovery']} discovery ({result['created']} new)"
+            )
+            return 0
+        rows = store.list_job_reviews(state=getattr(args, "state", None))
+        for row in rows:
+            origins = "+".join(row["origins"]) or "unknown"
+            print(f"  {row['state']:<9} {origins:<20} {row['job_id']}")
+        return 0
 
 
 def cmd_pipeline(args, cfg):
@@ -398,7 +434,29 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=20, help="Max openings to show (default 20)")
     sp.set_defaults(func=cmd_scout)
 
-    sub.add_parser("scan", help="Scrape jobs for your searches").set_defaults(func=cmd_scan)
+    sp = sub.add_parser("companies", help="Manage persistent company monitors")
+    sp.add_argument("action", nargs="?", choices=["seed", "list", "scan", "apply"], default="list",
+                    help="seed, list (default), scan, or apply a validated action file")
+    sp.add_argument("company", nargs="?", default=None,
+                    help="Company name or monitor id for `scan` (default: all active)")
+    sp.add_argument("--force", action="store_true",
+                    help="Reimport config/application companies after the initial seed")
+    sp.add_argument("--all", action="store_true", help="Include soft-removed monitors in list")
+    sp.add_argument("--actions-file", default=None,
+                    help="JSON action file for `companies apply` (used by cloud refresh)")
+    sp.set_defaults(func=cmd_companies)
+
+    sp = sub.add_parser("scan", help="Scan monitored portals and/or broad discovery sources")
+    sp.add_argument("--mode", choices=["all", "monitored", "discovery"], default="all",
+                    help="all (default), monitored portals only, or broad discovery only")
+    sp.add_argument("--force-discovery", action="store_true",
+                    help="Ignore the broad-discovery interval marker")
+    sp.set_defaults(func=cmd_scan)
+
+    sp = sub.add_parser("reviews", help="Synchronize or inspect the curated review queue")
+    sp.add_argument("action", nargs="?", choices=["sync", "list"], default="list")
+    sp.add_argument("--state", choices=["pending", "saved", "dismissed"], default=None)
+    sp.set_defaults(func=cmd_reviews)
     sub.add_parser("match", help="Score jobs against your resume").set_defaults(func=cmd_match)
 
     sp = sub.add_parser("pipeline", help="scan -> match -> enrich -> prep top picks -> digest")

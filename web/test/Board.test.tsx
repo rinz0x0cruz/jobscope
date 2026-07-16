@@ -33,11 +33,13 @@ function makeColumns(): BoardColumn[] {
 }
 
 describe('Board', () => {
-  it('renders applications as a table by default', () => {
+  it('renders applications as an inbox list by default', () => {
     render(<Board columns={makeColumns()} onOpen={() => {}} />)
+    expect(screen.getByText('Application inbox')).toBeInTheDocument()
     expect(screen.getByText('Acme Corp')).toBeInTheDocument()
     expect(screen.getByText('Senior Platform Engineer')).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'Columns' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Board' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Needs attention: 1' })).toBeInTheDocument()
   })
 
   it('opens a row when clicked', () => {
@@ -49,10 +51,17 @@ describe('Board', () => {
 
   it('switches to the Kanban columns view with headers, card pills, and empty state', () => {
     render(<Board columns={makeColumns()} onOpen={() => {}} />)
-    fireEvent.click(screen.getByRole('radio', { name: 'Columns' }))
-    expect(screen.getByText('Offer')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('radio', { name: 'Board' }))
+    expect(screen.getAllByText('Offer')).not.toHaveLength(0)
     expect(screen.getByText('Follow up')).toBeInTheDocument()
     expect(screen.getByText('HR contact')).toBeInTheDocument()
     expect(screen.getByText('Nothing here yet')).toBeInTheDocument()
+  })
+
+  it('filters the inbox to applications needing attention', () => {
+    render(<Board columns={makeColumns()} onOpen={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Needs attention: 1' }))
+    expect(screen.getByLabelText('1 shown')).toBeInTheDocument()
+    expect(screen.getByText('Senior Platform Engineer')).toBeInTheDocument()
   })
 })

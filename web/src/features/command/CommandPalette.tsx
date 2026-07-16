@@ -8,6 +8,7 @@ import { Command } from 'cmdk'
 import Fuse from 'fuse.js'
 import {
   Briefcase,
+  Building2,
   CalendarClock,
   Columns3,
   Home,
@@ -19,25 +20,26 @@ import {
   SunMedium,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { Section } from '@/layout/Sidebar'
+import type { ViewValue } from '@/lib/urlState'
 import type { JobRow } from '@/lib/schema'
 
 export interface CommandPaletteProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   rows: JobRow[]
-  onNavigate: (section: Section) => void
+  onNavigate: (section: ViewValue) => void
   onOpenJob: (id: string) => void
   onRefresh: () => void
   onToggleTheme: () => void
   onLock: () => void
 }
 
-const LENSES: { section: Section; label: string; Icon: LucideIcon }[] = [
-  { section: 'home', label: 'Home', Icon: Home },
-  { section: 'triage', label: 'To apply', Icon: Inbox },
-  { section: 'board', label: 'Board', Icon: Columns3 },
-  { section: 'timeline', label: 'Timeline', Icon: CalendarClock },
+const LENSES: { section: ViewValue; label: string; Icon: LucideIcon }[] = [
+  { section: 'review', label: 'Review', Icon: Home },
+  { section: 'companies', label: 'Companies', Icon: Building2 },
+  { section: 'pipeline', label: 'Pipeline', Icon: Inbox },
+  { section: 'applications', label: 'Applications', Icon: Columns3 },
+  { section: 'activity', label: 'Activity', Icon: CalendarClock },
   { section: 'settings', label: 'Settings', Icon: SettingsIcon },
 ]
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { JobRow } from '@/lib/schema'
-import { compLabel, stockLabel, stockChange, daysAgo, fmtGenerated } from '@/lib/format'
+import { compLabel, compRatio, glassdoorRating, stockLabel, stockChange, daysAgo, fmtGenerated } from '@/lib/format'
 
 const row = (p: unknown): JobRow => p as JobRow
 
@@ -10,6 +10,26 @@ describe('format: comp + stock labels', () => {
     expect(compLabel(row({ enrich: { comp: { range: '$100k–$120k' } } }))).toBe('$100k–$120k')
     expect(compLabel(row({ enrich: {}, salary: '₹30L' }))).toBe('₹30L')
     expect(compLabel(row({ enrich: {} }))).toBeNull()
+  })
+
+  it('compRatio compares annualized posting and market midpoints conservatively', () => {
+    expect(compRatio(row({
+      salary_min: 110_000, salary_max: 130_000, salary_interval: 'year', currency: 'USD',
+      enrich: { comp: { min: 90_000, max: 110_000, interval: 'year', currency: 'USD' } },
+    }))).toBe(120)
+    expect(compRatio(row({
+      salary_min: 10_000, salary_max: 10_000, salary_interval: 'month', currency: 'USD',
+      enrich: { comp: { min: 100_000, max: 100_000, interval: 'year', currency: 'USD' } },
+    }))).toBe(120)
+    expect(compRatio(row({
+      salary_min: 100_000, salary_interval: 'year', currency: 'EUR',
+      enrich: { comp: { min: 100_000, interval: 'year', currency: 'USD' } },
+    }))).toBeNull()
+  })
+
+  it('reads a bounded Glassdoor rating', () => {
+    expect(glassdoorRating(row({ enrich: { glassdoor: { rating: 4.2 } } }))).toBe(4.2)
+    expect(glassdoorRating(row({ enrich: { glassdoor: { rating: '4.2' } } }))).toBeNull()
   })
 
   it('stockLabel formats ticker · market cap, or "Not public"', () => {

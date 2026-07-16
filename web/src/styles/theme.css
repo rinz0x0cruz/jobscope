@@ -1,8 +1,7 @@
 @import "tailwindcss";
 
-/* v2 overlay / drawer / command-palette entrance keyframes. Referenced via
-   arbitrary `[animation:…]` utilities and disabled at the call-site with
-   `motion-reduce:animate-none`. */
+/* Command-palette entrance keyframes. Referenced via arbitrary animation
+  utilities and disabled at the call-site when reduced motion is requested. */
 @keyframes cmd-overlay-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -11,20 +10,12 @@
   from { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.98); }
   to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
 }
-@keyframes drawer-in {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(0); }
-}
 
 /* Map jobscope's design tokens into Tailwind's theme. `inline` makes the
    generated utilities reference the CSS vars at runtime, so toggling the
    `.light` / `.dark` class re-themes everything without rebuilding classes. */
 @theme inline {
-  /* Legacy drawer utilities: the JobDrawer / OfferEditor / RecruiterOutreach
-     panels are the only consumers of these v1 class names. Point them at the v2
-     warm-neutral tokens so the drawer matches the cockpit in BOTH themes. The
-     raw --bg/--fg/--accent vars are untouched, so the foundation aliases and the
-     focus ring keep their own values. */
+  /* Shared drawer and editor utilities use these compatibility aliases. */
   --color-bg: var(--inset);
   --color-bg2: var(--inset);
   --color-card: var(--panel);
@@ -45,9 +36,7 @@
   --color-cool: var(--cool);
   --color-signal: var(--signal);
 
-  /* v2 rebuild design system (warm editorial neutrals + coral). Additive: these
-     map NEW utilities (bg-paper/panel/inset, text-ink*, border-line*, bg-brand*)
-     used only by the ?shell=v2 UI. No v1 token is touched. */
+  /* Feed + Reader surface, text, and brand utilities. */
   --color-paper: var(--paper);
   --color-panel: var(--panel);
   --color-inset: var(--inset);
@@ -65,34 +54,32 @@
   --font-sans: var(--font);
   --font-mono: var(--mono);
   --font-display: var(--font-display);
+  --font-reader: var(--reader);
 }
 
-/* Dark (default) — "Nightshift Console" (concept A × C): a deep-ink base with a
-   warm terminal signature (amber / coral) balanced by a cool cyber + data hue
-   (cyan / teal / sky), mono-forward type. Legacy --neon-* keep their NAMES but
-   are retuned to the COOL half of the duotone, so the decorative layers (tree,
-   logo, gradient cards, skill graph) read cyber again while accents stay warm. */
+/* Dark defaults use neutral graphite surfaces with restrained coral actions. */
 :root {
-  --bg: #060b14; --bg2: #0a1220; --card: #0e1826; --card-h: #132238;
-  --border: #1c2b42; --border-h: #2d4667; --fg: #eaf2ff; --dim: #9fb2cc; --mute: #5f728c;
+  --bg: #111411; --bg2: #171b17; --card: #1c211c; --card-h: #232a23;
+  --border: #303830; --border-h: #485248; --fg: #edf1ec; --dim: #b3bcb2; --mute: #7d887d;
 
   /* warm terminal signature — accents, CTAs, status warmth */
-  --accent: #f59e0b; --accent-dim: rgba(245, 158, 11, .16);
-  --hot: #fb7185;
+  --accent: #e06850; --accent-dim: rgba(224, 104, 80, .16);
+  --hot: #e36c76;
   /* cool cyber + data — charts, links/entities (concept C's "signal"), focus */
   --cool: #22d3ee; --signal: #38bdf8; --teal: #2dd4bf;
 
   /* legacy neon vars, retuned to the cool half of the duotone */
   --neon-cyan: #22d3ee; --neon-blue: #38bdf8; --neon-violet: #a78bfa; --neon-emerald: #2dd4bf; --neon-amber: #fbbf24;
 
-  --strong: #34d399; --good: #38bdf8; --stretch: #fbbf24; --skip: #64748b;
-  /* v2 chart palette (Home dashboard; the pipeline Sankey keeps the tier hues above) */
+  --strong: #58b889; --good: #65a0d6; --stretch: #d3a34e; --skip: #7d887d;
+  /* Retained for the pure overview model and its tests. */
   --chart-indigo: #818cf8; --chart-teal: #2dd4bf; --chart-amber: #fbbf24; --chart-slate: #94a3b8;
   --score-1: #4338ca; --score-2: #4f46e5; --score-3: #6366f1; --score-4: #818cf8; --score-5: #a5b4fc;
-  --radius: 14px; --shadow: 0 10px 30px -12px rgba(0, 0, 0, .62);
-  --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code", "Segoe UI Mono", Menlo, Consolas, monospace;
-  --font-display: "Space Grotesk", Inter, var(--font);
+  --radius: 8px; --shadow: 0 8px 24px -16px rgba(0, 0, 0, .55);
+  --font: "Manrope", sans-serif;
+  --mono: "Cascadia Code", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-display: "Manrope", sans-serif;
+  --reader: "Source Serif 4", Georgia, serif;
 
   /* Design-system foundation (Stage 3 P0): elevation ramp + semantic aliases +
      motion tokens. Aliases resolve at use-time, so html.light re-themes them for free. */
@@ -104,69 +91,63 @@
   --dur-fast: 120ms; --dur-base: 200ms; --dur-slow: 320ms;
   --ease-standard: cubic-bezier(.2, 0, 0, 1); --ease-entrance: cubic-bezier(0, 0, 0, 1); --ease-exit: cubic-bezier(.4, 0, 1, 1);
 
-  /* v2 rebuild palette. DARK (default) values live here — warm espresso neutrals
-     so the cockpit reads coherent in the dark theme; html.light overrides below
-     restore the light-first warm surfaces. Tier/status hues (--strong etc.) and
-     --hot already have per-theme values, so cards stay legible in both. */
-  --paper: #141210; --panel: #1e1b16; --inset: #272219;
-  --line: #322d24; --line-strong: #443d31;
-  --ink: #f4efe6; --ink-2: #bcb4a5; --ink-3: #8b8375;
-  --brand-coral: #ef7a5e; --brand-weak: #3a231b; --brand-strong: #f59579;
-  --shadow-panel: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -12px rgba(0, 0, 0, .6);
+  /* Feed + Reader surfaces; light mode overrides these below. */
+  --paper: #111411; --panel: #171b17; --inset: #202620;
+  --line: #303830; --line-strong: #485248;
+  --ink: #edf1ec; --ink-2: #b3bcb2; --ink-3: #7d887d;
+  --brand-coral: #e06850; --brand-weak: #38251f; --brand-strong: #f0846d;
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, .32);
 }
 
 html.light {
-  --bg: #f7f8fa; --bg2: #eef1f5; --card: #ffffff; --card-h: #f7f9fc;
-  --border: #e3e7ee; --border-h: #cfd6e2; --fg: #0f172a; --dim: #47566b; --mute: #8493a8;
-  --accent: #d97706; --accent-dim: rgba(217, 119, 6, .12);
+  --bg: #f5f6f3; --bg2: #f0f2ee; --card: #ffffff; --card-h: #f7f8f5;
+  --border: #dfe3dc; --border-h: #c1c9c0; --fg: #1c211d; --dim: #515b53; --mute: #7d887f;
+  --accent: #c94f39; --accent-dim: rgba(201, 79, 57, .12);
   --hot: #e11d48; --cool: #0891b2; --signal: #0284c7; --teal: #0d9488;
   --neon-cyan: #0891b2; --neon-blue: #0284c7; --neon-violet: #7c3aed; --neon-emerald: #0d9488;
-  --strong: #059669; --good: #0284c7; --stretch: #d97706; --skip: #64748b;
-  /* v2 chart palette (Home dashboard) */
+  --strong: #18865b; --good: #3175ad; --stretch: #a96f13; --skip: #727d74;
+  /* Retained for the pure overview model and its tests. */
   --chart-indigo: #6366f1; --chart-teal: #0d9488; --chart-amber: #d97706; --chart-slate: #94a3b8;
   --score-1: #c7d2fe; --score-2: #a5b4fc; --score-3: #818cf8; --score-4: #6366f1; --score-5: #4f46e5;
   --shadow: 0 8px 24px -14px rgba(15, 23, 42, .22);
 
-  /* v2 cockpit — light-first warm editorial neutrals + terracotta/coral. */
-  --paper: #faf8f5; --panel: #ffffff; --inset: #f3f0ea;
-  --line: #e7e2d9; --line-strong: #d8d2c6;
-  --ink: #1d1b18; --ink-2: #5c574f; --ink-3: #8a847a;
-  --brand-coral: #e0654a; --brand-weak: #fcebe6; --brand-strong: #c8543b;
-  --shadow-panel: 0 1px 2px rgba(29, 27, 24, .04), 0 6px 20px -12px rgba(29, 27, 24, .18);
+  /* Light-first neutral surfaces with terracotta actions. */
+  --paper: #f5f6f3; --panel: #ffffff; --inset: #f0f2ee;
+  --line: #dfe3dc; --line-strong: #c1c9c0;
+  --ink: #1c211d; --ink-2: #515b53; --ink-3: #7d887f;
+  --brand-coral: #c94f39; --brand-weak: #fae9e5; --brand-strong: #a93e2b;
+  --shadow-panel: 0 1px 2px rgba(28, 33, 29, .05);
 }
 
 @layer base {
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   body {
-    background: var(--bg);
-    color: var(--fg);
+    background: var(--paper);
+    color: var(--ink);
     font-family: var(--font);
     font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
-    background-image:
-      linear-gradient(118deg, color-mix(in srgb, var(--bg) 74%, var(--signal) 26%), var(--bg) 30%, color-mix(in srgb, var(--bg) 82%, var(--accent) 18%) 60%, color-mix(in srgb, var(--bg) 78%, var(--cool) 22%)),
-      repeating-linear-gradient(90deg, color-mix(in srgb, var(--fg) 5%, transparent) 0 1px, transparent 1px 86px),
-      repeating-linear-gradient(0deg, color-mix(in srgb, var(--fg) 4%, transparent) 0 1px, transparent 1px 86px);
-    background-size: 220% 220%, auto, auto;
+    background-image: none;
     background-attachment: fixed;
     min-height: 100vh;
   }
+  body * { letter-spacing: 0 !important; }
   a { color: inherit; }
 
   * {
-    scrollbar-color: color-mix(in srgb, var(--neon-cyan) 46%, var(--border-h)) color-mix(in srgb, var(--bg2) 88%, #000 12%);
+    scrollbar-color: var(--line-strong) var(--inset);
     scrollbar-width: thin;
   }
   *::-webkit-scrollbar { width: 9px; height: 9px; }
-  *::-webkit-scrollbar-track { background: color-mix(in srgb, var(--bg2) 88%, #000 12%); border-radius: 999px; }
+  *::-webkit-scrollbar-track { background: var(--inset); }
   *::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, var(--neon-cyan), var(--neon-violet));
-    border: 2px solid color-mix(in srgb, var(--bg2) 88%, #000 12%);
-    border-radius: 999px;
+    background: var(--line-strong);
+    border: 2px solid var(--inset);
+    border-radius: 6px;
   }
-  *::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, var(--neon-emerald), var(--neon-cyan)); }
+  *::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
 
   /* Visible keyboard focus for anything that doesn't opt out with an
      `outline-none` utility (those provide their own focus ring instead).
@@ -184,263 +165,34 @@ html.light {
   font-variant-numeric: tabular-nums;
 }
 
-/* Detail drawer (Radix Dialog) — CSS keyframes so open/close animate reliably
-   everywhere (Radix waits for these before unmounting on close). */
-@keyframes jsOverlayIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes jsOverlayOut { from { opacity: 1; } to { opacity: 0; } }
-@keyframes jsDrawerIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
-@keyframes jsDrawerOut { from { transform: translateX(0); } to { transform: translateX(100%); } }
-
-.js-overlay[data-state="open"] { animation: jsOverlayIn 0.2s ease-out; }
-.js-overlay[data-state="closed"] { animation: jsOverlayOut 0.18s ease-in forwards; }
-.js-drawer[data-state="open"] { animation: jsDrawerIn 0.26s cubic-bezier(0.32, 0.72, 0, 1); }
-.js-drawer[data-state="closed"] { animation: jsDrawerOut 0.2s ease-in forwards; }
-
-/* Calm "Signal" backdrop: a low-intensity drifting particle network (HeroBackdrop.tsx)
-   that reads as a live "job network" — the single ambient layer behind content (z-0). */
-.js-signal-field {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  opacity: .5;
-  mix-blend-mode: screen;
-}
-html.light .js-signal-field { opacity: .32; mix-blend-mode: multiply; }
-
-/* Aurora hero variant — slow blurred gradient blobs (calm / premium option). */
-.js-hero-aurora { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; opacity: .6; }
-.js-hero-aurora span {
-  position: absolute; width: 46vw; height: 46vw; border-radius: 50%;
-  filter: blur(72px); mix-blend-mode: screen; opacity: .5;
-}
-.js-hero-aurora span:nth-child(1) { background: var(--cool); left: -8%; top: -12%; animation: jsAuroraA 16s ease-in-out infinite alternate; }
-.js-hero-aurora span:nth-child(2) { background: var(--accent); right: -10%; top: 4%; animation: jsAuroraB 19s ease-in-out infinite alternate; }
-.js-hero-aurora span:nth-child(3) { background: var(--signal); left: 24%; bottom: -18%; animation: jsAuroraC 22s ease-in-out infinite alternate; }
-html.light .js-hero-aurora { opacity: .5; }
-html.light .js-hero-aurora span { mix-blend-mode: multiply; }
-@keyframes jsAuroraA { to { transform: translate(18vw, 12vh) scale(1.2); } }
-@keyframes jsAuroraB { to { transform: translate(-16vw, 10vh) scale(1.15); } }
-@keyframes jsAuroraC { to { transform: translate(10vw, -14vh) scale(1.25); } }
-
-/* Mono-forward numerals — the console identity made visible on KPI values. */
-.js-kpi-card > div:first-child {
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.02em;
+.review-queue {
+  container-type: inline-size;
 }
 
-.js-header-gradient { position: sticky; }
-
-.js-logo-mark {
-  position: relative;
-  overflow: hidden;
-  border-radius: 15px;
-  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-blue), var(--neon-violet), var(--neon-emerald));
-  box-shadow: 0 0 0 1px color-mix(in srgb, #fff 26%, transparent), 0 14px 34px -13px var(--accent), 0 0 36px -14px var(--neon-cyan);
-}
-.js-logo-mark > div { position: relative; z-index: 1; }
-.js-logo-mark svg { filter: drop-shadow(0 1px 8px rgba(0, 0, 0, .42)); }
-
-.js-signal-lottie {
-  position: relative;
-  display: grid;
-  place-items: center;
-  color: #f8fbff;
-}
-.js-signal-motion {
-  position: absolute;
-  inset: -2px;
-  opacity: .58;
-  transform: scale(1.08);
-}
-.js-signal-glyph {
-  position: relative;
-  z-index: 2;
-  width: 92%;
-  height: 92%;
+.feed-list-grid {
+  display: flex;
+  flex-direction: column;
+  align-content: start;
+  gap: 10px;
+  padding: 12px;
+  background: var(--paper);
 }
 
-.js-neon-title {
-  background: linear-gradient(90deg, #fff, var(--neon-cyan), var(--neon-emerald), #fff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  text-shadow: 0 0 22px color-mix(in srgb, var(--neon-cyan) 38%, transparent);
+.feed-list-grid > article {
+  flex: 0 0 auto;
+  min-height: 132px;
 }
 
-.js-hot-button {
-  background:
-    linear-gradient(var(--card), var(--card)) padding-box,
-    linear-gradient(120deg, var(--neon-blue), var(--neon-cyan), var(--neon-violet)) border-box;
-  border-color: transparent;
-  box-shadow: 0 0 28px -20px var(--accent);
-}
+@container (min-width: 840px) {
+  .feed-list-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
 
-.js-gradient-card {
-  position: relative;
-  overflow: hidden;
-  border-color: transparent;
-  background:
-    linear-gradient(color-mix(in srgb, var(--card) 84%, #000 16%), color-mix(in srgb, var(--card) 94%, var(--neon-blue) 6%)) padding-box,
-    linear-gradient(128deg, var(--neon-cyan), var(--neon-blue), var(--neon-violet), var(--neon-emerald)) border-box;
-  box-shadow: 0 0 42px -30px var(--accent), 0 16px 36px -32px #000;
-}
-.js-gradient-card > * { position: relative; z-index: 1; }
-
-.js-spotlight-card {
-  --spot-x: 50%;
-  --spot-y: 50%;
-  --spot-color: var(--accent);
-  position: relative;
-  isolation: isolate;
-}
-.js-spotlight-card::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background: radial-gradient(180px circle at var(--spot-x) var(--spot-y), color-mix(in srgb, var(--spot-color) 20%, transparent), transparent 58%);
-  opacity: 0;
-  transition: opacity .22s ease-out;
-}
-.js-spotlight-card:hover::after { opacity: 1; }
-.js-spotlight-card > * { position: relative; z-index: 1; }
-
-.js-status-card {
-  box-shadow: 0 0 38px -30px var(--status-color), inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
-}
-.js-status-rail {
-  position: absolute;
-  inset: 10px auto 10px 0;
-  z-index: 2;
-  width: 3px;
-  border-radius: 999px;
-  background: var(--status-color);
-  box-shadow: 0 0 16px color-mix(in srgb, var(--status-color) 60%, transparent);
-}
-.js-status-card[data-status="offer"] .js-status-rail,
-.js-status-card[data-status="interview"] .js-status-rail {
-  animation: jsStrongPulse 2.2s ease-in-out infinite;
-}
-
-.js-kpi-card {
-  box-shadow: 0 0 48px -30px var(--kpi-color), inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
-}
-.js-kpi-card > div:first-child {
-  text-shadow: 0 0 20px color-mix(in srgb, var(--kpi-color) 55%, transparent);
-}
-
-.js-gradient-column {
-  background:
-    linear-gradient(color-mix(in srgb, var(--bg2) 92%, #000 8%), color-mix(in srgb, var(--bg2) 83%, var(--neon-blue) 17%)) padding-box,
-    linear-gradient(140deg, var(--neon-cyan), var(--neon-blue), var(--neon-violet), var(--neon-emerald)) border-box;
-  border-color: transparent;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent), 0 0 36px -30px var(--accent);
-}
-
-.js-skill-graph {
-  min-height: 234px;
-  overflow: hidden;
-  border-radius: 12px;
-  background:
-    radial-gradient(circle at 50% 52%, color-mix(in srgb, var(--neon-blue) 12%, transparent), transparent 38%),
-    linear-gradient(135deg, color-mix(in srgb, var(--bg2) 78%, transparent), transparent);
-}
-.js-skill-graph svg {
-  display: block;
-  width: 100%;
-  height: auto;
-  min-height: 232px;
-}
-.js-skill-orbit {
-  fill: none;
-  stroke: color-mix(in srgb, var(--neon-cyan) 18%, transparent);
-  stroke-dasharray: 4 10;
-  stroke-width: 1.4;
-}
-.js-skill-orbit-wide {
-  stroke: color-mix(in srgb, var(--neon-violet) 18%, transparent);
-  stroke-dasharray: 2 12;
-}
-.js-skill-link {
-  stroke: color-mix(in srgb, var(--neon-cyan) 24%, transparent);
-  stroke-width: 1.2;
-}
-.js-skill-point {
-  cursor: pointer;
-  transition: opacity .18s ease, filter .18s ease;
-}
-.js-skill-graph[data-has-selection="true"] .js-skill-point:not(.is-selected) {
-  opacity: .38;
-}
-.js-skill-point:focus-visible {
-  outline: none;
-}
-.js-skill-point:focus-visible .js-skill-node,
-.js-skill-point:hover .js-skill-node,
-.js-skill-point.is-selected .js-skill-node {
-  stroke: #fff;
-  stroke-width: 2.4;
-  filter: drop-shadow(0 0 18px color-mix(in srgb, var(--neon-emerald) 72%, transparent));
-}
-.js-skill-point:hover .js-skill-link,
-.js-skill-point.is-selected .js-skill-link {
-  stroke: color-mix(in srgb, var(--neon-emerald) 55%, transparent);
-  stroke-width: 2;
-}
-.js-skill-node-halo {
-  fill: color-mix(in srgb, var(--neon-cyan) 14%, transparent);
-  filter: blur(1px);
-}
-.js-skill-node {
-  fill: url(#skillNodeGlow);
-  stroke: color-mix(in srgb, white 52%, transparent);
-  stroke-width: 1.4;
-  filter: drop-shadow(0 0 13px color-mix(in srgb, var(--neon-cyan) 44%, transparent));
-}
-.js-skill-core {
-  fill: color-mix(in srgb, var(--card) 74%, var(--neon-blue) 26%);
-  stroke: color-mix(in srgb, var(--neon-cyan) 50%, transparent);
-  stroke-width: 1.5;
-}
-.js-skill-value {
-  fill: #fff;
-  font: 800 12px var(--mono);
-  paint-order: stroke;
-  stroke: color-mix(in srgb, var(--bg) 82%, transparent);
-  stroke-width: 3px;
-}
-.js-skill-label,
-.js-skill-core-label {
-  fill: var(--dim);
-  font: 650 11px var(--font);
-  letter-spacing: .01em;
-  paint-order: stroke;
-  stroke: color-mix(in srgb, var(--bg) 88%, transparent);
-  stroke-width: 4px;
-}
-.js-skill-core-label {
-  fill: var(--fg);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-}
-
-/* Strong-tier pill: a gentle glow loop to draw the eye to the best matches.
-   CSS-driven so it can't freeze the way an rAF loop can, and neutralized by
-   the global reduced-motion guard below. */
-@keyframes jsStrongPulse {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--strong) 26%, transparent); }
-  50% { box-shadow: 0 0 7px 1px color-mix(in srgb, var(--strong) 32%, transparent); }
-}
-.js-strong-pulse {
-  animation: jsStrongPulse 2.2s ease-in-out infinite;
-  border-color: color-mix(in srgb, var(--strong) 40%, var(--border));
-  color: var(--strong);
+  .feed-list-grid > article {
+    min-height: 148px;
+  }
 }
 
 /* Global reduced-motion kill-switch: neutralize every animation/transition

@@ -73,3 +73,16 @@ def test_doctor_warns_on_unhealthy_source_and_refresh_failure(tmp_path):
     assert any(
         check.name == "refresh" and check.level == "warn" and "publish" in check.detail
         for check in checks)
+
+
+def test_doctor_reports_unresolved_company_monitors(tmp_path):
+    cfg = _cfg(tmp_path)
+    with Store(cfg["output"]["db_path"]) as store:
+        store.upsert_company_monitor("Unknown Labs", added_from="application")
+
+    checks = doctor.inspect(cfg, which=lambda _name: "available", publish_ready=lambda: True)
+
+    assert any(
+        check.name == "companies" and check.level == "warn"
+        and "Unknown Labs" in check.detail for check in checks
+    )

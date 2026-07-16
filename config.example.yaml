@@ -57,6 +57,10 @@ search:
   #   - wiz
   #   - "Acme|lever|acme"       # explicit provider + board slug
 
+discovery:
+  enabled: true                         # broad JobSpy discovery remains a secondary source
+  interval_hours: 24                    # monitored portals scan more often; broad search runs at most daily
+
 match:
   # Deterministic fit score = 100 * weighted sum, minus a ghost/scam penalty.
   weights:
@@ -97,7 +101,7 @@ enrich:
   stock: true                         # yfinance price / IPO status / peer comparison (no key)
   reddit: true                        # old.reddit JSON search (no key)
   news: true                          # company news via RSS
-  glassdoor: false                    # best-effort rating (may require the browser)
+  glassdoor: true                     # best-effort public rating/search link; degrades when blocked
   contacts: true                      # legit-only referral leads + outreach drafts
   brief: true                         # blunt, risk-forward company brief (no marketing fluff)
   news_feeds: []                      # optional extra RSS feed URLs
@@ -179,6 +183,10 @@ apply:
     applied_scan:                     # pre-compute HR contacts for active applications (shown on the dashboard behind unlock)
       limit: 25                       # most-recent active companies to scan per run
       max_age_days: 14                # re-discover a company's contacts at most once per N days
+    monitor_scan:                     # specific company Scan also pulls a verified recruiter/HR contact
+      enabled: true                   # prefers cybersecurity/security, then technical/engineering recruiters
+      max_age_days: 14                # scheduled scans reuse fresh contacts; manual company scans force refresh
+      scheduled: false                # true refreshes stale contacts during every all-company scheduled scan
 
 output:
   db_path: "data/jobscope.db"

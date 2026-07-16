@@ -41,6 +41,19 @@ _ATS_MAIL = ("workablemail", "myworkday", "myworkdayjobs", "icims", "greenhouse"
 _HR_HINTS = ("recruit", "talent", "hr", "hiring", "career", "jobs", "job", "people", "hello",
              "contact", "work", "join", "apply", "team")
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_CONTACT_CONFIDENCE_SCORE = {"high": 300, "medium": 200, "low": 100}
+_CONTACT_SOURCE_SCORE = {
+    "recruiter": 80, "hunter": 40, "apollo": 40,
+    "discovered": 20, "role_inbox": 0,
+}
+_RECRUITER_SPECIALTY_SCORE = (
+    (("cybersecurity", "cyber security", "security recruiter", "security talent"), 120),
+    (("technical recruiter", "tech recruiter", "technical talent"), 100),
+    (("engineering recruiter", "engineering talent"), 90),
+    (("recruiter", "recruiting"), 50),
+    (("talent acquisition", "talent partner", "talent"), 35),
+    (("human resources", " hr ", "people partner"), 20),
+)
 
 
 @dataclass
@@ -66,6 +79,44 @@ def _is_automated(addr: str) -> bool:
     if any(a in lp for a in _AUTOMATED_LOCALPARTS):
         return True
     return _is_ats_domain(dom)
+
+
+def recruiter_contact_score(contact: dict) -> int:
+    """Rank verified contacts, preferring security/technical recruiting roles."""
+    text = " ".join(str(contact.get(key) or "") for key in ("email", "note")).lower()
+    padded = f" {text} "
+    specialty = 0
+    for terms, score in _RECRUITER_SPECIALTY_SCORE:
+        if any(term in padded for term in terms):
+            specialty = score
+            break
+    return (
+        _CONTACT_CONFIDENCE_SCORE.get(str(contact.get("confidence") or "").lower(), 0)
+        + _CONTACT_SOURCE_SCORE.get(str(contact.get("source") or "").lower(), 0)
+        + specialty
+    )
+
+
+def rank_recruiter_contacts(contacts: list[dict]) -> list[dict]:
+    """Deduplicate and sort recruiter contacts by confidence + specialty."""
+    best: dict[str, dict] = {}
+    for raw in contacts:
+        email = str(raw.get("email") or "").strip().lower()
+        if not email or _is_automated(email):
+            continue
+        contact = {**raw, "email": email}
+        previous = best.get(email)
+        if previous is None or recruiter_contact_score(contact) > recruiter_contact_score(previous):
+            best[email] = contact
+    return sorted(
+        best.values(),
+        key=lambda contact: (-recruiter_contact_score(contact), contact["email"]),
+    )
+
+
+def best_recruiter_contact(contacts: list[dict]) -> dict | None:
+    ranked = rank_recruiter_contacts(contacts)
+    return ranked[0] if ranked else None
 
 
 def _domain_of_url(url: str) -> str:
@@ -620,7 +671,45 @@ def discover_company_contacts(cfg: dict, store, company: str, *, url: str = "",
         if c["email"] not in have:
             contacts.append(c)
             have.add(c["email"])
-    return domain, contacts
+    return domain, rank_recruiter_contacts(contacts)
+
+
+def refresh_company_contacts(cfg: dict, store, company: str, *, url: str = "",
+                             force: bool = False, fetch: bool = True) -> dict:
+    """Discover and persist contacts for one company without erasing good state.
+
+    This is shared by targeted monitor scans and can safely degrade when no employer
+    domain is confirmed. Existing contacts remain untouched on lookup failure.
+    """
+    oc = (cfg.get("apply", {}).get("outreach", {}) or {})
+    settings = (oc.get("monitor_scan", {}) or {})
+    if not settings.get("enabled", True):
+        return {"status": "disabled", "domain": "", "contacts": [], "recruiter": None}
+    existing = store.get_company_contacts(company)
+    max_age_days = int(settings.get("max_age_days", 14) or 14)
+    if (existing and not force and _within_cooldown(existing.get("discovered_at"), max_age_days)):
+        contacts = rank_recruiter_contacts(existing.get("contacts") or [])
+        return {
+            "status": "fresh", "domain": existing.get("domain") or "",
+            "contacts": contacts, "recruiter": best_recruiter_contact(contacts),
+        }
+    domain, contacts = discover_company_contacts(
+        cfg, store, company, url=url, fetch=fetch and bool(oc.get("discover", True)),
+    )
+    contacts = rank_recruiter_contacts(contacts)
+    if domain:
+        store.set_company_contacts(company, domain, contacts)
+        return {
+            "status": "updated", "domain": domain, "contacts": contacts,
+            "recruiter": best_recruiter_contact(contacts),
+        }
+    if existing:
+        contacts = rank_recruiter_contacts(existing.get("contacts") or [])
+        return {
+            "status": "preserved", "domain": existing.get("domain") or "",
+            "contacts": contacts, "recruiter": best_recruiter_contact(contacts),
+        }
+    return {"status": "unresolved", "domain": "", "contacts": [], "recruiter": None}
 
 
 def scan_applied_contacts(cfg: dict, store, *, limit: Optional[int] = None,

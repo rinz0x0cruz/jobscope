@@ -38,6 +38,25 @@ work begins, it must:
 3. Validate SQLite magic, `PRAGMA quick_check`, and Jobscope's stable tables.
 4. Record the restored commit SHA.
 
+Company-first ordering is fixed: restore/validate DB → idempotent `companies seed` → apply an optional
+validated mutation batch → scan active monitored portals → run broad discovery only when its 24-hour marker
+is due (or `full_scan=true`) → inbox → match → review sync → save encrypted DB → verify/publish. Monitor
+errors are optional/degraded and fail closed: only a complete non-empty board may mark linked jobs closed.
+
+Pages mutations require the existing fine-grained Actions read/write token. Save/Dismiss/company changes are
+collapsed by entity in browser storage and dispatched together. An active workflow or failed run keeps the
+queue intact; only a successful refresh clears it. The workflow receives JSON through an environment variable
+and file, then validates it in Python—never through shell evaluation.
+
+Operational checks:
+
+```bash
+python -m jobscope companies list
+python -m jobscope companies scan
+python -m jobscope reviews list --state pending
+python -m jobscope doctor   # warns on unresolved portals and unhealthy monitor sources
+```
+
 After refresh, it validates SQLite again, encrypts and decrypts a round-trip copy,
 then pushes with `--force-with-lease` against the restored SHA. A concurrent or
 unexpected branch change fails instead of being overwritten. The ciphertext that
@@ -114,6 +133,11 @@ after the verifier confirms:
 - The bundled ciphertext matches its source exactly.
 - No private field/value serialization appears in text assets.
 - `deployment-manifest.json` records the source commit and SHA-256 of every artifact.
+
+The monitoring migration is additive. Rolling code back leaves monitor/review tables ignored but intact;
+it does not delete raw jobs, application history, dismiss tombstones, or company provenance. The previous
+encrypted DB generation remains the first recovery option. `search.companies` is retained as seed/fallback
+input, so old code can still run direct ATS scans during a rollback.
 
 If publication fails, `refresh:last_date` is not advanced. Check
 `refresh:last_failed_stage` with `jobscope doctor`, repair the stage, and rerun with

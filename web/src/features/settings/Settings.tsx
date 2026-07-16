@@ -4,12 +4,12 @@
 
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Lock } from 'lucide-react'
+import { Download, FileText, GitBranch, Lock, Palette, RefreshCw, Shield, Upload } from 'lucide-react'
 import { toast } from 'sonner'
-import { Badge, Button, Card, Chip, Segmented } from '@/ui'
+import { Badge, Button, Chip, Segmented } from '@/ui'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
-import { connectToken, disconnectToken, hasGitHubToken, pullLatestData } from '@/lib/refresh'
-import { localServeToken, profileUse } from '@/lib/outreach'
+import { connectToken, disconnectToken, hasGitHubToken, pullLatestData, scanNewMail } from '@/lib/refresh'
+import { localServeToken, profileUpload, profileUse } from '@/lib/outreach'
 import { fmtGenerated } from '@/lib/format'
 import type { Profile } from '@/lib/schema'
 
@@ -18,6 +18,7 @@ export interface SettingsProps {
   generated: string
   total: number
   onLock: () => void
+  onProfileChange?: (profile: Profile) => void
 }
 
 function currentTheme(): 'light' | 'dark' {
@@ -36,17 +37,21 @@ function applyTheme(theme: 'light' | 'dark') {
   }
 }
 
-export function Settings({ profile, generated, total, onLock }: SettingsProps) {
+export function Settings({ profile, generated, total, onLock, onProfileChange }: SettingsProps) {
   const [theme, setTheme] = useState<'light' | 'dark'>(currentTheme)
   const { format, setFormat } = useScoreFormat()
   const [tokenConnected, setTokenConnected] = useState(hasGitHubToken)
   const [prof, setProf] = useState<Profile | null>(profile)
   const [serveToken, setServeToken] = useState<string | null>(null)
   const [switching, setSwitching] = useState(false)
+  const [resumeFile, setResumeFile] = useState<File | null>(null)
+  const [profileName, setProfileName] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const locations = prof ? [...new Set([...prof.locations, ...(prof.remote ? ['Remote'] : [])])] : []
 
   useEffect(() => {
     let live = true
-    localServeToken().then((t) => live && setServeToken(t))
+    localServeToken(true).then((t) => live && setServeToken(t))
     return () => {
       live = false
     }
@@ -59,6 +64,7 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
       const res = await profileUse(name, serveToken)
       if (res.ok && res.profile) {
         setProf(res.profile)
+        onProfileChange?.(res.profile)
         toast.success(`Active profile: ${name}`)
       } else {
         toast.error(res.error || 'Could not switch profile')
@@ -70,11 +76,68 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
     }
   }
 
+  const uploadResume = async () => {
+    if (!serveToken || !resumeFile || !profileName.trim()) return
+    setUploading(true)
+    try {
+      const res = await profileUpload(resumeFile, profileName.trim(), serveToken)
+      if (res.ok && res.profile) {
+        setProf(res.profile)
+        onProfileChange?.(res.profile)
+        setResumeFile(null)
+        setProfileName('')
+        toast.success(`Profile built: ${res.profile.name}`)
+      } else {
+        toast.error(res.error || 'Could not build profile')
+      }
+    } catch {
+      toast.error('Could not upload resume')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const profileCount = prof?.available.length ?? 0
+  const profileLimit = 3
+  const profileCapReached = profileCount >= profileLimit
+  const normalizedProfileName = profileName.trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const replacingProfile = Boolean(
+    normalizedProfileName && prof?.available.includes(normalizedProfileName),
+  )
+  const newProfileBlocked = profileCapReached && !replacingProfile
+
   return (
-    <div className="mx-auto max-w-2xl space-y-5">
-      <Card title="Appearance">
-        <div className="divide-y divide-line">
-          <Row label="Theme" hint="Warm light or dark surfaces.">
+    <section className="mx-auto min-h-full w-full max-w-[1600px] border-x border-line bg-panel">
+      <header className="border-b border-line px-5 py-5 sm:px-7">
+        <p className="text-[10px] font-semibold uppercase text-ink-3">Settings</p>
+        <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-ink">Workspace preferences</h2>
+            <p className="mt-1 text-[13px] text-ink-3">Search profile, local display preferences, sync, and session privacy.</p>
+          </div>
+          <p className="text-[12px] text-ink-3">{total} {total === 1 ? 'role' : 'roles'} · updated {fmtGenerated(generated)}</p>
+        </div>
+      </header>
+
+      <div className="grid lg:grid-cols-[14rem_minmax(0,1fr)]">
+        <aside className="border-b border-line bg-inset/35 p-4 lg:border-b-0 lg:border-r lg:p-5">
+          <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto [scrollbar-width:none] lg:sticky lg:top-4 lg:flex-col [&::-webkit-scrollbar]:hidden">
+            <SettingsLink target="appearance" icon={<Palette size={14} aria-hidden="true" />}>Appearance</SettingsLink>
+            <SettingsLink target="profile" icon={<FileText size={14} aria-hidden="true" />}>Search profiles</SettingsLink>
+            <SettingsLink target="sync" icon={<RefreshCw size={14} aria-hidden="true" />}>Data sync</SettingsLink>
+            <SettingsLink target="privacy" icon={<Shield size={14} aria-hidden="true" />}>Privacy</SettingsLink>
+          </nav>
+        </aside>
+
+        <div className="min-w-0">
+          <SettingsSection
+            id="appearance"
+            icon={<Palette size={16} aria-hidden="true" />}
+            title="Appearance"
+            description="Choose how match information is displayed in this browser."
+          >
+            <PreferenceRow label="Theme" hint="Light or dark workspace surfaces.">
             <Segmented
               ariaLabel="Theme"
               value={theme}
@@ -88,8 +151,8 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
                 { value: 'dark', label: 'Dark' },
               ]}
             />
-          </Row>
-          <Row label="Match score" hint="Show the 0–100 fit number or an A–F grade.">
+            </PreferenceRow>
+            <PreferenceRow label="Match score" hint="Use the 0–100 fit number or an A–F grade.">
             <Segmented
               ariaLabel="Match score format"
               value={format}
@@ -99,21 +162,33 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
                 { value: 'grade', label: 'Grade' },
               ]}
             />
-          </Row>
-        </div>
-      </Card>
+            </PreferenceRow>
+          </SettingsSection>
 
-      {prof && (
-        <Card title="Résumé profile">
-          <div className="space-y-3 text-sm">
+          <SettingsSection
+              id="profile"
+              icon={<FileText size={16} aria-hidden="true" />}
+              title="Search profiles"
+              description="The résumé and targets used to rank incoming roles."
+            >
+              {prof ? (
+                <>
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-5">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-base font-semibold text-ink">{prof.resume}</span>
+                    {prof.seniority && <Badge tone="brand">{prof.seniority}</Badge>}
+                    {prof.years_experience > 0 && <span className="text-[12px] text-ink-3">{prof.years_experience} yrs</span>}
+                  </div>
+                  <p className="mt-1 text-[12px] text-ink-3">Active ranking résumé</p>
+                </div>
             {serveToken && prof.available.length > 1 && (
-              <Field label="Active profile">
                 <select
                   value={prof.name}
                   onChange={(e) => void switchProfile(e.target.value)}
                   disabled={switching}
                   aria-label="Active search profile"
-                  className="rounded-lg border border-line bg-inset px-2 py-1 text-[13px] text-ink outline-none focus:border-line-strong disabled:opacity-50"
+                  className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong disabled:opacity-50"
                 >
                   {prof.available.map((n) => (
                     <option key={n} value={n}>
@@ -121,51 +196,92 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
                     </option>
                   ))}
                 </select>
-                <span className="text-ink-3">drives your next scan</span>
-              </Field>
             )}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold text-ink">{prof.resume}</span>
-              {prof.seniority && <Badge tone="brand">{prof.seniority}</Badge>}
-              {prof.years_experience > 0 && (
-                <span className="text-ink-3">{prof.years_experience} yrs</span>
-              )}
-            </div>
+              </div>
             {prof.search_terms.length > 0 && (
-              <Field label="Searching for">
+                <TagField label="Target roles">
                 {prof.search_terms.map((t) => (
                   <Chip key={t}>{t}</Chip>
                 ))}
-              </Field>
+                </TagField>
             )}
-            {prof.locations.length > 0 && (
-              <Field label="Locations">
-                {prof.locations.map((l) => (
+              {locations.length > 0 && (
+                <TagField label="Locations">
+                {locations.map((l) => (
                   <Chip key={l}>{l}</Chip>
                 ))}
-                {prof.remote && <Chip>Remote</Chip>}
-              </Field>
+                </TagField>
             )}
             {prof.top_skills.length > 0 && (
-              <Field label="Top skills">
+                <TagField label="Top skills">
                 {prof.top_skills.slice(0, 12).map((s) => (
                   <Chip key={s}>{s}</Chip>
                 ))}
-              </Field>
+                </TagField>
             )}
-          </div>
-        </Card>
-      )}
+                </>
+              ) : (
+                <p className="pb-5 text-[13px] text-ink-3">No search profile loaded.</p>
+              )}
 
-      <Card title="Sync">
-        <div className="space-y-3 text-sm">
-          <p className="text-ink-2">
-            Refresh scans your mailbox via the{' '}
-            <code className="rounded bg-inset px-1 py-0.5 text-[12px]">refresh.yml</code> Action,
-            then pulls the freshly published results. Connect a fine-grained GitHub token (Actions:
-            write) for one-tap scans — it’s stored only in this browser.
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
+              {serveToken && (
+                <div className="border-t border-line pt-5">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Upload résumé</p>
+                      <p className="text-[11px] text-ink-3">{profileCount} of {profileLimit} profiles</p>
+                    </div>
+                    {profileCapReached && <Badge tone="neutral">Reuse a profile name to replace</Badge>}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-[minmax(10rem,.55fr)_minmax(12rem,1fr)_auto]">
+                    <input
+                      value={profileName}
+                      onChange={(event) => setProfileName(event.target.value)}
+                      aria-label="Profile name"
+                      placeholder="Profile name"
+                      className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong disabled:opacity-50"
+                    />
+                    <label className="flex h-9 min-w-0 cursor-pointer items-center gap-2 rounded-md border border-line bg-inset px-3 text-[12px] text-ink-2 hover:border-line-strong">
+                      <Upload size={14} className="shrink-0" aria-hidden="true" />
+                      <span className="truncate">{resumeFile?.name || 'Choose résumé'}</span>
+                      <input
+                        type="file"
+                        accept=".md,.txt,.json,.pdf"
+                        aria-label="Resume file"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] ?? null
+                          setResumeFile(file)
+                          if (file && !profileName) {
+                            setProfileName(file.name.replace(/\.[^.]+$/, ''))
+                          }
+                        }}
+                        className="sr-only"
+                      />
+                    </label>
+                    <Button
+                      variant="secondary"
+                      disabled={newProfileBlocked || uploading || !resumeFile || !profileName.trim()}
+                      onClick={() => void uploadResume()}
+                    >
+                      {uploading ? <RefreshCw size={15} className="animate-spin" aria-hidden="true" /> : <Upload size={15} aria-hidden="true" />}
+                      Build profile
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </SettingsSection>
+
+          <SettingsSection
+            id="sync"
+            icon={<RefreshCw size={16} aria-hidden="true" />}
+            title="Data sync"
+            description="Run the GitHub refresh workflow or pull its latest encrypted result."
+          >
+            <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={() => void scanNewMail()}>
+              <RefreshCw size={15} aria-hidden="true" />
+              Scan Gmail
+            </Button>
             {tokenConnected ? (
               <>
                 <Badge tone="good">Token connected</Badge>
@@ -176,6 +292,7 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
                     setTokenConnected(false)
                   }}
                 >
+                  <GitBranch size={15} aria-hidden="true" />
                   Disconnect
                 </Button>
               </>
@@ -187,38 +304,73 @@ export function Settings({ profile, generated, total, onLock }: SettingsProps) {
                   setTokenConnected(hasGitHubToken())
                 }}
               >
+                <GitBranch size={15} aria-hidden="true" />
                 Connect GitHub token
               </Button>
             )}
             <Button variant="ghost" onClick={() => void pullLatestData()}>
+              <Download size={15} aria-hidden="true" />
               Pull latest
             </Button>
-          </div>
-        </div>
-      </Card>
+            </div>
+            <p className="mt-3 text-[12px] text-ink-3">
+              The optional token is stored only in this browser and requires GitHub Actions write access.
+            </p>
+          </SettingsSection>
 
-      <Card title="Session">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-ink-2">
-            Lock the dashboard and clear the decrypted data from this tab.
-          </p>
-          <Button variant="secondary" onClick={onLock} className="shrink-0">
-            <Lock size={15} aria-hidden="true" />
-            Lock
-          </Button>
+          <SettingsSection
+            id="privacy"
+            icon={<Shield size={16} aria-hidden="true" />}
+            title="Privacy"
+            description="Control decrypted data held by the current browser tab."
+          >
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-[14px] font-medium text-ink">Lock this session</p>
+                <p className="mt-0.5 text-[12px] text-ink-3">Clear decrypted dashboard data from memory and return to the passphrase screen.</p>
+              </div>
+              <Button variant="secondary" onClick={onLock} className="shrink-0">
+                <Lock size={15} aria-hidden="true" />
+                Lock
+              </Button>
+            </div>
+          </SettingsSection>
         </div>
-      </Card>
-
-      <p className="text-center text-[12px] text-ink-3">
-        {total} {total === 1 ? 'role' : 'roles'} · updated {fmtGenerated(generated)}
-      </p>
-    </div>
+      </div>
+    </section>
   )
 }
 
-function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+function SettingsLink({ target, icon, children }: { target: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+    <button
+      type="button"
+      onClick={() => document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+      className="flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-[12px] font-medium text-ink-2 transition-colors hover:bg-panel hover:text-ink"
+    >
+      {icon}{children}
+    </button>
+  )
+}
+
+function SettingsSection({ id, icon, title, description, children }: { id: string; icon: ReactNode; title: string; description: string; children: ReactNode }) {
+  return (
+    <section id={id} className="scroll-mt-4 border-b border-line px-5 py-6 last:border-b-0 sm:px-7">
+      <header className="mb-5 flex items-start gap-3">
+        <span className="mt-0.5 text-ink-3">{icon}</span>
+        <div>
+          <h3 className="text-[15px] font-semibold text-ink">{title}</h3>
+          <p className="mt-0.5 text-[12px] text-ink-3">{description}</p>
+        </div>
+      </header>
+      {children}
+    </section>
+  )
+}
+
+function PreferenceRow({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-t border-line py-3 first:border-t-0 first:pt-0 last:pb-0">
       <div className="min-w-0">
         <div className="text-sm font-medium text-ink">{label}</div>
         {hint && <div className="text-[12px] text-ink-3">{hint}</div>}
@@ -228,10 +380,10 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
   )
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function TagField({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div>
-      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+    <div className="border-t border-line py-4 last:pb-0">
+      <div className="mb-2 text-[10px] font-semibold uppercase text-ink-3">
         {label}
       </div>
       <div className="flex flex-wrap gap-1.5">{children}</div>

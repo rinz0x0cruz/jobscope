@@ -115,13 +115,32 @@ def send_digest_result(cfg: dict, store) -> DigestResult:
     if not last:
         store.meta_set("digest:last", now_iso())   # baseline; skip the initial flood
         return DigestResult(0, True, "baseline")
-    fresh = [j for j in store.jobs(order_by_score=True)
-             if j.tier in ("Strong", "Good") and j.first_seen and j.first_seen > last][:25]
+    all_reviews = store.list_job_reviews()
+    origins_by_job: dict[str, list[str]] = {}
+    if all_reviews:
+        pending = {
+            review["job_id"]: review for review in all_reviews
+            if review["state"] == "pending" and review["first_seen"] > last
+        }
+        fresh = [
+            job for job in store.jobs(order_by_score=True)
+            if job.id in pending and job.tier in ("Strong", "Good")
+        ]
+        origins_by_job = {job_id: review["origins"] for job_id, review in pending.items()}
+        fresh.sort(key=lambda job: (
+            0 if "monitored" in origins_by_job.get(job.id, []) else 1,
+            -float(job.score or 0),
+        ))
+        fresh = fresh[:25]
+    else:
+        # Pre-monitoring databases keep the historical behavior until seeded.
+        fresh = [job for job in store.jobs(order_by_score=True)
+                 if job.tier in ("Strong", "Good") and job.first_seen and job.first_seen > last][:25]
     if not fresh:
         return DigestResult(0, True, "no new matches")
     from jobscope.deliver import email as _email
-    subject = f"jobscope: {len(fresh)} new match{'es' if len(fresh) != 1 else ''}"
-    text, html = _digest_body(fresh)
+    subject = f"jobscope: {len(fresh)} job{'s' if len(fresh) != 1 else ''} to review"
+    text, html = _digest_body(fresh, origins_by_job or None)
     sent = _email.send(cfg, subject, text, html)
     if sent:
         store.meta_set("digest:last", now_iso())
@@ -134,35 +153,48 @@ def send_digest(cfg: dict, store) -> int:
     return send_digest_result(cfg, store).attempted
 
 
-def _digest_body(jobs: list) -> tuple[str, str]:
+def _digest_body(jobs: list, origins_by_job: dict[str, list[str]] | None = None) -> tuple[str, str]:
     """Render the (plain-text, HTML) bodies for the new-match digest."""
-    lines, rows = [], []
-    for j in jobs:
-        company = j.company or "?"
-        title = j.title or "?"
-        loc = "Remote" if j.is_remote else (j.location or "")
-        lines.append(f"  [{j.tier}] {company} \u2014 {title} ({int(j.score)})"
-                     + (f"  {loc}" if loc else ""))
-        cell = _html.escape(title)
-        title_html = (f'<a href="{_html.escape(j.url, quote=True)}">{cell}</a>'
-                      if j.url else cell)
-        rows.append(
-            f"<tr><td>{_html.escape(j.tier or '')}</td>"
-            f"<td>{_html.escape(company)}</td>"
-            f"<td>{title_html}</td>"
-            f"<td align='right'>{int(j.score)}</td>"
-            f"<td>{_html.escape(loc)}</td></tr>"
-        )
-    text = "New Strong/Good matches:\n\n" + "\n".join(lines) + "\n"
-    html = (
-        "<p>New Strong/Good matches:</p>"
-        "<table cellpadding='6' style='border-collapse:collapse'>"
-        "<tr><th align='left'>Tier</th><th align='left'>Company</th>"
-        "<th align='left'>Role</th><th align='right'>Score</th>"
-        "<th align='left'>Location</th></tr>"
-        + "".join(rows) + "</table>"
-    )
-    return text, html
+    groups: list[tuple[str, list]]
+    if origins_by_job:
+        monitored = [job for job in jobs if "monitored" in origins_by_job.get(job.id, [])]
+        discovery = [job for job in jobs if job not in monitored]
+        groups = [("Monitored companies", monitored), ("Discovery", discovery)]
+    else:
+        groups = [("Matches", jobs)]
+
+    text_parts = ["Jobs ready for review:"]
+    html_parts = ["<p>Jobs ready for review:</p>"]
+    for label, group in groups:
+        if not group:
+            continue
+        lines, rows = [], []
+        for job in group:
+            company = job.company or "?"
+            title = job.title or "?"
+            location = "Remote" if job.is_remote else (job.location or "")
+            lines.append(f"  [{job.tier}] {company} — {title} ({int(job.score)})"
+                         + (f"  {location}" if location else ""))
+            cell = _html.escape(title)
+            title_html = (f'<a href="{_html.escape(job.url, quote=True)}">{cell}</a>'
+                          if job.url else cell)
+            rows.append(
+                f"<tr><td>{_html.escape(job.tier or '')}</td>"
+                f"<td>{_html.escape(company)}</td><td>{title_html}</td>"
+                f"<td align='right'>{int(job.score)}</td>"
+                f"<td>{_html.escape(location)}</td></tr>"
+            )
+        text_parts.extend(["", f"{label} ({len(group)}):", *lines])
+        html_parts.extend([
+            f"<h3>{_html.escape(label)} ({len(group)})</h3>",
+            "<table cellpadding='6' style='border-collapse:collapse'>",
+            "<tr><th align='left'>Tier</th><th align='left'>Company</th>"
+            "<th align='left'>Role</th><th align='right'>Score</th>"
+            "<th align='left'>Location</th></tr>",
+            *rows,
+            "</table>",
+        ])
+    return "\n".join(text_parts) + "\n", "".join(html_parts)
 
 
 def _set_status(store, expr: str) -> int:

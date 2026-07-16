@@ -49,7 +49,7 @@ def test_sends_new_strong_good_since_marker(monkeypatch):
         assert n == 2
         assert len(sent) == 1
         subject, text, html = sent[0]
-        assert subject == "jobscope: 2 new matches"
+        assert subject == "jobscope: 2 jobs to review"
         assert "Acme" in text and "Globex" in text and "ShopCo" not in text
         assert store.meta_get("digest:last") > "2000-01-01T00:00:00Z"   # marker advanced
         store.close()
@@ -64,7 +64,7 @@ def test_singular_subject(monkeypatch):
         store.meta_set("digest:last", "2000-01-01T00:00:00Z")
         store.upsert_job(_job("Security Engineer", "Acme", "Strong", 88))
         track.send_digest({"email": {"enabled": True}}, store)
-        assert sent == ["jobscope: 1 new match"]
+        assert sent == ["jobscope: 1 job to review"]
         store.close()
 
 
@@ -118,3 +118,32 @@ def test_digest_body_escapes_and_lists():
     assert "a=1&amp;b=2" in html                                    # href escaped
     assert "<a href=" in html                                       # role is linked
     assert "Remote" in html                                         # remote job -> "Remote" location
+
+
+def test_digest_prioritizes_pending_monitored_then_discovery(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        "jobscope.deliver.email.send",
+        lambda cfg, subject, text, html=None, **kwargs: sent.append((subject, text, html)) or True,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.meta_set("digest:last", "2000-01-01T00:00:00Z")
+        monitored = _job("Monitored Role", "Acme", "Good", 60)
+        discovery = _job("Discovery Role", "Globex", "Strong", 90)
+        dismissed = _job("Dismissed Role", "Nope", "Strong", 99)
+        for job in (monitored, discovery, dismissed):
+            store.upsert_job(job)
+        store.set_job_review(monitored.id, "pending", origins=["monitored"])
+        store.set_job_review(discovery.id, "pending", origins=["discovery"])
+        store.set_job_review(dismissed.id, "dismissed", origins=["monitored"])
+
+        result = track.send_digest_result({"email": {"enabled": True}}, store)
+
+        assert result.attempted == 2
+        _subject, text, html = sent[0]
+        assert text.index("Monitored companies") < text.index("Discovery")
+        assert "Monitored Role" in text and "Discovery Role" in text
+        assert "Dismissed Role" not in text
+        assert "<h3>Monitored companies" in html
+        store.close()

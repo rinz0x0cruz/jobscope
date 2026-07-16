@@ -40,7 +40,9 @@ describe('Timeline lens', () => {
   it('renders the "Up next" agenda and the grouped history timeline', () => {
     render(<Timeline timeline={makeTimeline()} onOpen={vi.fn()} />)
 
-    expect(screen.getByText('Up next')).toBeInTheDocument()
+    expect(screen.getByText('Actions and history')).toBeInTheDocument()
+    expect(screen.getByText('Action queue')).toBeInTheDocument()
+    expect(screen.getByText('Event stream')).toBeInTheDocument()
     expect(screen.getByText('Follow up with Initech')).toBeInTheDocument()
     expect(screen.getByText('3d overdue')).toBeInTheDocument()
     expect(screen.getByText('This week')).toBeInTheDocument()

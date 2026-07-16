@@ -53,6 +53,8 @@ def test_public_mode_ships_no_data():
         assert pub["total"] == 0
         assert pub["applications"] == []
         assert pub["applied_outreach"] == []
+        assert pub["companies"] == []
+        assert pub["reviews"] == []
         assert pub["profile"] is None
         assert pub["overview"]["funnel"] == {}
         assert pub["overview"]["targets"] == []

@@ -40,9 +40,6 @@ def _profile_data(cfg: dict, store) -> dict | None:
     return prof
 
 
-_CONTACT_CONF_RANK = {"high": 0, "medium": 1, "low": 2}
-
-
 def _applied_outreach_data(store) -> list:
     """Pre-computed HR contacts for the companies you're actively applied to, joined
     with each application's status/date (shown behind the site unlock, stripped from
@@ -50,6 +47,8 @@ def _applied_outreach_data(store) -> list:
     appear, ordered most-recently-active first (mirrors ``outreach-scan``). Exactly
     ONE contact per company is surfaced -- the single highest-confidence address (a
     real recruiter who emailed you > a site-published address > a role inbox)."""
+    from jobscope.apply.outreach import best_recruiter_contact
+
     contacts_by = {c["company"]: c for c in store.list_company_contacts()}
     out = []
     for r in store.active_application_companies(limit=1000):
@@ -57,7 +56,9 @@ def _applied_outreach_data(store) -> list:
         contacts = (cc or {}).get("contacts") or []
         if not contacts:
             continue
-        best = min(contacts, key=lambda c: _CONTACT_CONF_RANK.get(c.get("confidence", ""), 3))
+        best = best_recruiter_contact(contacts)
+        if best is None:
+            continue
         out.append({
             "company": r["company"],
             "domain": (cc or {}).get("domain") or "",
@@ -66,6 +67,51 @@ def _applied_outreach_data(store) -> list:
             "contacts": [best],
         })
     return out
+
+
+def _companies_data(store) -> list[dict[str, Any]]:
+    """Operational monitor summaries for the encrypted dashboard payload."""
+    from jobscope.apply.outreach import best_recruiter_contact, rank_recruiter_contacts
+
+    out = []
+    for monitor in store.company_monitor_summaries():
+        contact_record = store.get_company_contacts(monitor["company"]) or {}
+        contacts = rank_recruiter_contacts(contact_record.get("contacts") or [])
+        out.append({
+            "id": monitor["id"],
+            "company": monitor["company"],
+            "provider": monitor["provider"],
+            "slug": monitor["slug"],
+            "careers_url": monitor["careers_url"],
+            "status": monitor["status"],
+            "resolution_status": monitor["resolution_status"],
+            "added_from": monitor["origins"],
+            "checked_at": monitor.get("checked_at") or "",
+            "last_success_at": monitor.get("last_success_at") or "",
+            "health_status": monitor.get("health_status") or "",
+            "health_detail": monitor.get("health_detail") or "",
+            "board_count": int(monitor.get("board_count") or 0),
+            "open_matches": int(monitor.get("open_matches") or 0),
+            "pending_count": int(monitor.get("pending_count") or 0),
+            "saved_count": int(monitor.get("saved_count") or 0),
+            "contact_domain": contact_record.get("domain") or "",
+            "contacts_checked_at": contact_record.get("discovered_at") or "",
+            "recruiter_count": len(contacts),
+            "recruiter": best_recruiter_contact(contacts),
+        })
+    return out
+
+
+def _reviews_data(store) -> list[dict[str, Any]]:
+    """Durable review decisions and source provenance for encrypted clients."""
+    return [{
+        "job_id": review["job_id"],
+        "state": review["state"],
+        "origins": review["origins"],
+        "monitor_ids": review["monitor_ids"],
+        "first_seen": review["first_seen"],
+        "reviewed_at": review["reviewed_at"],
+    } for review in store.list_job_reviews()]
 
 
 def build_data(cfg: dict, store, public: bool = False) -> dict:
@@ -80,7 +126,8 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     if public:
         return {"generated": now_iso(), "total": 0, "rows": [],
                 "overview": {"funnel": {}, "gaps": [], "considered": 0, "targets": []},
-                "applications": [], "profile": None, "applied_outreach": []}
+            "applications": [], "profile": None, "applied_outreach": [],
+            "companies": [], "reviews": []}
     jobs = store.jobs(order_by_score=True)
     # Skip-tier roles (off-target / too-senior / filtered) are hidden from the
     # dashboard by default, so the pages show only actionable matches. Set
@@ -102,9 +149,12 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     apps = _application_records(store)
     profile = _profile_data(cfg, store)
     applied_outreach = _applied_outreach_data(store)
+    companies = _companies_data(store)
+    reviews = _reviews_data(store)
     return {"generated": now_iso(), "total": len(rows), "rows": rows,
             "overview": overview, "applications": apps, "profile": profile,
-            "applied_outreach": applied_outreach}
+            "applied_outreach": applied_outreach, "companies": companies,
+            "reviews": reviews}
 
 
 def _json_path(cfg: dict, public: bool) -> str:
@@ -363,8 +413,22 @@ def _dedupe(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _job_record(job, enr: dict, store, stale_days: int = 45, resume=None) -> dict[str, Any]:
+    from jobscope.apply.outreach import best_recruiter_contact
+
     salary = _fmt_salary(job)
     contacts = store.contacts_for(job.company) if job.company else []
+    company_contacts = store.get_company_contacts(job.company) if job.company else None
+    recruiter = None
+    if company_contacts:
+        candidates = company_contacts.get("contacts") or []
+        best = best_recruiter_contact(candidates)
+        if best:
+            recruiter = {
+                "email": best.get("email") or "",
+                "confidence": best.get("confidence") or "",
+                "source": best.get("source") or "",
+                "note": best.get("note") or "",
+            }
     rationale = job.rationale or ""
     posted_age = _age_days(job.date_posted or job.first_seen or "")
     coverage_pct = None
@@ -384,6 +448,10 @@ def _job_record(job, enr: dict, store, stale_days: int = 45, resume=None) -> dic
         "tier": job.tier or "Skip",
         "base": job.resume_base or "",
         "salary": salary,
+        "salary_min": job.salary_min,
+        "salary_max": job.salary_max,
+        "salary_interval": job.salary_interval or "",
+        "currency": job.currency or "",
         "size": companies.company_size(job.company)[1] if job.company else "",
         "funding": companies.company_funding(job.company) if job.company else "",
         "country": _country_of(job),
@@ -406,6 +474,7 @@ def _job_record(job, enr: dict, store, stale_days: int = 45, resume=None) -> dic
         "description": _jd_snapshot(job.description),
         "contacts": [{"name": c.get("name"), "title": c.get("title"),
                       "url": c.get("profile_url") or c.get("search_url")} for c in contacts],
+        "recruiter": recruiter,
     }
 
 
