@@ -1,4 +1,6 @@
 import type {
+  ActivityAudit,
+  Application,
   DashboardData,
   JobReview,
   JobRow,
@@ -16,6 +18,7 @@ export type MonitoringAction =
   | { type: 'monitor.status'; monitor_id: string; status: MonitorStatus }
   | { type: 'monitor.scan'; monitor_id: string }
   | { type: 'review.set'; job_id: string; state: ReviewState }
+  | { type: 'application.restore'; job_id: string }
 
 export interface MonitoringActionResult {
   ok: boolean
@@ -24,6 +27,8 @@ export interface MonitoringActionResult {
   companies?: MonitoredCompany[]
   reviews?: JobReview[]
   rows?: JobRow[]
+  applications?: Application[]
+  activity_audit?: ActivityAudit
   scans?: Array<{
     ok: boolean
     company: string
@@ -57,6 +62,7 @@ function api(path: string): string {
 
 function actionKey(action: MonitoringAction): string {
   if (action.type === 'review.set') return `review:${action.job_id}`
+  if (action.type === 'application.restore') return `application:${action.job_id}:restore`
   if (action.type === 'monitor.upsert') return `monitor-company:${action.company.trim().toLowerCase()}`
   return `monitor:${action.monitor_id}:${action.type}`
 }
@@ -168,6 +174,11 @@ function queuedCompany(action: Extract<MonitoringAction, { type: 'monitor.upsert
 export function projectMonitoringActions(data: DashboardData, actions: MonitoringAction[]): DashboardData {
   let companies = [...data.companies]
   let reviews = [...data.reviews]
+  let applications = [...(data.applications ?? [])]
+  let activityAudit = {
+    ...data.activity_audit,
+    recoverable_applications: [...data.activity_audit.recoverable_applications],
+  }
   for (const action of collapseMonitoringActions(actions)) {
     if (action.type === 'review.set') {
       const existing = reviews.find((review) => review.job_id === action.job_id)
@@ -185,6 +196,31 @@ export function projectMonitoringActions(data: DashboardData, actions: Monitorin
             first_seen: new Date().toISOString(),
             reviewed_at: action.state === 'pending' ? '' : new Date().toISOString(),
           }]
+    } else if (action.type === 'application.restore') {
+      const recoverable = activityAudit.recoverable_applications.find(
+        (application) => application.job_id === action.job_id,
+      )
+      if (recoverable && !applications.some((application) => application.job_id === action.job_id)) {
+        applications = [...applications, {
+          job_id: recoverable.job_id,
+          company: recoverable.company,
+          title: recoverable.title,
+          status: recoverable.status,
+          applied_at: '',
+          updated: recoverable.tombstoned_at,
+          source: recoverable.source,
+          interview_at: '',
+          salary_offered: '',
+          offer_accepted: '',
+          timeline: [],
+        }]
+      }
+      activityAudit = {
+        ...activityAudit,
+        recoverable_applications: activityAudit.recoverable_applications.filter(
+          (application) => application.job_id !== action.job_id,
+        ),
+      }
     } else if (action.type === 'monitor.status') {
       companies = companies.map((company) => company.id === action.monitor_id
         ? { ...company, status: action.status }
@@ -212,5 +248,11 @@ export function projectMonitoringActions(data: DashboardData, actions: Monitorin
       }
     }
   }
-  return { ...data, companies, reviews }
+  return {
+    ...data,
+    applications,
+    companies,
+    reviews,
+    activity_audit: activityAudit,
+  }
 }

@@ -573,7 +573,9 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
             current_stage = "inbox"
             stages.append(_run_stage(
                 "inbox", required=True,
-                action=lambda: inbox.run(cfg, store, since=since),
+                action=lambda: inbox.run(
+                    cfg, store, since=since, initiator="local_refresh",
+                ),
                 nonzero_is_failure=True,
             ))
 

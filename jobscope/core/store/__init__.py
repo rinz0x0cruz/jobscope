@@ -25,10 +25,12 @@ from .mail import MailMixin
 from .meta import MetaMixin
 from .monitoring import MonitoringMixin
 from .profile import ProfileMixin
+from .reconciliation_audit import ReconciliationAuditMixin
 
 
 class Store(JobsMixin, EnrichmentMixin, ApplicationsMixin, MailMixin,
-            ProfileMixin, MetaMixin, MonitoringMixin, _StoreBase):
+            ProfileMixin, MetaMixin, MonitoringMixin, ReconciliationAuditMixin,
+            _StoreBase):
     """One SQLite database behind a single shared connection.
 
     Composes the per-concern mixins over :class:`~jobscope.store.base._StoreBase`,

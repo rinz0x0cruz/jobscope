@@ -94,7 +94,50 @@ CREATE TABLE IF NOT EXISTS applications (
     outreach_to TEXT,
     interview_at TEXT,
     salary_offered TEXT,
-    offer_accepted TEXT
+    offer_accepted TEXT,
+    tombstoned_at TEXT,
+    tombstone_reason TEXT,
+    reconciliation_run_id TEXT,
+    reconciliation_exempt INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS reconciliation_runs (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL CHECK (action IN ('recompute', 'reclassify', 'restore')),
+    initiator TEXT NOT NULL CHECK (initiator IN ('cli', 'local_refresh', 'cloud_refresh', 'user')),
+    started_at TEXT NOT NULL,
+    completed_at TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running', 'completed', 'failed')),
+    applications_before INTEGER NOT NULL DEFAULT 0,
+    applications_after INTEGER,
+    events_before INTEGER NOT NULL DEFAULT 0,
+    events_after INTEGER,
+    groups_count INTEGER NOT NULL DEFAULT 0,
+    instances_count INTEGER NOT NULL DEFAULT 0,
+    reclassified_count INTEGER NOT NULL DEFAULT 0,
+    dropped_count INTEGER NOT NULL DEFAULT 0,
+    tombstoned_count INTEGER NOT NULL DEFAULT 0,
+    restored_count INTEGER NOT NULL DEFAULT 0,
+    error_code TEXT NOT NULL DEFAULT '',
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    baseline_only INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS reconciliation_decisions (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    base_job_id TEXT NOT NULL DEFAULT '',
+    application_id TEXT NOT NULL DEFAULT '',
+    decision_type TEXT NOT NULL,
+    old_status TEXT NOT NULL DEFAULT '',
+    new_status TEXT NOT NULL DEFAULT '',
+    old_signal TEXT NOT NULL DEFAULT '',
+    new_signal TEXT NOT NULL DEFAULT '',
+    reason_code TEXT NOT NULL,
+    recoverable INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE (run_id, sequence),
+    FOREIGN KEY (run_id) REFERENCES reconciliation_runs(id)
 );
 CREATE TABLE IF NOT EXISTS profile (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -201,6 +244,12 @@ CREATE INDEX IF NOT EXISTS idx_company_monitor_jobs_job
     ON company_monitor_jobs(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_reviews_state
     ON job_reviews(state);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_runs_started
+    ON reconciliation_runs(started_at DESC, status);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_decisions_run
+    ON reconciliation_decisions(run_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_reconciliation_decisions_application
+    ON reconciliation_decisions(application_id);
 """
 
 
@@ -229,9 +278,20 @@ class _StoreBase:
         self.path = path
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
+        existing_tables = {
+            row["name"] for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        seed_audit_baseline = (
+            "applications" in existing_tables and
+            "reconciliation_runs" not in existing_tables
+        )
         self.conn.executescript(SCHEMA)
         self.conn.commit()
         self._ensure_columns()
+        if seed_audit_baseline:
+            self._seed_reconciliation_baseline()
         _harden_perms(path)
 
     def _ensure_columns(self) -> None:
@@ -256,9 +316,47 @@ class _StoreBase:
             self.conn.execute("ALTER TABLE enrichment ADD COLUMN brief_json TEXT")
         appc = {r["name"] for r in self.conn.execute("PRAGMA table_info(applications)")}
         for col in ("company", "title", "source", "outreach_at", "outreach_to",
-                    "interview_at", "salary_offered", "offer_accepted"):
+                    "interview_at", "salary_offered", "offer_accepted",
+                    "tombstoned_at", "tombstone_reason", "reconciliation_run_id"):
             if col not in appc:
                 self.conn.execute(f"ALTER TABLE applications ADD COLUMN {col} TEXT")
+        if "reconciliation_exempt" not in appc:
+            self.conn.execute(
+                "ALTER TABLE applications ADD COLUMN reconciliation_exempt "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_applications_tombstone "
+            "ON applications(tombstoned_at, reconciliation_exempt)"
+        )
+        self.conn.commit()
+
+    def _seed_reconciliation_baseline(self) -> None:
+        """Record current counts once when a pre-audit database is upgraded."""
+        applications = self.conn.execute(
+            "SELECT COUNT(*) AS count FROM applications "
+            "WHERE COALESCE(tombstoned_at, '') = ''"
+        ).fetchone()["count"]
+        tombstones = self.conn.execute(
+            "SELECT COUNT(*) AS count FROM applications "
+            "WHERE COALESCE(tombstoned_at, '') <> ''"
+        ).fetchone()["count"]
+        events = self.conn.execute(
+            "SELECT COUNT(*) AS count FROM mail_events"
+        ).fetchone()["count"]
+        timestamp = now_iso()
+        self.conn.execute(
+            "INSERT OR IGNORE INTO reconciliation_runs ("
+            "id, action, initiator, started_at, completed_at, status, "
+            "applications_before, applications_after, events_before, events_after, "
+            "tombstoned_count, schema_version, baseline_only) "
+            "VALUES ('reconcile:baseline:v1', 'recompute', 'cli', ?, ?, 'completed', "
+            "?, ?, ?, ?, ?, 1, 1)",
+            (
+                timestamp, timestamp, applications, applications,
+                events, events, tombstones,
+            ),
+        )
         self.conn.commit()
 
     def close(self) -> None:

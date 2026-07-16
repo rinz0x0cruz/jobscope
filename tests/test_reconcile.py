@@ -3,6 +3,8 @@ conservative reclassify. Deterministic, offline."""
 import os
 import tempfile
 
+import pytest
+
 from jobscope.core.config import load_config
 from jobscope.core.model import Application, MailEvent
 from jobscope.core.store import Store
@@ -124,6 +126,9 @@ def test_recompute_is_idempotent():
         second = reconcile.recompute(store)
         assert first == second
         assert len({a["job_id"] for a in store.applications()}) == 2
+        latest = store.reconciliation_runs()[0]
+        assert latest["status"] == "completed"
+        assert store.reconciliation_decisions(latest["id"]) == []
         store.close()
 
 
@@ -140,6 +145,14 @@ def test_reclassify_end_to_end_fixes_stuck_interview_and_drops_otp():
         statuses = {a["job_id"]: a["status"] for a in store.applications()}
         assert statuses.get("mail:acc") == "applied"          # was stuck at "interview"
         assert not any(e["signal"] == "assessment" for e in store.mail_events())
+        runs = store.reconciliation_runs()
+        assert len(runs) == 1 and runs[0]["action"] == "reclassify"
+        assert runs[0]["reclassified_count"] == 1 and runs[0]["dropped_count"] == 1
+        decision_types = {
+            decision["decision_type"]
+            for decision in store.reconciliation_decisions(runs[0]["id"])
+        }
+        assert {"signal_reclassified", "event_dropped"} <= decision_types
         store.close()
 
 
@@ -161,7 +174,7 @@ def test_reclassify_keeps_stuck_assessment_without_snippet():
          "snippet": "", "signal": "assessment"}) == "assessment"
 
 
-def test_recompute_deletes_orphaned_mail_app():
+def test_recompute_tombstones_orphaned_mail_app():
     # A "mail:" app whose events were all dropped (newsletter/OTP) must not linger
     # as a ghost funnel card (LeetCode / Educative course blasts, GitHub CI mail).
     with tempfile.TemporaryDirectory() as tmp:
@@ -170,6 +183,45 @@ def test_recompute_deletes_orphaned_mail_app():
                                          company="LeetCode", source="inbox"))
         reconcile.recompute(store)   # no events exist for mail:ghost
         assert not any(a["job_id"] == "mail:ghost" for a in store.applications())
+        hidden = store.get_application("mail:ghost", include_tombstoned=True)
+        assert hidden["tombstone_reason"] == "orphan_mail_application"
+        run = store.reconciliation_runs()[0]
+        assert run["status"] == "completed" and run["tombstoned_count"] == 1
+        decisions = store.reconciliation_decisions(run["id"])
+        assert decisions[0]["decision_type"] == "application_tombstoned"
+        assert decisions[0]["recoverable"] is True
+        store.close()
+
+
+def test_recompute_failure_rolls_back_mutations_and_marks_run_failed(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        _, store = _store(tmp)
+        base = "mail:atomic"
+        _ev(store, 1, "Thanks for applying", "confirmation", "Acme", "2026-07-01",
+            job_id=base)
+        _ev(store, 2, "Rejected", "rejection", "Acme", "2026-07-03", job_id=base)
+        _ev(store, 3, "Thanks for applying", "confirmation", "Acme", "2026-07-10",
+            job_id=base)
+        original = store._set_application
+        writes = 0
+
+        def fail_second_write(*args, **kwargs):
+            nonlocal writes
+            writes += 1
+            if writes == 2:
+                raise RuntimeError("injected reconciliation failure")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(store, "_set_application", fail_second_write)
+
+        with pytest.raises(RuntimeError, match="injected reconciliation failure"):
+            reconcile.recompute(store)
+
+        assert store.applications() == []
+        assert {event["job_id"] for event in store.mail_events()} == {base}
+        run = store.reconciliation_runs()[0]
+        assert run["status"] == "failed" and run["error_code"] == "transaction_failed"
+        assert store.reconciliation_decisions(run["id"]) == []
         store.close()
 
 

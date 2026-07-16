@@ -6,11 +6,22 @@
 
 import { ArrowRight, CalendarClock, History, Inbox } from 'lucide-react'
 import type { ItemTone } from '@/lib/briefing'
+import type { ActivityAudit } from '@/lib/schema'
 import type { AgendaItem, TimelineGroup, Timeline as TimelineData } from '@/lib/timeline'
+import { ReconciliationAudit } from './ReconciliationAudit'
 
 export interface TimelineProps {
   timeline: TimelineData
   onOpen: (jobId: string) => void
+  audit?: ActivityAudit
+  onRecover?: (jobId: string) => void
+}
+
+const EMPTY_AUDIT: ActivityAudit = {
+  recent_runs: [],
+  selected_run_id: '',
+  decisions: [],
+  recoverable_applications: [],
 }
 
 /** ItemTone → accent color (theme var) for the dots, pills and spine markers. */
@@ -87,7 +98,12 @@ function GroupSection({ group, onOpen }: { group: TimelineGroup; onOpen: (jobId:
  * needs action, followed by the chronological history of the hunt rendered as a
  * classic vertical timeline, grouped by recency.
  */
-export function Timeline({ timeline, onOpen }: TimelineProps) {
+export function Timeline({
+  timeline,
+  onOpen,
+  audit = EMPTY_AUDIT,
+  onRecover = () => {},
+}: TimelineProps) {
   const { agenda, groups } = timeline
 
   if (agenda.length === 0 && groups.length === 0) {
@@ -97,6 +113,7 @@ export function Timeline({ timeline, onOpen }: TimelineProps) {
           <p className="text-[10px] font-semibold uppercase text-ink-3">Activity</p>
           <h2 className="mt-1 text-xl font-semibold text-ink">Actions and history</h2>
         </header>
+        <ReconciliationAudit audit={audit} onRecover={onRecover} />
         <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
           <Inbox className="h-8 w-8 text-ink-3" strokeWidth={1.5} aria-hidden="true" />
           <p className="mt-4 max-w-sm text-[14px] text-ink-3">
@@ -122,6 +139,8 @@ export function Timeline({ timeline, onOpen }: TimelineProps) {
           </div>
         </div>
       </header>
+
+      <ReconciliationAudit audit={audit} onRecover={onRecover} />
 
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(320px,.72fr)_minmax(0,1.28fr)]">
         <aside className="min-h-0 border-b border-line lg:border-b-0 lg:border-r" aria-label="Action queue">

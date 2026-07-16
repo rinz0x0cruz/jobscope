@@ -50,6 +50,9 @@ describe('unlockDashboard', () => {
     expect(out.reviews).toEqual([expect.objectContaining({
       job_id: 'j1', state: 'saved', origins: ['legacy'],
     })])
+    expect(out.activity_audit).toEqual({
+      recent_runs: [], selected_run_id: '', decisions: [], recoverable_applications: [],
+    })
   })
 
   it('migrates explicit empty reviews on a nonempty legacy payload', async () => {

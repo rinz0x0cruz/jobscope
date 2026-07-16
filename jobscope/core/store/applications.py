@@ -8,7 +8,8 @@ from .base import now_iso
 
 
 class ApplicationsMixin:
-    def set_application(self, app: Any) -> None:
+    def _set_application(self, app: Any, *, clear_tombstone: bool = False,
+                         reconciliation_run_id: str = "") -> None:
         # Empty company/title/source never clobber existing values (an email sync
         # can enrich a prepped app, and a manual status change must not wipe a
         # previously parsed company); non-empty values overwrite.
@@ -38,12 +39,46 @@ class ApplicationsMixin:
              getattr(app, "outreach_to", ""), getattr(app, "interview_at", ""),
              getattr(app, "salary_offered", ""), getattr(app, "offer_accepted", "")),
         )
+        if clear_tombstone:
+            self.conn.execute(
+                "UPDATE applications SET tombstoned_at = NULL, tombstone_reason = NULL, "
+                "reconciliation_run_id = ?, reconciliation_exempt = 0 WHERE job_id = ?",
+                (reconciliation_run_id or None, app.job_id),
+            )
+
+    def set_application(self, app: Any) -> None:
+        self._set_application(app)
         self.conn.commit()
 
-    def get_application(self, job_id_: str) -> Optional[dict[str, Any]]:
+    def get_application(self, job_id_: str, *,
+                        include_tombstoned: bool = False) -> Optional[dict[str, Any]]:
+        tombstone_filter = "" if include_tombstoned else (
+            " AND COALESCE(tombstoned_at, '') = ''"
+        )
         row = self.conn.execute(
-            "SELECT * FROM applications WHERE job_id = ?", (job_id_,)).fetchone()
+            f"SELECT * FROM applications WHERE job_id = ?{tombstone_filter}",
+            (job_id_,),
+        ).fetchone()
         return dict(row) if row else None
+
+    def _tombstone_application(self, job_id_: str, *, reason: str, run_id: str) -> bool:
+        timestamp = now_iso()
+        cur = self.conn.execute(
+            "UPDATE applications SET tombstoned_at = ?, tombstone_reason = ?, "
+            "reconciliation_run_id = ?, updated = ? "
+            "WHERE job_id = ? AND COALESCE(tombstoned_at, '') = ''",
+            (timestamp, reason, run_id, timestamp, job_id_),
+        )
+        return cur.rowcount > 0
+
+    def _restore_application(self, job_id_: str, *, run_id: str) -> bool:
+        cur = self.conn.execute(
+            "UPDATE applications SET tombstoned_at = NULL, tombstone_reason = NULL, "
+            "reconciliation_run_id = ?, reconciliation_exempt = 1, updated = ? "
+            "WHERE job_id = ? AND COALESCE(tombstoned_at, '') <> ''",
+            (run_id, now_iso(), job_id_),
+        )
+        return cur.rowcount > 0
 
     def append_note(self, job_id_: str, text: str) -> None:
         """Append a date-stamped note to an application (creating the row if needed),
@@ -94,29 +129,54 @@ class ApplicationsMixin:
             "SELECT MAX(a.outreach_at) AS last FROM applications a "
             "LEFT JOIN jobs j ON j.id = a.job_id "
             "WHERE COALESCE(NULLIF(j.company, ''), a.company) = ? "
+            "AND COALESCE(a.tombstoned_at, '') = '' "
             "AND a.outreach_at IS NOT NULL AND a.outreach_at <> ''",
             (company,)).fetchone()
         return row["last"] if row and row["last"] else None
 
-    def applications(self) -> list[dict[str, Any]]:
+    def applications(self, *, include_tombstoned: bool = False) -> list[dict[str, Any]]:
         # Prefer the scraped job's company/title; fall back to the values parsed
         # from email for applications that have no matching job row.
         rows = self.conn.execute(
             "SELECT a.job_id, a.status, a.package_dir, a.resume_path, a.cover_path, "
             "a.applied_at, a.notes, a.updated, a.source, "
             "a.interview_at, a.salary_offered, a.offer_accepted, "
+            "a.tombstoned_at, a.tombstone_reason, a.reconciliation_run_id, "
+            "a.reconciliation_exempt, "
             "COALESCE(NULLIF(j.company, ''), a.company) AS company, "
             "COALESCE(NULLIF(j.title, ''), a.title) AS title, "
             "j.status AS job_status, j.closed_at "
             "FROM applications a "
-            "LEFT JOIN jobs j ON j.id = a.job_id ORDER BY a.updated DESC"
+                "LEFT JOIN jobs j ON j.id = a.job_id "
+                + ("" if include_tombstoned else
+                    "WHERE COALESCE(a.tombstoned_at, '') = '' ")
+                + "ORDER BY a.updated DESC"
         )
         return [dict(r) for r in rows]
 
     def purge_applications(self) -> int:
-        """Delete every tracked application (empties the funnel). Returns the count
-        removed. Stored emails are handled separately by ``purge_mail_events``."""
-        cur = self.conn.execute("DELETE FROM applications")
+        """Delete active applications while retaining recoverable tombstones."""
+        cur = self.conn.execute(
+            "DELETE FROM applications WHERE COALESCE(tombstoned_at, '') = ''"
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def purge_application_tombstones(self, older_than_days: int | None = None) -> int:
+        """Irreversibly delete reconciliation tombstones after explicit confirmation."""
+        sql = "DELETE FROM applications WHERE COALESCE(tombstoned_at, '') <> ''"
+        params: tuple[Any, ...] = ()
+        if older_than_days is not None:
+            import time
+            days = int(older_than_days)
+            if days < 1:
+                raise ValueError("tombstone retention must be at least one day")
+            cutoff = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - days * 86400),
+            )
+            sql += " AND tombstoned_at < ?"
+            params = (cutoff,)
+        cur = self.conn.execute(sql, params)
         self.conn.commit()
         return cur.rowcount
 
@@ -140,6 +200,7 @@ class ApplicationsMixin:
             "       a.applied_at, MAX(a.updated) AS updated, j.company_url AS company_url "
             "FROM applications a LEFT JOIN jobs j ON j.id = a.job_id "
             "WHERE a.status IN ('applied', 'interview') "
+            "  AND COALESCE(a.tombstoned_at, '') = '' "
             "  AND COALESCE(j.status, 'open') <> 'closed' "
             "  AND COALESCE(NULLIF(j.company, ''), a.company) <> '' "
             "GROUP BY COALESCE(NULLIF(j.company, ''), a.company) "

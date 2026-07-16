@@ -148,11 +148,11 @@ jobs:
             python -m jobscope scan --mode discovery || echo "::warning::broad discovery failed (non-fatal)"
           fi
           if [ "${{ inputs.inbox_backfill }}" = "true" ]; then
-            python -m jobscope inbox --backfill --include-spam
+            python -m jobscope inbox --backfill --include-spam --initiator cloud_refresh
           else
-            python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)" --include-spam
+            python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)" --include-spam --initiator cloud_refresh
           fi
-          python -m jobscope inbox --reclassify
+          python -m jobscope inbox --reclassify --initiator cloud_refresh
           python -m jobscope match
           python -m jobscope reviews sync
           python -m jobscope enrich || echo "::warning::public enrichment failed (non-fatal)"

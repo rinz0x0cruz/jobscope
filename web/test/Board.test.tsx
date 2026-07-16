@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { Board } from '@/features/board'
 import type { BoardColumn } from '@/lib/board'
+import type { ActivityAudit } from '@/lib/schema'
 
 function makeColumns(): BoardColumn[] {
   return [
@@ -30,6 +31,43 @@ function makeColumns(): BoardColumn[] {
       cards: [],
     },
   ]
+}
+
+const audit: ActivityAudit = {
+  recent_runs: [{
+    id: 'reconcile:one',
+    action: 'recompute',
+    initiator: 'cli',
+    started_at: '2026-07-16T00:00:00Z',
+    completed_at: '2026-07-16T00:00:01Z',
+    status: 'completed',
+    applications_before: 121,
+    applications_after: 99,
+    events_before: 140,
+    events_after: 138,
+    groups_count: 98,
+    instances_count: 99,
+    reclassified_count: 1,
+    dropped_count: 2,
+    tombstoned_count: 1,
+    restored_count: 0,
+    error_code: '',
+    schema_version: 1,
+    baseline_only: false,
+  }],
+  selected_run_id: 'reconcile:one',
+  decisions: [],
+  recoverable_applications: [{
+    job_id: 'mail:recover',
+    status: 'rejected',
+    company: 'Acme',
+    title: 'Security Engineer',
+    source: 'inbox',
+    tombstoned_at: '2026-07-16T00:00:01Z',
+    tombstone_reason: 'orphan_mail_application',
+    reconciliation_run_id: 'reconcile:one',
+    reconciliation_exempt: 0,
+  }],
 }
 
 describe('Board', () => {
@@ -63,5 +101,11 @@ describe('Board', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Needs attention: 1' }))
     expect(screen.getByLabelText('1 shown')).toBeInTheDocument()
     expect(screen.getByText('Senior Platform Engineer')).toBeInTheDocument()
+  })
+
+  it('shows the latest reconciliation delta', () => {
+    render(<Board columns={makeColumns()} onOpen={() => {}} audit={audit} />)
+    expect(screen.getByLabelText('Last reconciliation')).toHaveTextContent('121 → 99')
+    expect(screen.getByLabelText('Last reconciliation')).toHaveTextContent('1 recoverable')
   })
 })

@@ -98,6 +98,7 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `new` | New Strong/Good jobs since you last reviewed |
 | `dashboard [--open] [--public]` / `serve` | Emit/serve the dashboard; `--public` writes the empty schema-valid shell used by encrypted publication |
 | `track [--set job_id=status] [--timeline job_id]` | Application funnel, rates, follow-up reminders, and a per-application email timeline |
+| `applications [audit\|recover]` | Inspect reconciliation counts/decisions or explicitly restore a recoverable application |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Sync Gmail over read-only IMAP and auto-advance the funnel from application emails |
 | `export [--format json\|csv]` | Export ranked jobs |
 | `selftest` | Offline self-tests (no network, no keys) |
@@ -151,12 +152,39 @@ python -m jobscope dashboard --open           # Applications board: pipeline col
 Multiple mailboxes: add more entries under `accounts`, each with its own
 `password_env`. Everything stays local in SQLite; app passwords resolve from your OS
 keychain (`jobscope secrets set JOBSCOPE_GMAIL_APP_PW`) or `.env`. Email bodies are
-classified in memory and **not stored** unless `inbox.store_snippets` is on, and you can
-wipe stored mail/applications anytime with `jobscope purge`. Runs well from cron /
+classified in memory and **not stored** unless `inbox.store_snippets` is on. You can
+purge mail, active applications, audit detail, or confirmed tombstones separately with
+`jobscope purge`. Runs well from cron /
 Task Scheduler.
 
 > **Tip:** point jobscope at a **dedicated job-search Gmail account** (forward recruiter
 > mail to it) so its app password can't touch your primary inbox. See [SECURITY.md](SECURITY.md).
+
+## Reconciliation audit and recovery
+
+Every funnel recompute/reclassification records a bounded audit run: before/after
+application and event counts, aggregate split/reclassification/drop/tombstone totals,
+and controlled decision codes. Reconciliation no longer hard-deletes stale or orphaned
+email-derived applications. It tombstones them, hides them from the active funnel, and
+keeps their prior application fields available for explicit recovery.
+
+```bash
+python -m jobscope applications audit
+python -m jobscope applications audit --run <run_id>
+python -m jobscope applications recover <job_id>       # add --yes for terminal/rejected rows
+python -m jobscope purge --audit --older-than 730      # decisions only
+python -m jobscope purge --tombstones --yes             # irreversible recovery-data purge
+```
+
+A restored row is marked reconciliation-exempt so the next recompute does not remove it
+again. `retention.reconciliation_audit_days` defaults to 730 and prunes detailed
+decisions after successful inbox reconciliation; run summaries and tombstones persist
+until explicit purge. Audit rows never copy email subjects/bodies/snippets/from-addresses,
+recruiter addresses, notes, interview dates, or compensation.
+
+When a pre-audit database is first opened, Jobscope records one count-only
+`baseline_only` run. It does not fabricate historical decisions: if no matching old
+snapshot exists, an earlier count transition such as 121 → 99 cannot be reconstructed.
 
 ## Prioritization (company quality + location)
 
@@ -201,8 +229,9 @@ or search country (off by default; global remote is never penalized).
 ## Publish to GitHub Pages (view on mobile)
 
 The published dashboard is the **Vite/React app** in `web/`. Its public JavaScript embeds an
-**empty shell**; all roles, monitored companies, review decisions, contacts, profile, and
-applications live only in the separately fetched AES-256-GCM `site.enc.json` payload:
+**empty shell**; all roles, monitored companies, review decisions, contacts, profile,
+applications, and reconciliation audit/recovery data live only in the separately fetched
+AES-256-GCM `site.enc.json` payload:
 
 ```bash
 python -m jobscope dashboard --emit-json --public   # -> data/dashboard.public.json (redacted)
@@ -225,7 +254,7 @@ the tool and update the live site in one step — it refreshes your data
 (`scan → match → inbox`), rebuilds the redacted dashboard, and pushes it to `gh-pages`.
 Equivalent to `scripts/publish.ps1 -Refresh -Force` (or `scripts/publish.sh --refresh --force`);
 add `-NoScan` / `--no-scan` for a quick applications-only refresh that skips the job scan.
-The unlocked Pages app can queue Save/Dismiss/company-monitor actions in browser storage. With
+The unlocked Pages app can queue Save/Dismiss/company-monitor/application-restore actions in browser storage. With
 the optional fine-grained GitHub token connected, **Sync N** sends one bounded action batch to
 `refresh.yml`; changes clear only after the encrypted DB and site republish successfully.
 

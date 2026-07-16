@@ -44,6 +44,14 @@ class MailMixin:
                           role: Optional[str] = None) -> None:
         """Patch a stored event's classified signal, linked job_id, and/or re-parsed
         company/role in place (the event id is stable, derived from account|message_id)."""
+        self._update_mail_event(
+            event_id, signal=signal, job_id=job_id, company=company, role=role,
+        )
+        self.conn.commit()
+
+    def _update_mail_event(self, event_id: str, *, signal: Optional[str] = None,
+                           job_id: Optional[str] = None, company: Optional[str] = None,
+                           role: Optional[str] = None) -> None:
         sets: list[str] = []
         params: list[Any] = []
         if signal is not None:
@@ -62,11 +70,14 @@ class MailMixin:
             return
         params.append(event_id)
         self.conn.execute(f"UPDATE mail_events SET {', '.join(sets)} WHERE id = ?", params)
-        self.conn.commit()
 
     def delete_mail_event(self, event_id: str) -> None:
-        self.conn.execute("DELETE FROM mail_events WHERE id = ?", (event_id,))
+        self._delete_mail_event(event_id)
         self.conn.commit()
+
+    def _delete_mail_event(self, event_id: str) -> bool:
+        cur = self.conn.execute("DELETE FROM mail_events WHERE id = ?", (event_id,))
+        return cur.rowcount > 0
 
     def purge_mail_events(self, older_than_days: Optional[int] = None) -> int:
         """Delete stored email events -- the recruiter PII and body snippets. With

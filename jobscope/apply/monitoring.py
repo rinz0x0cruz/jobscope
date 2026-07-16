@@ -16,6 +16,7 @@ _ALLOWED_FIELDS = {
     "monitor.status": {"type", "monitor_id", "status"},
     "monitor.scan": {"type", "monitor_id"},
     "review.set": {"type", "job_id", "state"},
+    "application.restore": {"type", "job_id"},
 }
 
 
@@ -103,6 +104,11 @@ def _prepare_actions(cfg: dict, store, actions: Any) -> list[dict[str, Any]]:
             if store.get_company_monitor(monitor_id) is None:
                 raise ValueError(f"unknown monitor: {monitor_id}")
             prepared.append({"type": action_type, "monitor_id": monitor_id})
+        elif action_type == "application.restore":
+            job_id = _clean_string(raw.get("job_id"), "job_id", limit=240, required=True)
+            if store.get_application(job_id, include_tombstoned=True) is None:
+                raise ValueError(f"unknown application: {job_id}")
+            prepared.append({"type": action_type, "job_id": job_id})
         else:
             prepared.append({
                 "type": action_type,
@@ -112,44 +118,80 @@ def _prepare_actions(cfg: dict, store, actions: Any) -> list[dict[str, Any]]:
     return prepared
 
 
-def apply_actions(cfg: dict, store, actions: Any) -> dict[str, Any]:
+def apply_actions(cfg: dict, store, actions: Any, *, initiator: str = "user") -> dict[str, Any]:
     """Validate the full batch, commit mutations atomically, then perform scans."""
     prepared = _prepare_actions(cfg, store, actions)
     results: list[dict[str, Any]] = []
     scan_ids: list[str] = []
-    with store.conn:
-        for action in prepared:
-            action_type = action["type"]
-            if action_type == "monitor.upsert":
-                company = store._upsert_company_monitor(
-                    action["company"], provider=action["provider"], slug=action["slug"],
-                    careers_url=action["careers_url"], status=action["status"],
-                    resolution_status=action["resolution_status"], added_from="user",
-                )
-                if action["job_id"]:
-                    store._link_monitor_job(company["id"], action["job_id"])
-                    existing = store.get_job_review(action["job_id"])
-                    store._set_job_review(
-                        action["job_id"], existing["state"] if existing else "pending",
-                        ["monitored"],
+    restore_ids = [
+        action["job_id"] for action in prepared
+        if action["type"] == "application.restore"
+    ]
+    recoverable_restore_ids = [
+        job_id for job_id in restore_ids
+        if (store.get_application(job_id, include_tombstoned=True) or {}).get("tombstoned_at")
+    ]
+    restore_run = (
+        store.begin_reconciliation_run("restore", initiator)
+        if recoverable_restore_ids else None
+    )
+    restored_count = 0
+    try:
+        with store.conn:
+            for action in prepared:
+                action_type = action["type"]
+                if action_type == "monitor.upsert":
+                    company = store._upsert_company_monitor(
+                        action["company"], provider=action["provider"], slug=action["slug"],
+                        careers_url=action["careers_url"], status=action["status"],
+                        resolution_status=action["resolution_status"], added_from="user",
                     )
-                results.append(company)
-            elif action_type == "monitor.status":
-                results.append(store._set_company_monitor_status(
-                    action["monitor_id"], action["status"],
-                ))
-            elif action_type == "review.set":
-                results.append(store._set_job_review(
-                    action["job_id"], action["state"], (),
-                ))
-            else:
-                scan_ids.append(action["monitor_id"])
-
+                    if action["job_id"]:
+                        store._link_monitor_job(company["id"], action["job_id"])
+                        existing = store.get_job_review(action["job_id"])
+                        store._set_job_review(
+                            action["job_id"], existing["state"] if existing else "pending",
+                            ["monitored"],
+                        )
+                    results.append(company)
+                elif action_type == "monitor.status":
+                    results.append(store._set_company_monitor_status(
+                        action["monitor_id"], action["status"],
+                    ))
+                elif action_type == "review.set":
+                    results.append(store._set_job_review(
+                        action["job_id"], action["state"], (),
+                    ))
+                elif action_type == "application.restore":
+                    if restore_run is None:
+                        result = {"ok": True, "restored": False, "run_id": ""}
+                    else:
+                        from jobscope.apply import recovery
+                        result = recovery._restore_application_in_run(
+                            store, action["job_id"], restore_run["id"],
+                        )
+                    results.append(result)
+                    restored_count += int(result["restored"])
+                else:
+                    scan_ids.append(action["monitor_id"])
+            if restore_run is not None:
+                store._finalize_reconciliation_run(
+                    restore_run["id"], restored=restored_count,
+                )
+    except Exception:
+        if restore_run is not None:
+            store.fail_reconciliation_run(restore_run["id"], "transaction_failed")
+        raise
     scans = [monitor.scan_monitor(
         cfg, store, store.get_company_monitor(monitor_id), refresh_contacts=True,
     )
              for monitor_id in scan_ids]
-    from jobscope.deliver.render import _companies_data, _reviews_data
+    from jobscope.deliver.render import (
+        _activity_audit_data,
+        _application_records,
+        _companies_data,
+        _reviews_data,
+    )
     response = {
         "ok": True,
         "applied": len(results),
@@ -157,6 +199,8 @@ def apply_actions(cfg: dict, store, actions: Any) -> dict[str, Any]:
         "scans": scans,
         "companies": _companies_data(store),
         "reviews": _reviews_data(store),
+        "applications": _application_records(store),
+        "activity_audit": _activity_audit_data(store),
     }
     if scan_ids:
         from jobscope.deliver.render import build_data
@@ -219,7 +263,7 @@ def run_actions_file(cfg: dict, store, path: str) -> int:
         return 1
     actions = payload.get("actions") if isinstance(payload, dict) else payload
     try:
-        result = apply_actions(cfg, store, actions)
+        result = apply_actions(cfg, store, actions, initiator="cloud_refresh")
     except ValueError as exc:
         print(f"  invalid monitoring actions: {exc}")
         return 1

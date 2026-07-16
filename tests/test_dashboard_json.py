@@ -11,6 +11,7 @@ from jobscope.deliver import render
 from jobscope.core.config import load_config
 from jobscope.core.model import Application, Contact, Job, MailEvent, Resume
 from jobscope.core.store import Store
+from jobscope.ingest import reconcile
 
 
 def _seed(store):
@@ -97,11 +98,42 @@ def test_emit_json_public_is_empty():
         assert pub["rows"] == [] and pub["total"] == 0
         assert pub["applications"] == [] and pub["applied_outreach"] == []
         assert pub["companies"] == [] and pub["reviews"] == []
+        assert pub["activity_audit"] == {
+            "recent_runs": [], "selected_run_id": "", "decisions": [],
+            "recoverable_applications": [],
+        }
         assert pub["profile"] is None
         assert pub["overview"]["funnel"] == {}
         # nothing from the seeded private data leaks into the public payload
         assert "Senior Security Engineer" not in json.dumps(pub)
         store.close()
+
+
+def test_private_activity_audit_is_bounded_and_public_empty(tmp_path):
+    cfg = load_config("__no_such_config_for_tests__.yaml")
+    cfg["output"]["db_path"] = str(tmp_path / "audit.db")
+    store = Store(cfg["output"]["db_path"])
+    store.set_application(Application(
+        job_id="mail:audit-private", status="interview",
+        company="Private Audit Corp", title="Private Role", source="inbox",
+    ))
+    reconcile.recompute(store)
+
+    private = render.build_data(cfg, store, public=False)["activity_audit"]
+    public = render.build_data(cfg, store, public=True)["activity_audit"]
+
+    assert len(private["recent_runs"]) == 1
+    assert private["recent_runs"][0]["tombstoned_count"] == 1
+    assert private["selected_run_id"] == private["recent_runs"][0]["id"]
+    assert private["decisions"][0]["reason_code"] == "orphan_mail_application"
+    assert private["recoverable_applications"][0]["company"] == "Private Audit Corp"
+    assert not ({"subject", "snippet", "from_addr", "notes"} & set(private["decisions"][0]))
+    assert public == {
+        "recent_runs": [], "selected_run_id": "", "decisions": [],
+        "recoverable_applications": [],
+    }
+    assert "Private Audit Corp" not in json.dumps(public)
+    store.close()
 
 
 # --- P-A data contract: required keys -> accepted Python types ---------------
@@ -123,6 +155,7 @@ _TOP_LEVEL = {
     "applied_outreach": list,
     "companies": list,
     "reviews": list,
+    "activity_audit": dict,
 }
 
 _JOB_ROW = {
@@ -183,6 +216,34 @@ _MONITORED_COMPANY = {
 _JOB_REVIEW = {
     "job_id": str, "state": str, "origins": list, "monitor_ids": list,
     "first_seen": str, "reviewed_at": str,
+}
+
+_ACTIVITY_AUDIT = {
+    "recent_runs": list, "selected_run_id": str, "decisions": list,
+    "recoverable_applications": list,
+}
+
+_RECONCILIATION_RUN = {
+    "id": str, "action": str, "initiator": str, "started_at": str,
+    "completed_at": str, "status": str, "applications_before": int,
+    "applications_after": (int, type(None)), "events_before": int,
+    "events_after": (int, type(None)), "groups_count": int,
+    "instances_count": int, "reclassified_count": int, "dropped_count": int,
+    "tombstoned_count": int, "restored_count": int, "error_code": str,
+    "schema_version": int, "baseline_only": bool,
+}
+
+_RECONCILIATION_DECISION = {
+    "id": str, "run_id": str, "sequence": int, "base_job_id": str,
+    "application_id": str, "decision_type": str, "old_status": str,
+    "new_status": str, "old_signal": str, "new_signal": str,
+    "reason_code": str, "recoverable": bool, "created_at": str,
+}
+
+_RECOVERABLE_APPLICATION = {
+    "job_id": str, "status": str, "company": str, "title": str,
+    "source": str, "tombstoned_at": str, "tombstone_reason": str,
+    "reconciliation_run_id": str, "reconciliation_exempt": int,
 }
 
 # Optional sub-objects _enrich_summary() attaches; a present sub-object's keys
@@ -250,6 +311,16 @@ def _validate_contract(data):
         _require(company, _MONITORED_COMPANY, f"companies[{i}]")
     for i, review in enumerate(data["reviews"]):
         _require(review, _JOB_REVIEW, f"reviews[{i}]")
+    _require(data["activity_audit"], _ACTIVITY_AUDIT, "activity_audit")
+    for i, run in enumerate(data["activity_audit"]["recent_runs"]):
+        _require(run, _RECONCILIATION_RUN, f"activity_audit.recent_runs[{i}]")
+    for i, decision in enumerate(data["activity_audit"]["decisions"]):
+        _require(decision, _RECONCILIATION_DECISION, f"activity_audit.decisions[{i}]")
+    for i, application in enumerate(data["activity_audit"]["recoverable_applications"]):
+        _require(
+            application, _RECOVERABLE_APPLICATION,
+            f"activity_audit.recoverable_applications[{i}]",
+        )
 
 
 def test_build_data_matches_contract():
@@ -457,6 +528,10 @@ def test_dashboard_schema_artifact_matches_contract():
     assert set(defs["CompanyContact"]["required"]) == set(_COMPANY_CONTACT)
     assert set(defs["MonitoredCompany"]["required"]) == set(_MONITORED_COMPANY)
     assert set(defs["JobReview"]["required"]) == set(_JOB_REVIEW)
+    assert set(defs["ActivityAudit"]["required"]) == set(_ACTIVITY_AUDIT)
+    assert set(defs["ReconciliationRun"]["required"]) == set(_RECONCILIATION_RUN)
+    assert set(defs["ReconciliationDecision"]["required"]) == set(_RECONCILIATION_DECISION)
+    assert set(defs["RecoverableApplication"]["required"]) == set(_RECOVERABLE_APPLICATION)
 
 
 def test_render_dedupe_collapses_cross_source_duplicates():

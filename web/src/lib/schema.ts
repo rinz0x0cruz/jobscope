@@ -227,6 +227,66 @@ export interface JobReview {
   reviewed_at: string
 }
 
+export type ReconciliationAction = 'recompute' | 'reclassify' | 'restore'
+export type ReconciliationRunStatus = 'running' | 'completed' | 'failed'
+
+export interface ReconciliationRun {
+  id: string
+  action: ReconciliationAction
+  initiator: 'cli' | 'local_refresh' | 'cloud_refresh' | 'user'
+  started_at: string
+  completed_at: string
+  status: ReconciliationRunStatus
+  applications_before: number
+  applications_after: number | null
+  events_before: number
+  events_after: number | null
+  groups_count: number
+  instances_count: number
+  reclassified_count: number
+  dropped_count: number
+  tombstoned_count: number
+  restored_count: number
+  error_code: string
+  schema_version: number
+  baseline_only: boolean
+}
+
+export interface ReconciliationDecision {
+  id: string
+  run_id: string
+  sequence: number
+  base_job_id: string
+  application_id: string
+  decision_type: string
+  old_status: string
+  new_status: string
+  old_signal: string
+  new_signal: string
+  reason_code: string
+  recoverable: boolean
+  created_at: string
+}
+
+export interface RecoverableApplication {
+  job_id: string
+  status: string
+  company: string
+  title: string
+  source: string
+  tombstoned_at: string
+  tombstone_reason: string
+  reconciliation_run_id: string
+  reconciliation_exempt: number
+}
+
+export interface ActivityAudit {
+  recent_runs: ReconciliationRun[]
+  selected_run_id: string
+  decisions: ReconciliationDecision[]
+  recoverable_applications: RecoverableApplication[]
+}
+
 export interface DashboardData {
   generated: string
   total: number
@@ -237,12 +297,14 @@ export interface DashboardData {
   applied_outreach: AppliedCompany[]
   companies: MonitoredCompany[]
   reviews: JobReview[]
+  activity_audit: ActivityAudit
 }
 
 export function normalizeDashboardData(data: DashboardData): DashboardData {
   const legacy = data as DashboardData & {
     companies?: MonitoredCompany[]
     reviews?: JobReview[]
+    activity_audit?: Partial<ActivityAudit>
   }
   return {
     ...data,
@@ -259,6 +321,12 @@ export function normalizeDashboardData(data: DashboardData): DashboardData {
       }
     }),
     applications: data.applications ?? [],
+    activity_audit: {
+      recent_runs: legacy.activity_audit?.recent_runs ?? [],
+      selected_run_id: legacy.activity_audit?.selected_run_id ?? '',
+      decisions: legacy.activity_audit?.decisions ?? [],
+      recoverable_applications: legacy.activity_audit?.recoverable_applications ?? [],
+    },
     companies: (legacy.companies ?? []).map((company) => {
       const legacyCompany = company as MonitoredCompany & Partial<Pick<MonitoredCompany,
         'contact_domain' | 'contacts_checked_at' | 'recruiter_count' | 'recruiter'>>

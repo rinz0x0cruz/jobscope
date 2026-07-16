@@ -179,6 +179,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "db_path": "data/jobscope.db",
         "include_skip": False,  # publish Skip-tier (off-target/too-senior) roles to the dashboard? default: hide them
     },
+    "retention": {
+        "reconciliation_audit_days": 730,
+    },
     # Local dashboard server (`jobscope serve`). The served page shows a
     # localhost-only "Refresh & Publish" button that syncs the Gmail inbox
     # (append-only), rescores matches, rebuilds the dashboard, and publishes the

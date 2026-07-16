@@ -12,6 +12,10 @@ def _write_inputs(tmp_path):
         "overview": {"funnel": {}, "gaps": [], "considered": 0, "targets": []},
         "applications": [], "profile": None, "applied_outreach": [],
         "companies": [], "reviews": [],
+        "activity_audit": {
+            "recent_runs": [], "selected_run_id": "", "decisions": [],
+            "recoverable_applications": [],
+        },
     }
     full = {
         **public,
@@ -29,6 +33,21 @@ def _write_inputs(tmp_path):
             "careers_url": "https://private-monitor.example/careers",
             "health_detail": "private monitor health detail",
         }],
+        "activity_audit": {
+            "recent_runs": [{"id": "reconcile:private"}],
+            "selected_run_id": "reconcile:private",
+            "decisions": [{
+                "id": "reconcile:private:000001",
+                "run_id": "reconcile:private",
+                "base_job_id": "mail:private-decision",
+                "application_id": "mail:private-decision",
+            }],
+            "recoverable_applications": [{
+                "job_id": "mail:private-tombstone",
+                "company": "Private Tombstone Corp",
+                "title": "Private Recovered Role",
+            }],
+        },
         "rows": [{
             "id": "private-job-123", "title": "Unique Detection Engineer",
             "company": "Sensitive Example Corp", "location": "Remote",
@@ -112,6 +131,9 @@ def test_verify_artifact_rejects_private_string_leak(tmp_path):
     'email:"recruiter@private-referral.example"',
     'company:"Private Monitor Corp"',
     'slug:"private-monitor-board"',
+    'company:"Private Tombstone Corp"',
+    'title:"Private Recovered Role"',
+    'application_id:"mail:private-decision"',
 ])
 def test_verify_artifact_rejects_outreach_and_monitor_leaks(tmp_path, leak):
     paths = _write_inputs(tmp_path)
