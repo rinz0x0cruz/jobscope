@@ -219,3 +219,33 @@ def test_jobs_only_scan_never_runs_recruiter_lookup(monkeypatch):
     assert result["contact_status"] == "not-run"
     assert result["recruiter_count"] == 0 and result["recruiter"] is None
     store.close()
+
+
+def test_disabled_recruiter_lookup_is_not_reported_as_success():
+    cfg, store = _setup()
+    cfg["apply"]["outreach"]["monitor_scan"]["enabled"] = False
+    company = store.upsert_company_monitor("Acme", added_from="user")
+
+    result = monitor.refresh_monitor_contacts(cfg, store, company)
+
+    assert result["ok"] is False
+    assert result["contact_status"] == "disabled"
+    assert result["contact_error"] == "recruiter lookup is disabled in configuration"
+    store.close()
+
+
+def test_unresolved_recruiter_lookup_reports_domain_error(monkeypatch):
+    from jobscope.apply import outreach
+
+    cfg, store = _setup()
+    company = store.upsert_company_monitor("Unknown Labs", added_from="user")
+    monkeypatch.setattr(outreach, "refresh_company_contacts", lambda *_a, **_k: {
+        "status": "unresolved", "domain": "", "contacts": [], "recruiter": None,
+    })
+
+    result = monitor.refresh_monitor_contacts(cfg, store, company)
+
+    assert result["ok"] is False
+    assert result["contact_status"] == "unresolved"
+    assert result["contact_error"] == "could not confirm a company domain"
+    store.close()
