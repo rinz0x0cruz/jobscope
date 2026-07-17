@@ -244,12 +244,18 @@ def refresh_monitor_contacts(
             url=monitor.get("careers_url") or "",
             force=force,
         )
+        contact_status = contact_result["status"]
+        failure_detail = {
+            "disabled": "recruiter lookup is disabled in configuration",
+            "unresolved": "could not confirm a company domain",
+        }.get(contact_status, "")
         result.update({
-            "ok": contact_result["status"] not in {"error", "unresolved"},
-            "contact_status": contact_result["status"],
+            "ok": contact_status in {"fresh", "updated", "preserved"},
+            "contact_status": contact_status,
             "contact_domain": contact_result["domain"],
             "recruiter_count": len(contact_result["contacts"]),
             "recruiter": contact_result["recruiter"],
+            "contact_error": failure_detail,
         })
     except Exception as exc:  # recruiter discovery is optional
         result["contact_status"] = "error"
