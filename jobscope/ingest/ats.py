@@ -408,7 +408,8 @@ def _slug_variants(name: str) -> list[str]:
 
 def resolve_board_result(name: str, *, provider: str | None = None,
                          slug: str | None = None, careers_url: str = "",
-                         probe: bool = True) -> BoardResolution:
+                         probe: bool = True,
+                         inspect_careers_page: bool = True) -> BoardResolution:
     """Resolve a company and optional careers URL to a typed board outcome.
 
     Priority: an explicit ``provider`` + ``slug`` -> a ``Name|provider|slug`` override
@@ -445,7 +446,9 @@ def resolve_board_result(name: str, *, provider: str | None = None,
         )
     if careers_url:
         direct = parse_board_url(careers_url)
-        discovered = direct or _board_from_careers_page(careers_url)
+        discovered = direct or (
+            _board_from_careers_page(careers_url) if inspect_careers_page else None
+        )
         if discovered:
             discovered_provider, discovered_slug = discovered
             return BoardResolution(

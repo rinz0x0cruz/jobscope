@@ -23,7 +23,6 @@ import {
   MONITORING_QUEUE_EVENT,
   projectMonitoringActions,
   queuedMonitoringActions,
-  resolveCompany,
   submitMonitoringActions,
   type MonitoringAction,
 } from '@/lib/companyActions'
@@ -94,11 +93,23 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
           activity_audit: result.activity_audit ?? current.activity_audit,
         }))
         const scan = result.scans?.[0]
+        const contacts = result.contacts?.[0]
         if (scan) {
-          const recruiter = scan.recruiter?.email
-          toast.success(`Scanned ${scan.company}`, {
-            description: `${scan.matched ?? 0} matched role${scan.matched === 1 ? '' : 's'} · ${recruiter || 'no verified recruiter found'}`,
-          })
+          if (scan.ok) {
+            toast.success(`Scanned jobs at ${scan.company}`, {
+              description: `${scan.matched ?? 0} matched role${scan.matched === 1 ? '' : 's'}`,
+            })
+          } else {
+            toast.warning(`Job scan needs attention: ${scan.error || scan.company}`)
+          }
+        } else if (contacts) {
+          if (contacts.ok) {
+            toast.success(contacts.recruiter_count
+              ? `Found ${contacts.recruiter_count} recruiter contact${contacts.recruiter_count === 1 ? '' : 's'} for ${contacts.company}`
+              : `No recruiter contacts found for ${contacts.company}`)
+          } else {
+            toast.warning(`Recruiter lookup needs attention: ${contacts.contact_error || contacts.company}`)
+          }
         } else {
           toast.success('Changes saved locally')
         }
@@ -207,7 +218,6 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
               onFilter={(companyFilter) => onStateChange({ companyFilter }, { replace: true })}
               onSelect={(company) => onStateChange({ company })}
               onOpenJob={open}
-              onResolve={resolveCompany}
               onActions={(actions) => runMonitoringActions(actions)}
             />
           </div>

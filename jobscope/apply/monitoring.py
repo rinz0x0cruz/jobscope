@@ -15,6 +15,7 @@ _ALLOWED_FIELDS = {
     "monitor.upsert": {"type", "company", "provider", "slug", "careers_url", "status", "job_id"},
     "monitor.status": {"type", "monitor_id", "status"},
     "monitor.scan": {"type", "monitor_id"},
+    "monitor.contacts": {"type", "monitor_id"},
     "review.set": {"type", "job_id", "state"},
     "application.restore": {"type", "job_id"},
 }
@@ -79,7 +80,8 @@ def _prepare_actions(cfg: dict, store, actions: Any) -> list[dict[str, Any]]:
                 raise ValueError(f"unknown job: {job_id}")
             resolution = ats.resolve_board_result(
                 company, provider=provider or None, slug=slug or None,
-                careers_url=careers_url, probe=True,
+                careers_url=careers_url, probe=False,
+                inspect_careers_page=False,
             )
             prepared.append({
                 "type": action_type,
@@ -99,7 +101,7 @@ def _prepare_actions(cfg: dict, store, actions: Any) -> list[dict[str, Any]]:
                 "type": action_type, "monitor_id": monitor_id,
                 "status": _clean_string(raw.get("status"), "status", limit=20, required=True),
             })
-        elif action_type == "monitor.scan":
+        elif action_type in {"monitor.scan", "monitor.contacts"}:
             monitor_id = _clean_string(raw.get("monitor_id"), "monitor_id", limit=100, required=True)
             if store.get_company_monitor(monitor_id) is None:
                 raise ValueError(f"unknown monitor: {monitor_id}")
@@ -123,6 +125,7 @@ def apply_actions(cfg: dict, store, actions: Any, *, initiator: str = "user") ->
     prepared = _prepare_actions(cfg, store, actions)
     results: list[dict[str, Any]] = []
     scan_ids: list[str] = []
+    contact_ids: list[str] = []
     restore_ids = [
         action["job_id"] for action in prepared
         if action["type"] == "application.restore"
@@ -172,6 +175,8 @@ def apply_actions(cfg: dict, store, actions: Any, *, initiator: str = "user") ->
                         )
                     results.append(result)
                     restored_count += int(result["restored"])
+                elif action_type == "monitor.contacts":
+                    contact_ids.append(action["monitor_id"])
                 else:
                     scan_ids.append(action["monitor_id"])
             if restore_run is not None:
@@ -182,10 +187,20 @@ def apply_actions(cfg: dict, store, actions: Any, *, initiator: str = "user") ->
         if restore_run is not None:
             store.fail_reconciliation_run(restore_run["id"], "transaction_failed")
         raise
-    scans = [monitor.scan_monitor(
-        cfg, store, store.get_company_monitor(monitor_id), refresh_contacts=True,
-    )
-             for monitor_id in scan_ids]
+    scans = []
+    for monitor_id in scan_ids:
+        current = store.get_company_monitor(monitor_id)
+        if current["resolution_status"] == "unresolved":
+            current = monitor.resolve_monitor(store, current, probe=True)
+        scans.append(monitor.scan_monitor(
+            cfg, store, current, include_contacts=False,
+        ))
+    contacts = [
+        monitor.refresh_monitor_contacts(
+            cfg, store, store.get_company_monitor(monitor_id), force=True,
+        )
+        for monitor_id in contact_ids
+    ]
     from jobscope.deliver.render import (
         _activity_audit_data,
         _application_records,
@@ -197,6 +212,7 @@ def apply_actions(cfg: dict, store, actions: Any, *, initiator: str = "user") ->
         "applied": len(results),
         "results": results,
         "scans": scans,
+        "contacts": contacts,
         "companies": _companies_data(store),
         "reviews": _reviews_data(store),
         "applications": _application_records(store),

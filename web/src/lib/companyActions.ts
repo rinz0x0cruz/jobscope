@@ -17,6 +17,7 @@ export type MonitoringAction =
   | { type: 'monitor.upsert'; company: string; careers_url?: string; provider?: string; slug?: string; status?: MonitorStatus; job_id?: string }
   | { type: 'monitor.status'; monitor_id: string; status: MonitorStatus }
   | { type: 'monitor.scan'; monitor_id: string }
+  | { type: 'monitor.contacts'; monitor_id: string }
   | { type: 'review.set'; job_id: string; state: ReviewState }
   | { type: 'application.restore'; job_id: string }
 
@@ -34,6 +35,14 @@ export interface MonitoringActionResult {
     company: string
     matched?: number
     error?: string
+    contact_status?: string
+    recruiter_count?: number
+    recruiter?: import('./schema').CompanyContact | null
+    contact_error?: string
+  }>
+  contacts?: Array<{
+    ok: boolean
+    company: string
     contact_status?: string
     recruiter_count?: number
     recruiter?: import('./schema').CompanyContact | null

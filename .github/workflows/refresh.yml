@@ -140,24 +140,25 @@ jobs:
           if [ -n "$JOBSCOPE_MUTATIONS_JSON" ]; then
             printf '%s' "$JOBSCOPE_MUTATIONS_JSON" > data/monitoring-actions.json
             python -m jobscope companies apply --actions-file data/monitoring-actions.json
-          fi
-          python -m jobscope companies scan || echo "::warning::one or more company monitors need attention"
-          if [ "${{ inputs.full_scan }}" = "true" ]; then
-            python -m jobscope scan --mode discovery --force-discovery || echo "::warning::broad discovery failed (non-fatal)"
           else
-            python -m jobscope scan --mode discovery || echo "::warning::broad discovery failed (non-fatal)"
+            python -m jobscope companies scan || echo "::warning::one or more company monitors need attention"
+            if [ "${{ inputs.full_scan }}" = "true" ]; then
+              python -m jobscope scan --mode discovery --force-discovery || echo "::warning::broad discovery failed (non-fatal)"
+            else
+              python -m jobscope scan --mode discovery || echo "::warning::broad discovery failed (non-fatal)"
+            fi
+            if [ "${{ inputs.inbox_backfill }}" = "true" ]; then
+              python -m jobscope inbox --backfill --include-spam --initiator cloud_refresh
+            else
+              python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)" --include-spam --initiator cloud_refresh
+            fi
+            python -m jobscope inbox --reclassify --initiator cloud_refresh
+            python -m jobscope match
+            python -m jobscope reviews sync
+            python -m jobscope enrich || echo "::warning::public enrichment failed (non-fatal)"
+            python -m jobscope new --email || echo "::warning::new-match digest failed (non-fatal)"
+            python -m jobscope outreach-scan || echo "::warning::outreach scan failed (non-fatal)"
           fi
-          if [ "${{ inputs.inbox_backfill }}" = "true" ]; then
-            python -m jobscope inbox --backfill --include-spam --initiator cloud_refresh
-          else
-            python -m jobscope inbox --since "$(date -u -d '7 days ago' +%F)" --include-spam --initiator cloud_refresh
-          fi
-          python -m jobscope inbox --reclassify --initiator cloud_refresh
-          python -m jobscope match
-          python -m jobscope reviews sync
-          python -m jobscope enrich || echo "::warning::public enrichment failed (non-fatal)"
-          python -m jobscope new --email || echo "::warning::new-match digest failed (non-fatal)"
-          python -m jobscope outreach-scan || echo "::warning::outreach scan failed (non-fatal)"
 
       - name: Save encrypted DB back to the `data` branch
         if: steps.guard.outputs.ready == 'true'
