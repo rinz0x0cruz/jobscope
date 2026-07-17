@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowLeft, ArrowRight, Building2, ExternalLink, Loader2, Mail, Pause, Play, RefreshCw, Settings2, Trash2 } from 'lucide-react'
-import { monitorCheckAge, type CompaniesModel, type CompanyItem } from '@/lib/companies'
+import { companyNameKey, monitorCheckAge, type CompaniesModel, type CompanyItem } from '@/lib/companies'
 import type { CompanyFilter } from '@/lib/urlState'
 import type { MonitoringAction } from '@/lib/companyActions'
 
@@ -25,10 +25,30 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
   const [company, setCompany] = useState('')
   const [careersUrl, setCareersUrl] = useState('')
   const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState<string>()
   const editPortal = (item: CompanyItem) => {
+    setEditingId(item.id)
     setCompany(item.company)
     setCareersUrl(item.careers_url)
     onSelect(undefined)
+  }
+  const companyKey = companyNameKey(company)
+  const matchingCompanies = editingId || !companyKey ? [] : model.allItems
+    .filter((item) => companyNameKey(item.company).includes(companyKey))
+    .sort((left, right) => {
+      const leftStarts = companyNameKey(left.company).startsWith(companyKey)
+      const rightStarts = companyNameKey(right.company).startsWith(companyKey)
+      return Number(rightStarts) - Number(leftStarts) || left.company.localeCompare(right.company)
+    })
+    .slice(0, 4)
+  const exactCompany = matchingCompanies.find(
+    (item) => companyNameKey(item.company) === companyKey,
+  )
+  const openExisting = (item: CompanyItem) => {
+    setCompany('')
+    setCareersUrl('')
+    setEditingId(undefined)
+    onSelect(item.id)
   }
   const visible = model.items.filter((company) => {
     if (filter === 'all') return company.status !== 'removed'
@@ -50,6 +70,10 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
         onSubmit={(event) => {
           event.preventDefault()
           if (!company.trim()) return
+          if (exactCompany) {
+            openExisting(exactCompany)
+            return
+          }
           setSaving(true)
           void onActions([{
             type: 'monitor.upsert', company: company.trim(), careers_url: careersUrl.trim(),
@@ -57,14 +81,40 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
             .then(() => {
               setCompany('')
               setCareersUrl('')
+              setEditingId(undefined)
             })
             .finally(() => setSaving(false))
         }}
       >
-        <input value={company} onChange={(event) => setCompany(event.target.value)} aria-label="Company name" placeholder="Company name" className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong" />
+        <input value={company} onChange={(event) => setCompany(event.target.value)} readOnly={Boolean(editingId)} aria-label="Company name" placeholder="Company name" className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong read-only:text-ink-3" />
         <input value={careersUrl} onChange={(event) => setCareersUrl(event.target.value)} aria-label="Careers portal URL" placeholder="Official careers URL (optional)" className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong" />
-        <button type="submit" disabled={saving || !company.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-white disabled:opacity-50">{saving ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />} Add company</button>
+        <button type="submit" disabled={saving || !company.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-white disabled:opacity-50">{saving ? <Loader2 size={14} className="animate-spin" /> : exactCompany ? <ArrowRight size={14} /> : <Building2 size={14} />} {editingId ? 'Save portal' : exactCompany ? 'View company' : 'Add company'}</button>
       </form>
+      {matchingCompanies.length > 0 && (
+        <section className="shrink-0 border-b border-line bg-inset/35 px-4 py-3 sm:px-7" aria-label="Existing company matches">
+          <p className="mb-2 text-[10px] font-semibold uppercase text-ink-3">Already monitored</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {matchingCompanies.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => openExisting(item)}
+                aria-label={`Open ${item.company}`}
+                className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border border-line bg-panel px-3 py-2 text-left outline-none hover:border-line-strong focus-visible:ring-2 focus-visible:ring-brand"
+              >
+                <span className="min-w-0">
+                  <strong className="block truncate text-[13px] font-semibold text-ink">{item.company}</strong>
+                  <span className="mt-0.5 block truncate text-[11px] text-ink-3">{collectionSummary(item)}</span>
+                </span>
+                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-brand">
+                  {item.resolution_status === 'resolved' ? item.provider : 'Needs setup'}
+                  <ArrowRight size={13} aria-hidden="true" />
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-line px-4 py-2 [scrollbar-width:none] sm:px-7 [&::-webkit-scrollbar]:hidden">
         {FILTERS.map((item) => <button key={item.value} type="button" aria-pressed={filter === item.value} onClick={() => onFilter(item.value)} className={`h-8 shrink-0 rounded-full border px-3 text-[11px] font-medium ${filter === item.value ? 'border-brand bg-brand-weak text-brand' : 'border-line text-ink-2'}`}>{item.label}</button>)}
       </div>
@@ -85,7 +135,19 @@ function Metric({ label, value }: { label: string; value: number }) {
 }
 
 function CompanyRow({ company, selected, onSelect }: { company: CompanyItem; selected: boolean; onSelect: () => void }) {
-  return <li className="border-b border-line"><button type="button" onClick={onSelect} aria-current={selected ? 'true' : undefined} className={`group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-3 text-left outline-none hover:bg-inset/60 focus-visible:bg-inset sm:px-6 ${selected ? 'bg-brand-weak shadow-[inset_3px_0_var(--brand-coral)]' : ''}`}><span className="min-w-0"><span className="block truncate text-[14px] font-semibold text-ink">{company.company}</span><span className="mt-0.5 block truncate text-[11px] text-ink-3">{company.resolution_status === 'resolved' ? `${company.provider} · checked ${monitorCheckAge(company.checked_at)}` : 'Career portal needs setup'}</span><span className="mt-1 block text-[11px] text-ink-2">{company.pending_count} pending · {company.saved_count} saved</span></span><ArrowRight size={14} className="text-ink-3 transition-transform group-hover:translate-x-0.5" aria-hidden="true" /></button></li>
+  return <li className="border-b border-line"><button type="button" onClick={onSelect} aria-current={selected ? 'true' : undefined} className={`group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-3 text-left outline-none hover:bg-inset/60 focus-visible:bg-inset sm:px-6 ${selected ? 'bg-brand-weak shadow-[inset_3px_0_var(--brand-coral)]' : ''}`}><span className="min-w-0"><span className="block truncate text-[14px] font-semibold text-ink">{company.company}</span><span className="mt-0.5 block truncate text-[11px] text-ink-3">{company.resolution_status === 'resolved' ? `${company.provider} · checked ${monitorCheckAge(company.checked_at)}` : 'Career portal needs setup'}</span><span className="mt-1 block text-[11px] text-ink-2">{collectionSummary(company)}</span></span><ArrowRight size={14} className="text-ink-3 transition-transform group-hover:translate-x-0.5" aria-hidden="true" /></button></li>
+}
+
+function collectionSummary(company: CompanyItem): string {
+  const parts = [
+    `${company.collectedRoleCount} collected role${company.collectedRoleCount === 1 ? '' : 's'}`,
+  ]
+  if (company.applicationCount > 0) {
+    parts.push(`${company.applicationCount} application${company.applicationCount === 1 ? '' : 's'}`)
+  }
+  if (company.pending_count > 0) parts.push(`${company.pending_count} pending`)
+  if (company.saved_count > 0) parts.push(`${company.saved_count} saved`)
+  return parts.join(' · ')
 }
 
 function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { company: CompanyItem; onBack: () => void; onEdit: () => void; onOpenJob: (id: string) => void; onActions: (actions: MonitoringAction[]) => Promise<void> }) {
@@ -102,6 +164,7 @@ function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { comp
             <p className="mt-1 text-[12px] text-ink-3">
               {company.provider && company.slug ? `${company.provider}/${company.slug}` : company.resolution_status}
             </p>
+            <p className="mt-1 text-[11px] text-ink-2">{collectionSummary(company)}</p>
           </div>
           <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${company.health_status === 'ok' ? 'bg-[color-mix(in_srgb,var(--strong)_14%,transparent)] text-strong' : 'bg-inset text-ink-3'}`}>
             {company.health_status || 'not checked'}
