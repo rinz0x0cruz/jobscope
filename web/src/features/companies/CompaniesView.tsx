@@ -16,7 +16,8 @@ export interface CompaniesViewProps {
 
 const FILTERS: Array<{ value: CompanyFilter; label: string }> = [
   { value: 'all', label: 'All' },
-  { value: 'active', label: 'Active' },
+  { value: 'active', label: 'Watching' },
+  { value: 'known', label: 'Known / applied' },
   { value: 'paused', label: 'Paused' },
   { value: 'setup', label: 'Needs setup' },
 ]
@@ -51,18 +52,23 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
     onSelect(item.id)
   }
   const visible = model.items.filter((company) => {
-    if (filter === 'all') return company.status !== 'removed'
-    if (filter === 'setup') return company.resolution_status !== 'resolved'
-    return company.status === filter
+    if (filter === 'all') {
+      return company.lifecycle === 'known' || company.status !== 'removed'
+    }
+    if (filter === 'known') return company.lifecycle === 'known'
+    if (filter === 'setup') {
+      return company.lifecycle === 'watching' && company.resolution_status !== 'resolved'
+    }
+    return company.lifecycle === 'watching' && company.status === filter
   })
-  const selected = model.items.find((company) => company.id === selectedId) ?? null
+  const selected = model.allItems.find((company) => company.id === selectedId) ?? null
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col border-x border-line bg-panel">
       <header className="shrink-0 border-b border-line px-5 py-5 sm:px-7">
         <p className="text-[10px] font-semibold uppercase text-ink-3">Companies</p>
         <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
-          <div><h2 className="text-xl font-semibold text-ink">Monitored career portals</h2><p className="mt-1 text-[13px] text-ink-3">Follow official sources and review only relevant openings.</p></div>
-          <div className="flex gap-4 text-right"><Metric label="Active" value={model.active} /><Metric label="Paused" value={model.paused} /><Metric label="Setup" value={model.needsSetup} /></div>
+          <div><h2 className="text-xl font-semibold text-ink">Companies and career portals</h2><p className="mt-1 text-[13px] text-ink-3">Keep application history; monitor only companies you want scanned.</p></div>
+          <div className="flex max-w-full flex-wrap gap-x-4 gap-y-2 text-right"><Metric label="Watching" value={model.watching} /><Metric label="Known" value={model.known} /><Metric label="Paused" value={model.paused} /><Metric label="Setup" value={model.needsSetup} /></div>
         </div>
       </header>
       <form
@@ -92,7 +98,9 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
       </form>
       {matchingCompanies.length > 0 && (
         <section className="shrink-0 border-b border-line bg-inset/35 px-4 py-3 sm:px-7" aria-label="Existing company matches">
-          <p className="mb-2 text-[10px] font-semibold uppercase text-ink-3">Already monitored</p>
+          <p className="mb-2 text-[10px] font-semibold uppercase text-ink-3">
+            {matchingCompanies.every((item) => item.lifecycle === 'known') ? 'Already known' : 'Already in Jobscope'}
+          </p>
           <div className="grid gap-2 sm:grid-cols-2">
             {matchingCompanies.map((item) => (
               <button
@@ -107,7 +115,9 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
                   <span className="mt-0.5 block truncate text-[11px] text-ink-3">{collectionSummary(item)}</span>
                 </span>
                 <span className="inline-flex items-center gap-1 text-[10px] font-medium text-brand">
-                  {item.resolution_status === 'resolved' ? item.provider : 'Needs setup'}
+                  {item.lifecycle === 'known'
+                    ? 'Known'
+                    : item.resolution_status === 'resolved' ? item.provider : 'Needs setup'}
                   <ArrowRight size={13} aria-hidden="true" />
                 </span>
               </button>
@@ -135,7 +145,18 @@ function Metric({ label, value }: { label: string; value: number }) {
 }
 
 function CompanyRow({ company, selected, onSelect }: { company: CompanyItem; selected: boolean; onSelect: () => void }) {
-  return <li className="border-b border-line"><button type="button" onClick={onSelect} aria-current={selected ? 'true' : undefined} className={`group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-3 text-left outline-none hover:bg-inset/60 focus-visible:bg-inset sm:px-6 ${selected ? 'bg-brand-weak shadow-[inset_3px_0_var(--brand-coral)]' : ''}`}><span className="min-w-0"><span className="block truncate text-[14px] font-semibold text-ink">{company.company}</span><span className="mt-0.5 block truncate text-[11px] text-ink-3">{company.resolution_status === 'resolved' ? `${company.provider} · checked ${monitorCheckAge(company.checked_at)}` : 'Career portal needs setup'}</span><span className="mt-1 block text-[11px] text-ink-2">{collectionSummary(company)}</span></span><ArrowRight size={14} className="text-ink-3 transition-transform group-hover:translate-x-0.5" aria-hidden="true" /></button></li>
+  return <li className="border-b border-line"><button type="button" onClick={onSelect} aria-current={selected ? 'true' : undefined} className={`group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-3 text-left outline-none hover:bg-inset/60 focus-visible:bg-inset sm:px-6 ${selected ? 'bg-brand-weak shadow-[inset_3px_0_var(--brand-coral)]' : ''}`}><span className="min-w-0"><span className="block truncate text-[14px] font-semibold text-ink">{company.company}</span><span className="mt-0.5 block truncate text-[11px] text-ink-3">{companyStatusLabel(company)}</span><span className="mt-1 block text-[11px] text-ink-2">{collectionSummary(company)}</span></span><ArrowRight size={14} className="text-ink-3 transition-transform group-hover:translate-x-0.5" aria-hidden="true" /></button></li>
+}
+
+function companyStatusLabel(company: CompanyItem): string {
+  if (company.lifecycle === 'known') {
+    return company.added_from.includes('application')
+      ? 'Known from application'
+      : 'Known from collected role'
+  }
+  return company.resolution_status === 'resolved'
+    ? `${company.provider} · checked ${monitorCheckAge(company.checked_at)}`
+    : 'Career portal needs setup'
 }
 
 function collectionSummary(company: CompanyItem): string {
@@ -162,19 +183,23 @@ function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { comp
           <div>
             <h3 className="text-xl font-semibold text-ink">{company.company}</h3>
             <p className="mt-1 text-[12px] text-ink-3">
-              {company.provider && company.slug ? `${company.provider}/${company.slug}` : company.resolution_status}
+              {company.lifecycle === 'known'
+                ? companyStatusLabel(company)
+                : company.provider && company.slug
+                  ? `${company.provider}/${company.slug}`
+                  : company.resolution_status}
             </p>
             <p className="mt-1 text-[11px] text-ink-2">{collectionSummary(company)}</p>
           </div>
-          <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${company.health_status === 'ok' ? 'bg-[color-mix(in_srgb,var(--strong)_14%,transparent)] text-strong' : 'bg-inset text-ink-3'}`}>
-            {company.health_status || 'not checked'}
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${company.health_status === 'ok' && company.lifecycle === 'watching' ? 'bg-[color-mix(in_srgb,var(--strong)_14%,transparent)] text-strong' : 'bg-inset text-ink-3'}`}>
+            {company.lifecycle === 'known' ? 'known' : company.health_status || 'not checked'}
           </span>
         </div>
       </header>
 
       <div className="grid grid-cols-4 border-b border-line text-center">
-        <MetricCell label="Board" value={company.board_count} />
-        <MetricCell label="Open" value={company.open_matches} />
+        <MetricCell label={company.lifecycle === 'known' ? 'Collected' : 'Board'} value={company.lifecycle === 'known' ? company.collectedRoleCount : company.board_count} />
+        <MetricCell label={company.lifecycle === 'known' ? 'Applications' : 'Open'} value={company.lifecycle === 'known' ? company.applicationCount : company.open_matches} />
         <MetricCell label="Pending" value={company.pending_count} />
         <MetricCell label="Saved" value={company.saved_count} />
       </div>
@@ -208,6 +233,21 @@ function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { comp
       </section>
 
       <div className="flex flex-wrap gap-2 border-b border-line px-5 py-3 sm:px-7">
+        {company.lifecycle === 'known' ? (
+          <button
+            onClick={() => void onActions([{
+              type: 'monitor.upsert', company: company.company,
+              careers_url: company.careers_url,
+              ...(company.provider && company.slug
+                ? { provider: company.provider, slug: company.slug }
+                : {}),
+            }])}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-brand px-3 text-[11px] font-medium text-brand"
+          >
+            <Building2 size={13} /> Monitor company
+          </button>
+        ) : (
+          <>
         <button
           disabled={queued}
           onClick={() => void onActions([{ type: 'monitor.scan', monitor_id: company.id }])}
@@ -245,10 +285,18 @@ function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { comp
             Open careers <ExternalLink size={13} />
           </a>
         )}
+          </>
+        )}
       </div>
 
-      <JobSection title="Pending review" jobs={company.pendingJobs} onOpen={onOpenJob} />
-      <JobSection title="Saved roles" jobs={company.savedJobs} onOpen={onOpenJob} />
+      {company.lifecycle === 'known' ? (
+        <JobSection title="Collected roles" jobs={company.collectedJobs} onOpen={onOpenJob} />
+      ) : (
+        <>
+          <JobSection title="Pending review" jobs={company.pendingJobs} onOpen={onOpenJob} />
+          <JobSection title="Saved roles" jobs={company.savedJobs} onOpen={onOpenJob} />
+        </>
+      )}
       {company.health_detail && <p className="border-t border-line px-5 py-3 text-[12px] text-hot sm:px-7">{company.health_detail}</p>}
     </div>
   )
@@ -257,4 +305,4 @@ function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { comp
 function MetricCell({ label, value }: { label: string; value: number }) { return <div className="border-r border-line py-3 last:border-r-0"><span className="block text-[9px] uppercase text-ink-3">{label}</span><strong className="font-mono text-lg text-ink">{value}</strong></div> }
 function JobSection({ title, jobs, onOpen }: { title: string; jobs: CompanyItem['pendingJobs']; onOpen: (id: string) => void }) { return <section><header className="flex items-center justify-between border-b border-line bg-inset px-5 py-2 sm:px-7"><h4 className="text-[10px] font-semibold uppercase text-ink-3">{title}</h4><span className="font-mono text-[11px] text-ink-3">{jobs.length}</span></header>{jobs.length ? <ul>{jobs.map((job) => <li key={job.id} className="border-b border-line"><button type="button" onClick={() => onOpen(job.id)} className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left hover:bg-inset/60 sm:px-7"><span className="min-w-0"><span className="block truncate text-[13px] font-medium text-ink">{job.title}</span><span className="text-[11px] text-ink-3">{job.location || 'Location unavailable'}</span></span><strong className="font-mono text-[13px] text-ink">{Math.round(job.score)}</strong></button></li>)}</ul> : <p className="px-5 py-6 text-[12px] text-ink-3 sm:px-7">No {title.toLowerCase()}.</p>}</section> }
 function Empty() { return <div className="flex h-full flex-col items-center justify-center px-6 text-center"><Building2 size={28} className="text-ink-3" /><p className="mt-3 text-[14px] font-medium text-ink">No companies in this view</p></div> }
-function NoSelection() { return <div className="flex h-full flex-col items-center justify-center px-6 text-center"><Building2 size={28} className="text-ink-3" /><p className="mt-3 text-[14px] font-medium text-ink">Select a monitored company</p><p className="mt-1 text-[12px] text-ink-3">Inspect source health and its review queue.</p></div> }
+function NoSelection() { return <div className="flex h-full flex-col items-center justify-center px-6 text-center"><Building2 size={28} className="text-ink-3" /><p className="mt-3 text-[14px] font-medium text-ink">Select a company</p><p className="mt-1 text-[12px] text-ink-3">Review history or inspect a watched career portal.</p></div> }

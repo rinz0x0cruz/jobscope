@@ -13,6 +13,7 @@ describe('urlState: schema + defaults', () => {
     expect(s.flags).toEqual([])
     expect(s.tiers).toEqual([])
     expect(s.reviewBucket).toBe('monitored')
+    expect(s.companyFilter).toBe('active')
     expect(s.resume).toEqual([])
   })
 

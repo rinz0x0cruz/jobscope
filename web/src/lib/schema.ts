@@ -192,6 +192,7 @@ export interface AppliedCompany {
 
 export type MonitorStatus = 'active' | 'paused' | 'removed'
 export type MonitorResolution = 'resolved' | 'unresolved' | 'unsupported'
+export type CompanyLifecycle = 'watching' | 'known'
 export type ReviewState = 'pending' | 'saved' | 'dismissed'
 export type ReviewOrigin = 'monitored' | 'discovery' | 'legacy'
 
@@ -203,6 +204,7 @@ export interface MonitoredCompany {
   careers_url: string
   status: MonitorStatus
   resolution_status: MonitorResolution
+  lifecycle: CompanyLifecycle
   added_from: string[]
   checked_at: string
   last_success_at: string
@@ -329,9 +331,14 @@ export function normalizeDashboardData(data: DashboardData): DashboardData {
     },
     companies: (legacy.companies ?? []).map((company) => {
       const legacyCompany = company as MonitoredCompany & Partial<Pick<MonitoredCompany,
-        'contact_domain' | 'contacts_checked_at' | 'recruiter_count' | 'recruiter'>>
+        'lifecycle' | 'contact_domain' | 'contacts_checked_at' | 'recruiter_count' | 'recruiter'>>
       return {
         ...company,
+        lifecycle: legacyCompany.lifecycle ?? (
+          company.status !== 'removed' && company.added_from.some((origin) => origin !== 'application')
+            ? 'watching'
+            : 'known'
+        ),
         contact_domain: legacyCompany.contact_domain ?? '',
         contacts_checked_at: legacyCompany.contacts_checked_at ?? '',
         recruiter_count: legacyCompany.recruiter_count ?? 0,

@@ -87,6 +87,7 @@ export function monitoredCompany(
     careers_url: '',
     status: 'active',
     resolution_status: 'resolved',
+    lifecycle: 'watching',
     added_from: ['user'],
     checked_at: '',
     last_success_at: '',

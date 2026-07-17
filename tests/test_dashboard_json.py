@@ -206,6 +206,7 @@ _APPLIED_COMPANY = {
 _MONITORED_COMPANY = {
     "id": str, "company": str, "provider": str, "slug": str,
     "careers_url": str, "status": str, "resolution_status": str,
+    "lifecycle": str,
     "added_from": list, "checked_at": str, "last_success_at": str,
     "health_status": str, "health_detail": str, "board_count": int,
     "open_matches": int, "pending_count": int, "saved_count": int,
@@ -385,6 +386,7 @@ def test_build_data_matches_contract():
         assert data["applied_outreach"][0]["contacts"][0]["email"] == "careers@acme.com"
         assert data["rows"][0]["recruiter"]["email"] == "careers@acme.com"
         assert data["companies"][0]["company"] == "Acme"
+        assert data["companies"][0]["lifecycle"] == "watching"
         assert data["companies"][0]["health_status"] == "ok"
         assert data["companies"][0]["recruiter"]["email"] == "careers@acme.com"
         assert data["reviews"][0]["state"] == "saved"
@@ -403,6 +405,35 @@ def test_build_data_matches_contract():
             "subject": "Thanks for applying", "from": "acme.com", "summary": ""}
 
         store.close()
+
+
+def test_application_company_preserves_collected_and_application_origins():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = load_config(None)
+        cfg["output"]["db_path"] = os.path.join(tmp, "known.db")
+        store = Store(cfg["output"]["db_path"])
+        try:
+            job = Job(
+                source="inbox", title="Security Engineer", company="Known Labs",
+                url="https://known.example/job", score=70, tier="Good",
+            ).ensure_id()
+            store.upsert_job(job)
+            store.set_application(Application(
+                job_id=job.id, status="applied", company="Known Labs",
+                applied_at="2026-07-15",
+            ))
+
+            data = render.build_data(cfg, store, public=False)
+
+            company = next(
+                item for item in data["companies"] if item["company"] == "Known Labs"
+            )
+            assert company["lifecycle"] == "known"
+            assert company["status"] == "removed"
+            assert company["added_from"] == ["collected", "application"]
+            assert store.list_company_monitors() == []
+        finally:
+            store.close()
 
 
 def test_profile_fallback_uses_configured_primary_resume(tmp_path):

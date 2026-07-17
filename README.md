@@ -59,7 +59,7 @@ python -m jobscope init                          # scaffold config.yaml + data/ 
 # add your resume at data/resume.md
 python -m jobscope resume import data/resume.md   # parse it + seed a résumé-derived search profile
 python -m jobscope profile show                   # review/edit data/profile.yaml (terms/locations drive scan)
-python -m jobscope companies seed                 # import configured + active-application companies once
+python -m jobscope companies seed                 # import configured watchlist; application companies stay known
 python -m jobscope companies scan                 # check monitored Greenhouse/Lever/Ashby portals
 python -m jobscope scan --mode discovery          # optional broad LinkedIn/Indeed/Google discovery (daily cadence)
 python -m jobscope match                          # rank by fit score

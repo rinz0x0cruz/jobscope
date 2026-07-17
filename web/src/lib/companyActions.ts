@@ -8,6 +8,7 @@ import type {
   MonitorStatus,
   ReviewState,
 } from './schema'
+import { companyNameKey } from './companies'
 import { localServeToken } from './outreach'
 
 export const MONITORING_QUEUE_KEY = 'jobscope-monitoring-actions'
@@ -164,6 +165,7 @@ function queuedCompany(action: Extract<MonitoringAction, { type: 'monitor.upsert
     careers_url: action.careers_url || '',
     status: action.status || 'active',
     resolution_status: action.provider && action.slug ? 'resolved' : 'unresolved',
+    lifecycle: 'watching',
     added_from: ['user'],
     checked_at: '',
     last_success_at: '',
@@ -231,11 +233,24 @@ export function projectMonitoringActions(data: DashboardData, actions: Monitorin
         ),
       }
     } else if (action.type === 'monitor.status') {
+      const target = companies.find((company) => company.id === action.monitor_id)
+      const targetKey = companyNameKey(target?.company ?? '')
+      const retainsHistory = action.status === 'removed' && Boolean(targetKey) && (
+        data.rows.some((row) => companyNameKey(row.company) === targetKey)
+        || applications.some((application) => companyNameKey(application.company) === targetKey)
+      )
       companies = companies.map((company) => company.id === action.monitor_id
-        ? { ...company, status: action.status }
+        ? {
+            ...company,
+            status: action.status,
+            lifecycle: retainsHistory ? 'known' : company.lifecycle,
+          }
         : company)
     } else if (action.type === 'monitor.upsert') {
-      const match = companies.find((company) => company.company.toLowerCase() === action.company.trim().toLowerCase())
+      const actionCompanyKey = companyNameKey(action.company)
+      const match = companies.find(
+        (company) => companyNameKey(company.company) === actionCompanyKey,
+      )
       companies = match
         ? companies.map((company) => company.id === match.id ? {
             ...company,
@@ -243,10 +258,16 @@ export function projectMonitoringActions(data: DashboardData, actions: Monitorin
             provider: action.provider || company.provider,
             slug: action.slug || company.slug,
             status: action.status || 'active',
+            lifecycle: 'watching',
+            added_from: company.added_from.includes('user')
+              ? company.added_from
+              : [...company.added_from, 'user'],
           } : company)
         : [...companies, queuedCompany(action)]
       if (action.job_id) {
-        const monitor = companies.find((company) => company.company.toLowerCase() === action.company.trim().toLowerCase())
+        const monitor = companies.find(
+          (company) => companyNameKey(company.company) === actionCompanyKey,
+        )
         reviews = reviews.map((review) => review.job_id === action.job_id ? {
           ...review,
           origins: review.origins.includes('monitored') ? review.origins : [...review.origins, 'monitored'],

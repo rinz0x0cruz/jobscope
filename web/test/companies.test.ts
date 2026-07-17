@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { buildCompanies, companyNameKey, monitorCheckAge } from '@/lib/companies'
-import { dashboard, jobRow, monitoredCompany, review } from './factories'
+import { application, dashboard, jobRow, monitoredCompany, review } from './factories'
 
 describe('companies model', () => {
   it('normalizes company names deterministically', () => {
     expect(companyNameKey('  INTERVIEW Intelligence, Inc.  '))
-      .toBe('interview intelligence inc')
+      .toBe('interview intelligence')
+    expect(companyNameKey('Acme Technologies LLC')).toBe(companyNameKey('Acme'))
   })
 
   it('formats monitor check timestamps for quick scanning', () => {
@@ -59,8 +60,30 @@ describe('companies model', () => {
     })
     const model = buildCompanies(data, 'lever')
     expect(model.items.map((company) => company.company)).toEqual(['Beta'])
-    expect(model.active).toBe(2)
+    expect(model.watching).toBe(2)
     expect(model.paused).toBe(1)
     expect(model.needsSetup).toBe(1)
+  })
+
+  it('separates known application companies from the watchlist', () => {
+    const data = dashboard({
+      companies: [
+        monitoredCompany({ id: 'watch', company: 'Acme' }),
+        monitoredCompany({
+          id: 'known', company: 'Google', lifecycle: 'known', status: 'removed',
+          provider: '', slug: '', resolution_status: 'unresolved',
+        }),
+      ],
+      applications: [application({ job_id: 'google-role', company: 'Google' })],
+      rows: [jobRow({ id: 'google-role', company: 'Google', score: 72 })],
+    })
+
+    const model = buildCompanies(data)
+
+    expect(model.watching).toBe(1)
+    expect(model.known).toBe(1)
+    expect(model.needsSetup).toBe(0)
+    expect(model.allItems.find((company) => company.company === 'Google')
+      ?.collectedJobs.map((job) => job.id)).toEqual(['google-role'])
   })
 })

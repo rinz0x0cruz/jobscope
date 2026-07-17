@@ -286,3 +286,21 @@ def test_restore_failure_rolls_back_the_entire_action_batch(monkeypatch):
     assert latest["action"] == "restore" and latest["status"] == "failed"
     assert store.reconciliation_decisions(latest["id"]) == []
     store.close()
+
+
+def test_monitor_upsert_promotes_archived_application_company():
+    cfg, store = _setup()
+    known = store.upsert_company_monitor("Known Labs", added_from="application")
+    store.set_company_monitor_status(known["id"], "removed")
+
+    result = monitoring.apply_actions(cfg, store, [{
+        "type": "monitor.upsert", "company": "Known Labs",
+    }])
+
+    promoted = store.get_company_monitor("Known Labs")
+    assert result["ok"] is True
+    assert promoted["id"] == known["id"]
+    assert promoted["status"] == "active"
+    assert promoted["origins"] == ["application", "user"]
+    assert result["companies"][0]["lifecycle"] == "watching"
+    store.close()

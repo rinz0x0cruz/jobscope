@@ -127,7 +127,7 @@ def test_complete_board_closes_a_missing_linked_job(monkeypatch):
     store.close()
 
 
-def test_scheduled_scan_skips_monitors_that_need_portal_setup(monkeypatch):
+def test_scheduled_scan_archives_application_only_monitor(monkeypatch):
     cfg, store = _setup()
     store.upsert_company_monitor("Unknown Labs", added_from="application")
     called = []
@@ -136,8 +136,9 @@ def test_scheduled_scan_skips_monitors_that_need_portal_setup(monkeypatch):
     result = monitor.scan_active_monitors(cfg, store)
 
     assert result["companies"] == 0
-    assert result["needs_setup"] == 1
-    assert result["unresolved"] == ["Unknown Labs"]
+    assert result["needs_setup"] == 0
+    assert result["unresolved"] == []
+    assert store.get_company_monitor("Unknown Labs")["status"] == "removed"
     assert called == []
     store.close()
 

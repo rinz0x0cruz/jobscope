@@ -184,9 +184,9 @@ apply:
     applied_scan:                     # pre-compute HR contacts for active applications (shown on the dashboard behind unlock)
       limit: 25                       # most-recent active companies to scan per run
       max_age_days: 14                # re-discover a company's contacts at most once per N days
-    monitor_scan:                     # specific company Scan also pulls a verified recruiter/HR contact
-      enabled: true                   # prefers cybersecurity/security, then technical/engineering recruiters
-      max_age_days: 14                # scheduled scans reuse fresh contacts; manual company scans force refresh
+    monitor_scan:                     # recruiter discovery for monitored companies (separate from Scan jobs)
+      enabled: true                   # Find recruiter prefers security, then technical/engineering recruiters
+      max_age_days: 14                # scheduled scans reuse fresh contacts; explicit lookup forces refresh
       scheduled: false                # true refreshes stale contacts during every all-company scheduled scan
 
 output:

@@ -8,7 +8,7 @@ export type ViewValue = (typeof VIEW_VALUES)[number]
 export const URL_VIEW_VALUES = [...VIEW_VALUES, 'feed'] as const
 export const REVIEW_BUCKET_VALUES = ['monitored', 'discovery', 'saved', 'dismissed'] as const
 export type ReviewBucket = (typeof REVIEW_BUCKET_VALUES)[number]
-export const COMPANY_FILTER_VALUES = ['all', 'active', 'paused', 'setup'] as const
+export const COMPANY_FILTER_VALUES = ['all', 'active', 'known', 'paused', 'setup'] as const
 export type CompanyFilter = (typeof COMPANY_FILTER_VALUES)[number]
 export const FEED_SORT_VALUES = ['score', 'newest', 'company'] as const
 export type FeedSort = (typeof FEED_SORT_VALUES)[number]
@@ -24,7 +24,7 @@ export const searchSchema = z.object({
   view: z.enum(URL_VIEW_VALUES).optional(),
   reviewBucket: z.enum(REVIEW_BUCKET_VALUES).catch('monitored'),
   company: z.string().optional(),
-  companyFilter: z.enum(COMPANY_FILTER_VALUES).catch('all'),
+  companyFilter: z.enum(COMPANY_FILTER_VALUES).catch('active'),
   sort: z.enum(FEED_SORT_VALUES).catch('score'),
   flags: z.array(z.enum(FEED_FLAG_VALUES)).catch([]),
   tiers: z.array(z.enum(FEED_TIER_VALUES)).catch([]),
@@ -51,7 +51,7 @@ export const SEARCH_DEFAULTS: Partial<SearchState> = {
   flags: [],
   tiers: [],
   reviewBucket: 'monitored',
-  companyFilter: 'all',
+  companyFilter: 'active',
   q: '',
   resume: [],
   country: [],

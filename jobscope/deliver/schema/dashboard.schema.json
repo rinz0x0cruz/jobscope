@@ -116,7 +116,7 @@
     "MonitoredCompany": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "company", "provider", "slug", "careers_url", "status", "resolution_status", "added_from", "checked_at", "last_success_at", "health_status", "health_detail", "board_count", "open_matches", "pending_count", "saved_count", "contact_domain", "contacts_checked_at", "recruiter_count", "recruiter"],
+      "required": ["id", "company", "provider", "slug", "careers_url", "status", "resolution_status", "lifecycle", "added_from", "checked_at", "last_success_at", "health_status", "health_detail", "board_count", "open_matches", "pending_count", "saved_count", "contact_domain", "contacts_checked_at", "recruiter_count", "recruiter"],
       "properties": {
         "id": {"type": "string"},
         "company": {"type": "string"},
@@ -125,6 +125,7 @@
         "careers_url": {"type": "string"},
         "status": {"type": "string", "enum": ["active", "paused", "removed"]},
         "resolution_status": {"type": "string", "enum": ["resolved", "unresolved", "unsupported"]},
+        "lifecycle": {"type": "string", "enum": ["watching", "known"]},
         "added_from": {"type": "array", "items": {"type": "string"}},
         "checked_at": {"type": "string"},
         "last_success_at": {"type": "string"},

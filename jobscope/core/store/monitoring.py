@@ -40,6 +40,14 @@ def _monitor_id(company_key: str) -> str:
     return f"company:{digest}"
 
 
+def company_monitor_id(company: str) -> str:
+    """Return the stable monitor identity used when a known company is promoted."""
+    company_key = normalize_company_key(company)
+    if not company_key:
+        raise ValueError("company is required")
+    return _monitor_id(company_key)
+
+
 def _json_list(value: str | None) -> list[str]:
     try:
         parsed = json.loads(value or "[]")
@@ -220,6 +228,25 @@ class MonitoringMixin:
         with self.conn:
             return self._set_company_monitor_status(monitor_id, status)
 
+    def archive_application_only_monitors(self) -> int:
+        """Soft-remove legacy monitors created only from application history."""
+        rows = self.conn.execute(
+            "SELECT id, origins_json FROM company_monitors WHERE status <> 'removed'"
+        ).fetchall()
+        monitor_ids = [
+            row["id"] for row in rows
+            if set(_json_list(row["origins_json"])) == {"application"}
+        ]
+        if not monitor_ids:
+            return 0
+        timestamp = now_iso()
+        with self.conn:
+            self.conn.executemany(
+                "UPDATE company_monitors SET status = 'removed', updated_at = ? WHERE id = ?",
+                [(timestamp, monitor_id) for monitor_id in monitor_ids],
+            )
+        return len(monitor_ids)
+
     def mark_monitor_success(self, monitor_id: str, checked_at: str | None = None) -> None:
         timestamp = checked_at or now_iso()
         with self.conn:
@@ -356,7 +383,10 @@ class MonitoringMixin:
         ).fetchall()
         return [self._review_dict(row) for row in rows]
 
-    def company_monitor_summaries(self) -> list[dict[str, Any]]:
+    def company_monitor_summaries(
+        self, *, include_removed: bool = False,
+    ) -> list[dict[str, Any]]:
+        status_filter = "" if include_removed else "WHERE m.status <> 'removed' "
         rows = self.conn.execute(
             "SELECT m.*, h.status AS health_status, h.detail AS health_detail, "
             "h.item_count AS board_count, h.checked_at, "
@@ -369,7 +399,8 @@ class MonitoringMixin:
             "LEFT JOIN company_monitor_jobs mj ON mj.monitor_id = m.id "
             "LEFT JOIN jobs j ON j.id = mj.job_id "
             "LEFT JOIN job_reviews r ON r.job_id = mj.job_id "
-            "WHERE m.status <> 'removed' GROUP BY m.id ORDER BY m.company COLLATE NOCASE"
+            + status_filter +
+            "GROUP BY m.id ORDER BY m.company COLLATE NOCASE"
         ).fetchall()
         return [self._monitor_dict(row) for row in rows]
 
