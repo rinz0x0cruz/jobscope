@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { CompaniesView } from '@/features/companies'
 import { buildCompanies } from '@/lib/companies'
-import { dashboard, monitoredCompany } from './factories'
+import { application, dashboard, jobRow, monitoredCompany } from './factories'
 
 function setup(selectedId?: string) {
   const onActions = vi.fn().mockResolvedValue(undefined)
@@ -36,12 +36,48 @@ describe('CompaniesView', () => {
     ])
   })
 
-  it('loads the selected monitor into the portal editor', () => {
-    const { onSelect } = setup('acme')
+  it('surfaces an already collected company instead of adding it again', () => {
+    const onActions = vi.fn().mockResolvedValue(undefined)
+    const onSelect = vi.fn()
+    render(<CompaniesView
+      model={buildCompanies(dashboard({
+        companies: [monitoredCompany({
+          id: 'google', company: 'Google', provider: '', slug: '',
+          resolution_status: 'unresolved',
+        })],
+        rows: [jobRow({ id: 'google-role', company: 'Google' })],
+        applications: [application({ job_id: 'google-role', company: 'Google' })],
+      }))}
+      filter="all" onFilter={vi.fn()} onSelect={onSelect}
+      onOpenJob={vi.fn()} onActions={onActions}
+    />)
+
+    fireEvent.change(screen.getByLabelText('Company name'), { target: { value: 'google' } })
+
+    expect(screen.getByText('Already monitored')).toBeInTheDocument()
+    expect(within(screen.getByRole('button', { name: 'Open Google' }))
+      .getByText('1 collected role · 1 application')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'View company' })).toBeInTheDocument()
+    fireEvent.submit(screen.getByLabelText('Company name').closest('form')!)
+    expect(onActions).not.toHaveBeenCalled()
+    expect(onSelect).toHaveBeenCalledWith('google')
+  })
+
+  it('updates a selected monitor portal without entering add mode', () => {
+    const { onActions, onSelect } = setup('acme')
     fireEvent.click(screen.getByRole('button', { name: 'Edit portal' }))
 
     expect(screen.getByLabelText('Company name')).toHaveValue('Acme')
+    expect(screen.getByLabelText('Company name')).toHaveAttribute('readonly')
+    expect(screen.getByRole('button', { name: 'Save portal' })).toBeInTheDocument()
     expect(onSelect).toHaveBeenCalledWith(undefined)
+    fireEvent.change(screen.getByLabelText('Careers portal URL'), {
+      target: { value: 'https://acme.example/careers' },
+    })
+    fireEvent.submit(screen.getByLabelText('Company name').closest('form')!)
+    expect(onActions).toHaveBeenCalledWith([{
+      type: 'monitor.upsert', company: 'Acme', careers_url: 'https://acme.example/careers',
+    }])
   })
 
   it('shows the preferred recruiter and keeps jobs/contact scans separate', () => {
