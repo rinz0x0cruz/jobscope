@@ -405,6 +405,28 @@ def test_build_data_matches_contract():
         store.close()
 
 
+def test_profile_fallback_uses_configured_primary_resume(tmp_path):
+    cfg = load_config("__no_such_config_for_tests__.yaml")
+    cfg["output"]["db_path"] = str(tmp_path / "profiles.db")
+    cfg["profile"]["primary_resume"] = "research"
+    store = Store(cfg["output"]["db_path"])
+    store.save_resume(Resume(
+        titles=["Security Consultant"], skills=["audit"], seniority="junior",
+    ), name="consulting")
+    store.save_resume(Resume(
+        titles=["Security Researcher"],
+        skills=["cloud security", "threat hunting", "detection", "security"],
+        seniority="junior",
+    ), name="research")
+
+    emitted = render._profile_data(cfg, store)
+
+    assert emitted["name"] == "research"
+    assert emitted["resume"] == "research"
+    assert "Threat Hunter" in emitted["search_terms"]
+    store.close()
+
+
 def test_same_company_roles_keep_distinct_job_analysis():
     from jobscope.enrich import ANALYSIS_VERSION
 

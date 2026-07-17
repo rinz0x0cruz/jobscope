@@ -32,7 +32,13 @@ def _profile_data(cfg: dict, store) -> dict | None:
         resumes = store.list_resumes()
         if not resumes:
             return None
-        name, resume = resumes[0]
+        by_name = dict(resumes)
+        preferred = str((cfg.get("profile", {}) or {}).get("primary_resume") or "")
+        resume = by_name.get(preferred) if preferred else None
+        if resume is not None:
+            name = preferred
+        else:
+            name, resume = resumes[0]
         prof = _profile.build_profile(resume, cfg, name)
     prof = dict(prof)
     prof["name"] = _profile.active_name(cfg) or str(prof.get("resume") or "default")
