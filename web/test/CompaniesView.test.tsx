@@ -24,7 +24,7 @@ function setup(selectedId?: string) {
 describe('CompaniesView', () => {
   it('renders monitored companies and status filters', () => {
     setup()
-    expect(screen.getByText('Monitored career portals')).toBeInTheDocument()
+    expect(screen.getByText('Companies and career portals')).toBeInTheDocument()
     expect(screen.getByText('Acme')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Needs setup' })).toBeInTheDocument()
   })
@@ -45,7 +45,7 @@ describe('CompaniesView', () => {
       model={buildCompanies(dashboard({
         companies: [monitoredCompany({
           id: 'google', company: 'Google', provider: '', slug: '',
-          resolution_status: 'unresolved',
+          resolution_status: 'unresolved', lifecycle: 'known', status: 'removed',
         })],
         rows: [jobRow({ id: 'google-role', company: 'Google' })],
         applications: [application({ job_id: 'google-role', company: 'Google' })],
@@ -56,13 +56,42 @@ describe('CompaniesView', () => {
 
     fireEvent.change(screen.getByLabelText('Company name'), { target: { value: 'google' } })
 
-    expect(screen.getByText('Already monitored')).toBeInTheDocument()
+    expect(screen.getByText('Already known')).toBeInTheDocument()
     expect(within(screen.getByRole('button', { name: 'Open Google' }))
       .getByText('1 collected role · 1 application')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'View company' })).toBeInTheDocument()
     fireEvent.submit(screen.getByLabelText('Company name').closest('form')!)
     expect(onActions).not.toHaveBeenCalled()
     expect(onSelect).toHaveBeenCalledWith('google')
+  })
+
+  it('promotes a known application company into the watchlist', () => {
+    const onActions = vi.fn().mockResolvedValue(undefined)
+    const onOpenJob = vi.fn()
+    const company = monitoredCompany({
+      id: 'google', company: 'Google', lifecycle: 'known', status: 'removed',
+      provider: '', slug: '', resolution_status: 'unresolved',
+      added_from: ['application'],
+    })
+    render(<CompaniesView
+      model={buildCompanies(dashboard({
+        companies: [company],
+        applications: [application({ job_id: 'google-role', company: 'Google' })],
+        rows: [jobRow({ id: 'google-role', company: 'Google', title: 'Security Engineer' })],
+      }))}
+      filter="known" selectedId="google" onFilter={vi.fn()} onSelect={vi.fn()}
+      onOpenJob={onOpenJob} onActions={onActions}
+    />)
+
+    expect(within(screen.getByRole('heading', { name: 'Google' }).closest('header')!)
+      .getByText('Known from application')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Scan jobs' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Security Engineer/ }))
+    expect(onOpenJob).toHaveBeenCalledWith('google-role')
+    fireEvent.click(screen.getByRole('button', { name: 'Monitor company' }))
+    expect(onActions).toHaveBeenCalledWith([{
+      type: 'monitor.upsert', company: 'Google', careers_url: '',
+    }])
   })
 
   it('opens a partial existing match from its result card', () => {

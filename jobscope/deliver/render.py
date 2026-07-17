@@ -82,22 +82,64 @@ def _applied_outreach_data(store) -> list:
 
 
 def _companies_data(store) -> list[dict[str, Any]]:
-    """Operational monitor summaries for the encrypted dashboard payload."""
+    """Watching monitors plus known companies from collected/application history."""
     from jobscope.apply.outreach import best_recruiter_contact, rank_recruiter_contacts
+    from jobscope.core.store.monitoring import company_monitor_id, normalize_company_key
 
-    out = []
-    for monitor in store.company_monitor_summaries():
-        contact_record = store.get_company_contacts(monitor["company"]) or {}
+    known: dict[str, dict[str, Any]] = {}
+    for job in store.jobs(order_by_score=False):
+        if not job.company or (job.tier or "Skip") == "Skip":
+            continue
+        key = normalize_company_key(job.company)
+        if key:
+            record = known.setdefault(key, {"company": job.company, "origins": []})
+            if "collected" not in record["origins"]:
+                record["origins"].append("collected")
+    for application in store.applications():
+        company = (application.get("company") or "").strip()
+        key = normalize_company_key(company)
+        if key:
+            record = known.setdefault(key, {"company": company, "origins": []})
+            record["company"] = company
+            if "application" not in record["origins"]:
+                record["origins"].append("application")
+
+    monitors = store.company_monitor_summaries(include_removed=True)
+    monitors_by_key = {
+        normalize_company_key(monitor["company"]): monitor for monitor in monitors
+    }
+    watching = {
+        key for key, monitor in monitors_by_key.items()
+        if monitor["status"] != "removed" and (
+            not monitor["origins"] or set(monitor["origins"]) != {"application"}
+        )
+    }
+    company_keys = watching | set(known)
+    out: list[dict[str, Any]] = []
+    for key in sorted(company_keys, key=lambda item: (
+        (monitors_by_key.get(item) or known[item])["company"].casefold()
+    )):
+        monitor = monitors_by_key.get(key) or {}
+        known_record = known.get(key) or {}
+        lifecycle = "watching" if key in watching else "known"
+        company = monitor.get("company") or known_record["company"]
+        contact_record = store.get_company_contacts(company) or {}
         contacts = rank_recruiter_contacts(contact_record.get("contacts") or [])
+        origins = list(monitor.get("origins") or [])
+        if lifecycle == "known":
+            for known_origin in known_record.get("origins") or []:
+                if known_origin not in origins:
+                    origins.append(known_origin)
         out.append({
-            "id": monitor["id"],
-            "company": monitor["company"],
-            "provider": monitor["provider"],
-            "slug": monitor["slug"],
-            "careers_url": monitor["careers_url"],
-            "status": monitor["status"],
-            "resolution_status": monitor["resolution_status"],
-            "added_from": monitor["origins"],
+            "id": monitor.get("id") or company_monitor_id(company),
+            "company": company,
+            "provider": monitor.get("provider") or "",
+            "slug": monitor.get("slug") or "",
+            "careers_url": monitor.get("careers_url") or "",
+            "status": monitor.get("status") if lifecycle == "watching" else "removed",
+            "resolution_status": monitor.get("resolution_status") or "unresolved",
+            "lifecycle": lifecycle,
+            "added_from": origins,
             "checked_at": monitor.get("checked_at") or "",
             "last_success_at": monitor.get("last_success_at") or "",
             "health_status": monitor.get("health_status") or "",

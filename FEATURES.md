@@ -12,7 +12,7 @@ No authenticated-account automation; a human always reviews before submit.
 ## Pipeline / data flow
 
 ```
-resume import → profile → company monitors (every refresh) + discovery (daily)
+resume import → profile → company watchlist (every refresh) + discovery (daily)
   → match → review sync (pending monitored/discovery → save/dismiss) → enrich
      → tailor → prep package → (human review) → apply / outreach → interview prep → track → digest
 
@@ -33,7 +33,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `init` | Scaffolds `config.yaml` + `data/` dir. |
 | `resume import <path> --name <n>` | Parses `.md/.json/.pdf/.txt` into a structured resume and stores it under a name. Up to three named profiles are supported; local Settings can upload, build, replace, and switch them. |
 | `profile [build\|show] [--resume N] [--force]` | Builds/shows the editable, résumé-derived **search profile** (`data/profile.yaml`): target roles from your titles + a skills→role map, your locations, remote. `scan` fetches from it (config.search is the fallback); `--force` regenerates, never clobbering edits otherwise. |
-| `companies [seed\|list\|scan\|apply]` | Persistent company-monitor registry and official-portal scans. `seed` imports configured companies plus active applications once; `apply` consumes the validated workflow action file. |
+| `companies [seed\|list\|scan\|apply]` | Persistent explicit watchlist and official-portal scans. `seed` imports configured monitors and softly archives legacy application-only monitors; application/collected companies remain visible as **Known** until explicitly promoted. `apply` consumes the validated workflow action file. |
 | `scout <company>` | Ephemeral ATS resolution/ranked preview. The durable workflow is to monitor the company. |
 | `scan [--mode all\|monitored\|discovery]` | Monitored portals are primary; broad JobSpy discovery is secondary and cadence-gated (24h by default). |
 | `reviews [sync\|list]` | Durable pending/saved/dismissed review decisions with monitored/discovery provenance. |
@@ -87,9 +87,11 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Market intelligence on cards:** structured posting pay is compared with compatible public compensation
   benchmarks; Glassdoor rating, Reddit sentiment/thread count, recent news, and verified recruiter mail surface
   only when backed by stored public data. Missing recruiter mail can be resolved through guarded local outreach.
-- **Companies workspace:** resolution preview, Needs setup visibility, source health, scan/pause/resume/remove,
-  editable portal details, per-company pending/saved roles, and a preferred recruiter contact. Targeted scans
-  fetch jobs and verified contacts together; scheduled contact refresh is opt-in to bound domain probes.
+- **Companies workspace:** defaults to the explicit **Watching** list; **Known / applied** preserves companies
+  from collected roles and application history without scanning them. Known companies can be promoted with
+  **Monitor company**. Only watched companies count toward Needs setup and expose source health,
+  scan/pause/resume/remove, and editable portal controls. Job scans and recruiter lookup are separate explicit
+  actions; scheduled contact refresh is opt-in to bound domain probes.
 - **Recruiter preference:** verified inbound recruiters remain highest confidence; within comparable sources,
   cybersecurity/security recruiter titles rank ahead of technical/engineering, then general recruiting/HR.
   Employer domains must come from the company site, verified name/domain match, or inbox evidence—never
@@ -172,9 +174,10 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   directly — no login, no API key — surfacing India/remote roles keyword search never sees.
 - **Providers:** Greenhouse (`boards-api.greenhouse.io`), Lever (`api.lever.co`), Ashby
   (`api.ashbyhq.com`). All are logged-out public JSON endpoints (consistent with the no-auth-automation rule).
-- **Persistent registry:** SQLite `company_monitors` becomes authoritative after `companies seed`.
-  Existing `search.companies` entries remain migration/fallback input. Active application companies are
-  imported too; unresolved employers stay visible as **Needs setup** instead of silently disappearing.
+- **Persistent watchlist:** SQLite `company_monitors` is authoritative for explicit user/configured watches
+  after `companies seed`. Existing `search.companies` entries remain migration/fallback input. Application-only
+  companies are derived into the encrypted payload as **Known** and never scanned or counted as Needs setup;
+  legacy application-only monitor rows are softly archived, preserving links and history.
 - **Config seed:** `search.companies` is a list of entries. Each is either a known name resolved via
   `jobscope/ats.py` `COMPANY_BOARDS` (e.g. `databricks` → greenhouse/databricks) or an explicit
   `"Name|provider|slug"` override. Empty list = ATS boards skipped.

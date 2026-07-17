@@ -47,20 +47,15 @@ Run notes: `python -m jobscope` needs the repo root as CWD and `PYTHONPATH="."` 
 
 ## 4. Next thought plan (pick up here)
 
-1. **Geo-restricted remote:** tag `"Remote in <country>"` roles distinctly from global remote (e.g. Stripe's
-   "Remote in Ireland" isn't relevant-remote for an India search). Add a `work_region` / `remote_scope` signal
-   and a dashboard facet; keep the `_derive_remote` keyword rule as the base.
-2. **Grow `COMPANY_BOARDS`:** find correct slugs for the ones that returned 0 (snyk, confluent, hashicorp)
-   and add more security unicorns. Big Workday employers (CrowdStrike / Palo Alto / Zscaler) have no simple
-   public board API — skip unless a clean source appears.
-3. **Publishing hygiene:** the daily publish must push from **one** machine only (avoid double pushes).
-   `scripts/register-publish-task.ps1` designates the publisher by writing a gitignored `.publish-primary`
-   marker (hostname + UTC timestamp); `scripts/publish.ps1` / `scripts/publish.sh` skip the git push on any
-   machine whose marker is missing or names a different host, unless `-Force` / `--force` (or
-   `JOBSCOPE_PUBLISH_FORCE=1`). `scripts/unregister-publish-task.ps1` retires a machine (removes the task +
-   marker). The task on this machine is registered (`jobscope publish`, daily 08:00); on another machine run
-   `register-publish-task.ps1` there only after retiring this one.
-4. **Optional:** store the raw JobSpy `is_remote` separately so future re-derivations don't lose signal.
+1. **Maintenance first:** Companies now separates the explicit **Watching** list from **Known / applied**
+  history. Do not bulk-resolve known companies; promote only the employers worth continuously scanning.
+2. **Selective ATS coverage:** add a board slug/provider only for a high-priority watched employer with a
+  clean logged-out source. Workday/iCIMS/custom portals remain unsupported unless a stable public connector
+  is justified.
+3. **Optional signal retention:** store raw JobSpy `is_remote` separately so future geographic-rule changes
+  can re-derive `remote_scope` without rescanning.
+4. **Publishing:** encrypted cloud refresh is authoritative for scheduled/browser mutation publishing. Keep
+  local publisher tasks disabled or single-primary to avoid competing `gh-pages` pushes.
 
 ## 5. Guardrails (don't regress these)
 
@@ -72,6 +67,7 @@ Run notes: `python -m jobscope` needs the repo root as CWD and `PYTHONPATH="."` 
 - jobscope's own **`gh-pages`** branch hosts Pages (branch-based, `build_type=legacy`); keep a
   **`.nojekyll`** file so the single-file dashboard isn't mangled by the Jekyll builder. (The separate
   `jobscope-dashboard` repo is retired.)
-- Publishing must originate **locally** (the DB is local/gitignored; CI can't regenerate the dashboard).
+- Cloud refresh restores the encrypted private DB, runs the pipeline, saves a new encrypted snapshot, and
+  publishes the empty shell + encrypted payload. Local publishing remains an explicit recovery path.
 - CI installs only `pyyaml requests feedparser markdown pytest` — new code + tests must degrade gracefully
   without `pandas`/`python-jobspy`.

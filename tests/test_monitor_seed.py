@@ -34,17 +34,42 @@ def test_seed_imports_config_and_active_applications_without_network():
         "already_seeded": False,
         "configured": 2,
         "applications": 1,
+        "archived_known": 0,
         "legacy_saved": 1,
-        "total": 3,
+        "total": 2,
     }
     databricks = store.get_company_monitor("databricks")
     assert databricks["provider"] == "greenhouse" and databricks["slug"] == "databricks"
-    unknown = store.get_company_monitor("Unknown Labs")
-    assert unknown["resolution_status"] == "unresolved"
-    assert unknown["origins"] == ["application"]
+    assert store.get_company_monitor("Unknown Labs") is None
     assert store.get_job_review(legacy.id)["state"] == "saved"
     assert store.get_job_review(applied.id) is None
     assert store.meta_get(SEED_MARKER) == "1"
+    store.close()
+
+
+def test_seed_archives_legacy_application_only_monitor_without_losing_links():
+    cfg, store = _setup()
+    job = Job(
+        source="inbox", title="Analyst", company="Unknown Labs",
+        url="https://x/application",
+    ).ensure_id()
+    store.upsert_job(job)
+    store.set_application(Application(
+        job_id=job.id, status="applied", company="Unknown Labs",
+        applied_at="2026-07-15",
+    ))
+    legacy = store.upsert_company_monitor("Unknown Labs", added_from="application")
+    store.link_monitor_job(legacy["id"], job.id)
+    store.meta_set(SEED_MARKER, "1")
+
+    result = seed_monitors(cfg, store)
+
+    assert result["archived_known"] == 1
+    assert result["already_seeded"] is True
+    assert store.list_company_monitors() == []
+    archived = store.get_company_monitor("Unknown Labs")
+    assert archived["status"] == "removed"
+    assert store.monitor_job_ids(archived["id"]) == [job.id]
     store.close()
 
 
@@ -66,7 +91,7 @@ def test_seed_is_idempotent_and_force_does_not_resave_new_jobs():
     store.close()
 
 
-def test_seed_merges_config_and_application_origins():
+def test_seed_keeps_configured_monitor_explicit_when_application_exists():
     cfg, store = _setup()
     job = Job(source="ats", title="Engineer", company="Databricks", url="https://x/dbx").ensure_id()
     store.upsert_job(job)
@@ -77,6 +102,6 @@ def test_seed_merges_config_and_application_origins():
     seed_monitors(cfg, store)
 
     monitor = store.get_company_monitor("databricks")
-    assert monitor["origins"] == ["config", "application"]
+    assert monitor["origins"] == ["config"]
     assert len(store.list_company_monitors()) == 2
     store.close()

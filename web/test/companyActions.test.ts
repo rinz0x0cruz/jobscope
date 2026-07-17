@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { acknowledgeMonitoringActions, collapseMonitoringActions, MONITORING_QUEUE_KEY, projectMonitoringActions, queuedMonitoringActions, submitMonitoringActions } from '@/lib/companyActions'
-import { dashboard, jobRow, monitoredCompany, review } from './factories'
+import { application, dashboard, jobRow, monitoredCompany, review } from './factories'
 
 describe('company actions', () => {
   beforeEach(() => localStorage.clear())
@@ -30,6 +30,39 @@ describe('company actions', () => {
     expect(projected.reviews[0].state).toBe('saved')
     expect(projected.companies.find((company) => company.id === 'm')?.status).toBe('paused')
     expect(projected.companies.find((company) => company.company === 'Beta')?.health_detail).toBe('Queued for sync')
+  })
+
+  it('promotes a known company optimistically without changing its identity', () => {
+    const known = monitoredCompany({
+      id: 'known-google', company: 'Google Inc.', lifecycle: 'known', status: 'removed',
+      added_from: ['application'], provider: '', slug: '', resolution_status: 'unresolved',
+    })
+
+    const projected = projectMonitoringActions(dashboard({ companies: [known] }), [{
+      type: 'monitor.upsert', company: 'Google', careers_url: '',
+    }])
+
+    expect(projected.companies).toHaveLength(1)
+    expect(projected.companies[0]).toMatchObject({
+      id: 'known-google', lifecycle: 'watching', status: 'active',
+      added_from: ['application', 'user'],
+    })
+  })
+
+  it('demotes a removed watched company with application history to known', () => {
+    const watched = monitoredCompany({ id: 'google', company: 'Google' })
+    const data = dashboard({
+      companies: [watched],
+      applications: [application({ job_id: 'google-role', company: 'Google' })],
+    })
+
+    const projected = projectMonitoringActions(data, [{
+      type: 'monitor.status', monitor_id: 'google', status: 'removed',
+    }])
+
+    expect(projected.companies[0]).toMatchObject({
+      id: 'google', status: 'removed', lifecycle: 'known',
+    })
   })
 
   it('projects an application restore and collapses duplicate restore actions', () => {

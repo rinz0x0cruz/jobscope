@@ -33,21 +33,24 @@ def _seed_entry(store, entry: str, *, origin: str) -> dict[str, Any]:
 
 
 def seed_monitors(cfg: dict, store, *, force: bool = False) -> dict[str, Any]:
-    """Import configured companies + active-application companies once.
+    """Import configured monitors and retire legacy application-only monitors.
 
     The first migration also preserves the pre-monitoring dashboard shortlist by
     marking its visible un-applied jobs as ``saved`` legacy reviews. ``force``
     reimports monitor origins but never repeats that legacy-review conversion.
     """
     already_seeded = bool(store.meta_get(SEED_MARKER))
+    # Run on every seed so obsolete clients cannot reactivate application history.
+    archived_known = store.archive_application_only_monitors()
     if already_seeded and not force:
         return {
             "seeded": False,
             "already_seeded": True,
             "configured": 0,
             "applications": 0,
+            "archived_known": archived_known,
             "legacy_saved": 0,
-            "total": len(store.list_company_monitors(include_removed=True)),
+            "total": len(store.list_company_monitors()),
         }
 
     configured_entries = [
@@ -56,17 +59,11 @@ def seed_monitors(cfg: dict, store, *, force: bool = False) -> dict[str, Any]:
     ]
     application_companies = store.active_application_companies(limit=1000)
     configured_ids: set[str] = set()
-    application_ids: set[str] = set()
     legacy_saved = 0
 
     with store.conn:
         for entry in configured_entries:
             configured_ids.add(_seed_entry(store, entry, origin="config")["id"])
-        for application in application_companies:
-            company = (application.get("company") or "").strip()
-            if not company:
-                continue
-            application_ids.add(_seed_entry(store, company, origin="application")["id"])
 
         if not already_seeded:
             applied_job_ids = {
@@ -88,20 +85,24 @@ def seed_monitors(cfg: dict, store, *, force: bool = False) -> dict[str, Any]:
         "seeded": True,
         "already_seeded": already_seeded,
         "configured": len(configured_ids),
-        "applications": len(application_ids),
+        "applications": len(application_companies),
+        "archived_known": archived_known,
         "legacy_saved": legacy_saved,
-        "total": len(store.list_company_monitors(include_removed=True)),
+        "total": len(store.list_company_monitors()),
     }
 
 
 def run_seed(cfg: dict, store, *, force: bool = False) -> int:
     result = seed_monitors(cfg, store, force=force)
     if result["already_seeded"] and not result["seeded"]:
-        print(f"  company monitors already seeded ({result['total']} total)")
+        archived = result["archived_known"]
+        detail = f"; {archived} application-only archived" if archived else ""
+        print(f"  company monitors already seeded ({result['total']} watching{detail})")
         return 0
     print(
         "  seeded company monitors: "
-        f"{result['configured']} configured, {result['applications']} from active applications, "
+        f"{result['configured']} configured, {result['applications']} known from applications, "
+        f"{result['archived_known']} application-only archived, "
         f"{result['legacy_saved']} legacy roles saved ({result['total']} total)"
     )
     return 0
