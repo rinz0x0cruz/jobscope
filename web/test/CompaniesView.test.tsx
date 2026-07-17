@@ -7,10 +7,6 @@ import { dashboard, monitoredCompany } from './factories'
 function setup(selectedId?: string) {
   const onActions = vi.fn().mockResolvedValue(undefined)
   const onSelect = vi.fn()
-  const onResolve = vi.fn().mockResolvedValue({
-    ok: true, company: 'Beta', status: 'resolved', provider: 'lever', slug: 'beta',
-    careers_url: 'https://jobs.lever.co/beta', detail: '', count: 8, matched: 2, results: [],
-  })
   render(<CompaniesView
     model={buildCompanies(dashboard({ companies: [monitoredCompany({ id: 'acme', company: 'Acme' })] }))}
     filter="all"
@@ -19,9 +15,8 @@ function setup(selectedId?: string) {
     onSelect={onSelect}
     onOpenJob={vi.fn()}
     onActions={onActions}
-    onResolve={onResolve}
   />)
-  return { onActions, onResolve, onSelect }
+  return { onActions, onSelect }
 }
 
 describe('CompaniesView', () => {
@@ -32,14 +27,13 @@ describe('CompaniesView', () => {
     expect(screen.getByRole('button', { name: 'Needs setup' })).toBeInTheDocument()
   })
 
-  it('resolves and confirms a new company', async () => {
-    const { onActions, onResolve } = setup()
+  it('adds a company immediately without resolving its portal', async () => {
+    const { onActions } = setup()
     fireEvent.change(screen.getByLabelText('Company name'), { target: { value: 'Beta' } })
     fireEvent.submit(screen.getByLabelText('Company name').closest('form')!)
-    expect(onResolve).toHaveBeenCalledWith('Beta', '')
-    expect(await screen.findByText(/8 openings/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Monitor company' }))
-    expect(onActions).toHaveBeenCalledWith([expect.objectContaining({ type: 'monitor.upsert', company: 'Beta' })])
+    expect(onActions).toHaveBeenCalledWith([
+      { type: 'monitor.upsert', company: 'Beta', careers_url: '' },
+    ])
   })
 
   it('loads the selected monitor into the portal editor', () => {
@@ -50,7 +44,7 @@ describe('CompaniesView', () => {
     expect(onSelect).toHaveBeenCalledWith(undefined)
   })
 
-  it('shows the preferred recruiter and scans jobs plus recruiter contacts', () => {
+  it('shows the preferred recruiter and keeps jobs/contact scans separate', () => {
     const onActions = vi.fn().mockResolvedValue(undefined)
     const company = monitoredCompany({
       id: 'acme', company: 'Acme', recruiter_count: 3,
@@ -63,14 +57,16 @@ describe('CompaniesView', () => {
     render(<CompaniesView
       model={buildCompanies(dashboard({ companies: [company] }))}
       filter="all" selectedId="acme" onFilter={vi.fn()} onSelect={vi.fn()}
-      onOpenJob={vi.fn()} onActions={onActions} onResolve={vi.fn()}
+      onOpenJob={vi.fn()} onActions={onActions}
     />)
 
     expect(screen.getByRole('link', { name: 'cyber@acme.com' }))
       .toHaveAttribute('href', 'mailto:cyber@acme.com')
     expect(screen.getByText(/Cybersecurity Recruiter via Apollo/)).toBeInTheDocument()
     expect(screen.getByText('3 candidates')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Scan jobs + recruiter' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Scan jobs' }))
     expect(onActions).toHaveBeenCalledWith([{ type: 'monitor.scan', monitor_id: 'acme' }])
+    fireEvent.click(screen.getByRole('button', { name: 'Find recruiter' }))
+    expect(onActions).toHaveBeenCalledWith([{ type: 'monitor.contacts', monitor_id: 'acme' }])
   })
 })

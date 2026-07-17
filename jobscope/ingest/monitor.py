@@ -143,6 +143,7 @@ def resolve_monitor(store, monitor: dict[str, Any], *, probe: bool = True) -> di
 
 def scan_monitor(
     cfg: dict, store, monitor: dict[str, Any], *, refresh_contacts: bool = False,
+    include_contacts: bool = True,
 ) -> dict[str, Any]:
     """Fetch, score, link, and safely reconcile one active resolved monitor."""
     result = {
@@ -166,20 +167,15 @@ def scan_monitor(
         result["error"] = "monitor is not active"
         return result
 
-    try:
-        from jobscope.apply import outreach
-        contact_result = outreach.refresh_company_contacts(
-            cfg, store, monitor["company"],
-            url=monitor.get("careers_url") or "",
-            force=refresh_contacts,
+    if include_contacts:
+        contact_result = refresh_monitor_contacts(
+            cfg, store, monitor, force=refresh_contacts,
         )
-        result["contact_status"] = contact_result["status"]
-        result["contact_domain"] = contact_result["domain"]
-        result["recruiter_count"] = len(contact_result["contacts"])
-        result["recruiter"] = contact_result["recruiter"]
-    except Exception as exc:  # recruiter discovery is optional, never breaks jobs
-        result["contact_status"] = "error"
-        result["contact_error"] = str(exc)[:200]
+        for key in (
+            "contact_status", "contact_domain", "recruiter_count",
+            "recruiter", "contact_error",
+        ):
+            result[key] = contact_result[key]
 
     if monitor.get("resolution_status") != "resolved" or not monitor.get("provider") or not monitor.get("slug"):
         result["status"] = monitor.get("resolution_status") or "unresolved"
@@ -224,6 +220,40 @@ def scan_monitor(
         )
     store.mark_monitor_success(monitor["id"])
     result["ok"] = True
+    return result
+
+
+def refresh_monitor_contacts(
+    cfg: dict, store, monitor: dict[str, Any], *, force: bool = True,
+) -> dict[str, Any]:
+    """Refresh one monitor's recruiter contacts without fetching its job board."""
+    result = {
+        "ok": False,
+        "monitor_id": monitor["id"],
+        "company": monitor["company"],
+        "contact_status": "not-run",
+        "contact_domain": "",
+        "recruiter_count": 0,
+        "recruiter": None,
+        "contact_error": "",
+    }
+    try:
+        from jobscope.apply import outreach
+        contact_result = outreach.refresh_company_contacts(
+            cfg, store, monitor["company"],
+            url=monitor.get("careers_url") or "",
+            force=force,
+        )
+        result.update({
+            "ok": contact_result["status"] not in {"error", "unresolved"},
+            "contact_status": contact_result["status"],
+            "contact_domain": contact_result["domain"],
+            "recruiter_count": len(contact_result["contacts"]),
+            "recruiter": contact_result["recruiter"],
+        })
+    except Exception as exc:  # recruiter discovery is optional
+        result["contact_status"] = "error"
+        result["contact_error"] = str(exc)[:200]
     return result
 
 

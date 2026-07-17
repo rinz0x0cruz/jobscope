@@ -57,6 +57,30 @@ def test_action_batch_adds_monitor_and_sets_review_atomically(monkeypatch):
     store.close()
 
 
+def test_monitor_upsert_never_probes_or_fetches(monkeypatch):
+    cfg, store = _setup()
+    monkeypatch.setattr(
+        ats, "_board_from_careers_page",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("careers page fetched")),
+    )
+    monkeypatch.setattr(
+        ats, "fetch_company_result",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("board probed")),
+    )
+
+    result = monitoring.apply_actions(cfg, store, [{
+        "type": "monitor.upsert",
+        "company": "Unknown Labs",
+        "careers_url": "https://unknown.example/careers",
+    }])
+
+    assert result["ok"] is True
+    saved = store.get_company_monitor("Unknown Labs")
+    assert saved["resolution_status"] == "unresolved"
+    assert saved["careers_url"] == "https://unknown.example/careers"
+    store.close()
+
+
 def test_action_validation_rejects_unknown_fields_before_mutation(monkeypatch):
     cfg, store = _setup()
     monkeypatch.setattr(ats, "resolve_board_result", lambda *_a, **_k: ats.BoardResolution(
@@ -86,6 +110,66 @@ def test_scan_actions_run_after_monitor_status_commit(monkeypatch):
     assert result["scans"][0]["ok"]
     assert result["reviews"][0]["state"] == "pending"
     assert result["rows"][0]["title"] == "Security Engineer"
+    store.close()
+
+
+def test_scan_action_resolves_portal_but_skips_contacts(monkeypatch):
+    cfg, store = _setup()
+    company = store.upsert_company_monitor("Unknown Labs", added_from="user")
+    calls = {"resolved": 0, "include_contacts": None}
+
+    def resolve(_store, current, *, probe=True):
+        calls["resolved"] += int(probe)
+        return store.upsert_company_monitor(
+            current["company"], provider="greenhouse", slug="unknown-labs",
+            resolution_status="resolved", added_from="user",
+        )
+
+    def scan(_cfg, _store, current, *, refresh_contacts=False, include_contacts=True):
+        calls["include_contacts"] = include_contacts
+        return {
+            "ok": True, "monitor_id": current["id"], "company": current["company"],
+            "matched": 0, "new": 0, "closed": 0, "board_count": 0,
+            "status": "ok", "error": "", "contact_status": "not-run",
+            "contact_domain": "", "recruiter_count": 0, "recruiter": None,
+            "contact_error": "",
+        }
+
+    monkeypatch.setattr(monitoring.monitor, "resolve_monitor", resolve)
+    monkeypatch.setattr(monitoring.monitor, "scan_monitor", scan)
+
+    result = monitoring.apply_actions(cfg, store, [
+        {"type": "monitor.scan", "monitor_id": company["id"]},
+    ])
+
+    assert result["scans"][0]["ok"] is True
+    assert calls == {"resolved": 1, "include_contacts": False}
+    store.close()
+
+
+def test_contact_action_runs_without_job_scan(monkeypatch):
+    cfg, store = _setup()
+    company = store.upsert_company_monitor("Acme", added_from="user")
+    monkeypatch.setattr(
+        monitoring.monitor, "refresh_monitor_contacts",
+        lambda *_a, **_k: {
+            "ok": True, "monitor_id": company["id"], "company": "Acme",
+            "contact_status": "updated", "contact_domain": "acme.com",
+            "recruiter_count": 1,
+            "recruiter": {"email": "security@acme.com"}, "contact_error": "",
+        },
+    )
+    monkeypatch.setattr(
+        monitoring.monitor, "scan_monitor",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("job scan ran")),
+    )
+
+    result = monitoring.apply_actions(cfg, store, [
+        {"type": "monitor.contacts", "monitor_id": company["id"]},
+    ])
+
+    assert result["contacts"][0]["recruiter_count"] == 1
+    assert result["scans"] == []
     store.close()
 
 

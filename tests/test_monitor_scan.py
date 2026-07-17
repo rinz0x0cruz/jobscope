@@ -196,3 +196,26 @@ def test_recruiter_lookup_failure_never_breaks_job_scan(monkeypatch):
     assert result["contact_status"] == "error"
     assert "finder unavailable" in result["contact_error"]
     store.close()
+
+
+def test_jobs_only_scan_never_runs_recruiter_lookup(monkeypatch):
+    from jobscope.apply import outreach
+
+    cfg, store = _setup()
+    company = store.upsert_company_monitor(
+        "Acme", provider="greenhouse", slug="acme", added_from="user",
+    )
+    monkeypatch.setattr(ats, "fetch_company_result", lambda *_a, **_k: _fetch(
+        jobs=[_job("Security Engineer", "https://x/current")],
+    ))
+    monkeypatch.setattr(
+        outreach, "refresh_company_contacts",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("recruiter lookup ran")),
+    )
+
+    result = monitor.scan_monitor(cfg, store, company, include_contacts=False)
+
+    assert result["ok"] is True and result["matched"] == 1
+    assert result["contact_status"] == "not-run"
+    assert result["recruiter_count"] == 0 and result["recruiter"] is None
+    store.close()

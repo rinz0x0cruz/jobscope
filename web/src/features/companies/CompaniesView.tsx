@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ArrowLeft, ArrowRight, Building2, ExternalLink, Loader2, Mail, Pause, Play, RefreshCw, Settings2, Trash2 } from 'lucide-react'
 import { monitorCheckAge, type CompaniesModel, type CompanyItem } from '@/lib/companies'
 import type { CompanyFilter } from '@/lib/urlState'
-import type { CompanyResolution, MonitoringAction } from '@/lib/companyActions'
+import type { MonitoringAction } from '@/lib/companyActions'
 
 export interface CompaniesViewProps {
   model: CompaniesModel
@@ -11,7 +11,6 @@ export interface CompaniesViewProps {
   onFilter: (filter: CompanyFilter) => void
   onSelect: (companyId?: string) => void
   onOpenJob: (jobId: string) => void
-  onResolve: (company: string, careersUrl?: string) => Promise<CompanyResolution | null>
   onActions: (actions: MonitoringAction[]) => Promise<void>
 }
 
@@ -22,15 +21,13 @@ const FILTERS: Array<{ value: CompanyFilter; label: string }> = [
   { value: 'setup', label: 'Needs setup' },
 ]
 
-export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, onOpenJob, onResolve, onActions }: CompaniesViewProps) {
+export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, onOpenJob, onActions }: CompaniesViewProps) {
   const [company, setCompany] = useState('')
   const [careersUrl, setCareersUrl] = useState('')
-  const [resolving, setResolving] = useState(false)
-  const [resolution, setResolution] = useState<CompanyResolution | null>(null)
+  const [saving, setSaving] = useState(false)
   const editPortal = (item: CompanyItem) => {
     setCompany(item.company)
     setCareersUrl(item.careers_url)
-    setResolution(null)
     onSelect(undefined)
   }
   const visible = model.items.filter((company) => {
@@ -53,20 +50,21 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
         onSubmit={(event) => {
           event.preventDefault()
           if (!company.trim()) return
-          setResolving(true)
-          void onResolve(company.trim(), careersUrl.trim())
-            .then((result) => {
-              if (result) setResolution(result)
-              else return onActions([{ type: 'monitor.upsert', company: company.trim(), careers_url: careersUrl.trim() }])
+          setSaving(true)
+          void onActions([{
+            type: 'monitor.upsert', company: company.trim(), careers_url: careersUrl.trim(),
+          }])
+            .then(() => {
+              setCompany('')
+              setCareersUrl('')
             })
-            .finally(() => setResolving(false))
+            .finally(() => setSaving(false))
         }}
       >
         <input value={company} onChange={(event) => setCompany(event.target.value)} aria-label="Company name" placeholder="Company name" className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong" />
         <input value={careersUrl} onChange={(event) => setCareersUrl(event.target.value)} aria-label="Careers portal URL" placeholder="Official careers URL (optional)" className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong" />
-        <button type="submit" disabled={resolving || !company.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-white disabled:opacity-50">{resolving ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />} Find portal</button>
+        <button type="submit" disabled={saving || !company.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-white disabled:opacity-50">{saving ? <Loader2 size={14} className="animate-spin" /> : <Building2 size={14} />} Add company</button>
       </form>
-      {resolution && <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line bg-inset/40 px-4 py-3 text-[12px] sm:px-7"><span><strong className="text-ink">{resolution.company}</strong> · {resolution.status === 'resolved' ? `${resolution.provider}/${resolution.slug} · ${resolution.count} openings · ${resolution.matched} matches` : resolution.detail || resolution.status}</span><div className="flex gap-2"><button type="button" onClick={() => { setResolution(null); void onActions([{ type: 'monitor.upsert', company: resolution.company, careers_url: resolution.careers_url, provider: resolution.provider, slug: resolution.slug }]) }} className="h-8 rounded-md border border-brand px-3 text-[11px] font-medium text-brand">Monitor company</button><button type="button" onClick={() => setResolution(null)} className="h-8 px-2 text-[11px] text-ink-3">Cancel</button></div></div>}
       <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-line px-4 py-2 [scrollbar-width:none] sm:px-7 [&::-webkit-scrollbar]:hidden">
         {FILTERS.map((item) => <button key={item.value} type="button" aria-pressed={filter === item.value} onClick={() => onFilter(item.value)} className={`h-8 shrink-0 rounded-full border px-3 text-[11px] font-medium ${filter === item.value ? 'border-brand bg-brand-weak text-brand' : 'border-line text-ink-2'}`}>{item.label}</button>)}
       </div>
@@ -136,7 +134,7 @@ function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { comp
                 </p>
               </>
             ) : (
-              <p className="mt-1 text-[12px] text-ink-3">No verified recruiter yet. Run a targeted scan.</p>
+              <p className="mt-1 text-[12px] text-ink-3">No verified recruiter found.</p>
             )}
           </div>
           <div className="text-right text-[10px] text-ink-3">
@@ -152,7 +150,14 @@ function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { comp
           onClick={() => void onActions([{ type: 'monitor.scan', monitor_id: company.id }])}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-brand px-3 text-[11px] font-medium text-brand disabled:opacity-40"
         >
-          <RefreshCw size={13} /> Scan jobs + recruiter
+          <RefreshCw size={13} /> Scan jobs
+        </button>
+        <button
+          disabled={queued}
+          onClick={() => void onActions([{ type: 'monitor.contacts', monitor_id: company.id }])}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-3 text-[11px] text-ink-2 disabled:opacity-40"
+        >
+          <Mail size={13} /> Find recruiter
         </button>
         <button
           disabled={queued}
