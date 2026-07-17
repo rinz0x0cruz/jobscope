@@ -8,7 +8,9 @@ function setup(selectedId?: string) {
   const onActions = vi.fn().mockResolvedValue(undefined)
   const onSelect = vi.fn()
   render(<CompaniesView
-    model={buildCompanies(dashboard({ companies: [monitoredCompany({ id: 'acme', company: 'Acme' })] }))}
+    model={buildCompanies(dashboard({ companies: [monitoredCompany({
+      id: 'acme', company: 'Acme', careers_url: 'https://acme.example/jobs',
+    })] }))}
     filter="all"
     selectedId={selectedId}
     onFilter={vi.fn()}
@@ -63,6 +65,17 @@ describe('CompaniesView', () => {
     expect(onSelect).toHaveBeenCalledWith('google')
   })
 
+  it('opens a partial existing match from its result card', () => {
+    const { onActions, onSelect } = setup()
+    fireEvent.change(screen.getByLabelText('Company name'), { target: { value: 'ac' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Acme' }))
+
+    expect(onSelect).toHaveBeenCalledWith('acme')
+    expect(onActions).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Company name')).toHaveValue('')
+  })
+
   it('updates a selected monitor portal without entering add mode', () => {
     const { onActions, onSelect } = setup('acme')
     fireEvent.click(screen.getByRole('button', { name: 'Edit portal' }))
@@ -78,6 +91,19 @@ describe('CompaniesView', () => {
     expect(onActions).toHaveBeenCalledWith([{
       type: 'monitor.upsert', company: 'Acme', careers_url: 'https://acme.example/careers',
     }])
+  })
+
+  it('exits portal edit mode when browsing to a company', () => {
+    const { onSelect } = setup('acme')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit portal' }))
+    expect(screen.getByRole('button', { name: 'Save portal' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Acme/ }))
+
+    expect(onSelect).toHaveBeenLastCalledWith('acme')
+    expect(screen.getByLabelText('Company name')).toHaveValue('')
+    expect(screen.getByLabelText('Careers portal URL')).toHaveValue('')
+    expect(screen.getByLabelText('Company name')).not.toHaveAttribute('readonly')
   })
 
   it('shows the preferred recruiter and keeps jobs/contact scans separate', () => {

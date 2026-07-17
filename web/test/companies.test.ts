@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { buildCompanies, monitorCheckAge } from '@/lib/companies'
+import { buildCompanies, companyNameKey, monitorCheckAge } from '@/lib/companies'
 import { dashboard, jobRow, monitoredCompany, review } from './factories'
 
 describe('companies model', () => {
+  it('normalizes company names deterministically', () => {
+    expect(companyNameKey('  INTERVIEW Intelligence, Inc.  '))
+      .toBe('interview intelligence inc')
+  })
+
   it('formats monitor check timestamps for quick scanning', () => {
     const now = Date.parse('2026-07-17T12:00:00Z')
     expect(monitorCheckAge('', now)).toBe('not yet')

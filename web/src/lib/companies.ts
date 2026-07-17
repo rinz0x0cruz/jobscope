@@ -17,7 +17,7 @@ export interface CompaniesModel {
 }
 
 export function companyNameKey(value: string): string {
-  return value.trim().toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
 export function buildCompanies(data: DashboardData, query = ''): CompaniesModel {
