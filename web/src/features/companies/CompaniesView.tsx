@@ -44,7 +44,7 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
   const exactCompany = matchingCompanies.find(
     (item) => companyNameKey(item.company) === companyKey,
   )
-  const openExisting = (item: CompanyItem) => {
+  const selectCompany = (item: CompanyItem) => {
     setCompany('')
     setCareersUrl('')
     setEditingId(undefined)
@@ -71,7 +71,7 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
           event.preventDefault()
           if (!company.trim()) return
           if (exactCompany) {
-            openExisting(exactCompany)
+            selectCompany(exactCompany)
             return
           }
           setSaving(true)
@@ -98,7 +98,7 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
               <button
                 key={item.id}
                 type="button"
-                onClick={() => openExisting(item)}
+                onClick={() => selectCompany(item)}
                 aria-label={`Open ${item.company}`}
                 className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border border-line bg-panel px-3 py-2 text-left outline-none hover:border-line-strong focus-visible:ring-2 focus-visible:ring-brand"
               >
@@ -120,7 +120,7 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
       </div>
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(340px,.78fr)_minmax(0,1.22fr)]">
         <div className={`${selected ? 'hidden lg:block' : 'block'} min-h-0 overflow-auto border-r border-line`}>
-          {visible.length ? <ul>{visible.map((company) => <CompanyRow key={company.id} company={company} selected={company.id === selectedId} onSelect={() => onSelect(company.id)} />)}</ul> : <Empty />}
+          {visible.length ? <ul>{visible.map((company) => <CompanyRow key={company.id} company={company} selected={company.id === selectedId} onSelect={() => selectCompany(company)} />)}</ul> : <Empty />}
         </div>
         <div className={`${selected ? 'block' : 'hidden lg:block'} min-h-0 overflow-auto`}>
           {selected ? <CompanyDetail company={selected} onBack={() => onSelect(undefined)} onEdit={() => editPortal(selected)} onOpenJob={onOpenJob} onActions={onActions} /> : <NoSelection />}
