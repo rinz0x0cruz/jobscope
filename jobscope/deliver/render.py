@@ -40,6 +40,12 @@ def _profile_data(cfg: dict, store) -> dict | None:
         else:
             name, resume = resumes[0]
         prof = _profile.build_profile(resume, cfg, name)
+        configured_terms = [
+            str(term).strip() for term in (cfg.get("search", {}) or {}).get("terms", [])
+            if str(term).strip()
+        ]
+        if configured_terms:
+            prof["search_terms"] = configured_terms
     prof = dict(prof)
     prof["name"] = _profile.active_name(cfg) or str(prof.get("resume") or "default")
     prof["available"] = available or [prof["name"]]

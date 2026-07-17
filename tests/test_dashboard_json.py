@@ -409,6 +409,11 @@ def test_profile_fallback_uses_configured_primary_resume(tmp_path):
     cfg = load_config("__no_such_config_for_tests__.yaml")
     cfg["output"]["db_path"] = str(tmp_path / "profiles.db")
     cfg["profile"]["primary_resume"] = "research"
+    cfg["search"]["terms"] = [
+        "Security Researcher", "Cloud Security Engineer", "Threat Hunter",
+        "Detection Engineer", "Malware Analyst", "Incident Response Analyst",
+        "Security Engineer",
+    ]
     store = Store(cfg["output"]["db_path"])
     store.save_resume(Resume(
         titles=["Security Consultant"], skills=["audit"], seniority="junior",
@@ -423,7 +428,7 @@ def test_profile_fallback_uses_configured_primary_resume(tmp_path):
 
     assert emitted["name"] == "research"
     assert emitted["resume"] == "research"
-    assert "Threat Hunter" in emitted["search_terms"]
+    assert emitted["search_terms"] == cfg["search"]["terms"]
     store.close()
 
 
