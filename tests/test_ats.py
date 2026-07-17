@@ -4,6 +4,7 @@ import tempfile
 
 from jobscope.ingest import ats
 from jobscope.core.config import load_config
+from jobscope.core.model import Job
 from jobscope.core.store import Store
 
 
@@ -95,6 +96,25 @@ def test_greenhouse_run_filters_by_location_and_role(monkeypatch):
     # kept: India security-engineer + remote-India detection-engineer
     assert new == 2
     assert titles == {"Senior Security Engineer, Incident Response", "Staff Detection Engineer"}
+
+
+def test_board_filter_targets_threat_hunter_without_generic_engineering_roles():
+    cfg = load_config(None)
+    cfg["search"].update({
+        "terms": ["Security Engineer"],
+        "scope_to_home": False,
+        "location": "Remote",
+        "is_remote": True,
+    })
+    jobs = [
+        Job(title="Senior Threat Hunter", location="Remote", is_remote=True),
+        Job(title="Manager, Software Engineering", location="Remote", is_remote=True),
+        Job(title="Engineering Manager - Backend", location="Remote", is_remote=True),
+    ]
+
+    kept = ats.filter_board_jobs(cfg, jobs)
+
+    assert [job.title for job in kept] == ["Senior Threat Hunter"]
 
 
 def test_description_html_is_stripped_and_unescaped(monkeypatch):

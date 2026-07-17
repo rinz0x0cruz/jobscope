@@ -29,6 +29,7 @@ _ROLE_HINTS: list[tuple[tuple[str, ...], str]] = [
     (("application security", "appsec", "sast", "secure code", "owasp", "product security"),
      "Application Security Engineer"),
     (("cloud security", "kubernetes", "terraform", "devsecops"), "Cloud Security Engineer"),
+    (("threat hunting", "threat hunter"), "Threat Hunter"),
     (("detection", "siem", "splunk", "threat hunting", "soc", "kql"), "Detection Engineer"),
     (("penetration testing", "pentest", "burp", "metasploit", "red team", "offensive"),
      "Penetration Tester"),
@@ -40,7 +41,7 @@ _ROLE_HINTS: list[tuple[tuple[str, ...], str]] = [
     (("security", "iam", "cryptography", "pki"), "Security Engineer"),
 ]
 
-_MAX_TERMS = 6
+_MAX_TERMS = 7
 
 
 def _data_dir(cfg: dict) -> str:

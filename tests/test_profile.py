@@ -35,7 +35,26 @@ def test_derive_terms_from_titles_and_skills():
     assert "Security Researcher" in terms                 # broadened résumé title
     assert "Application Security Engineer" in terms        # appsec skill hint
     assert "Detection Engineer" in terms                   # detection skill hint
-    assert len(terms) <= 6                                 # capped
+    assert len(terms) <= 7                                 # capped
+
+
+def test_derive_terms_includes_threat_hunter_without_dropping_security_roles():
+    terms = profile._derive_terms(_resume(
+        skills=[
+            "cloud security", "threat hunting", "detection", "malware",
+            "incident response", "security",
+        ],
+    ))
+
+    assert terms == [
+        "Security Researcher",
+        "Cloud Security Engineer",
+        "Threat Hunter",
+        "Detection Engineer",
+        "Malware Analyst",
+        "Incident Response Analyst",
+        "Security Engineer",
+    ]
 
 
 def test_derive_terms_fallback_when_nothing_matches():

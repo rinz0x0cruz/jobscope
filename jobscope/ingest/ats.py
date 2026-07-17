@@ -487,7 +487,7 @@ def resolve_board(name: str, *, provider: str | None = None,
 
 def _role_keywords(search: dict) -> set[str]:
     kws = {t.lower().strip() for t in (search.get("terms") or []) if t.strip()}
-    kws |= {"software engineer", "backend", "product security", "application security",
+    kws |= {"threat hunter", "product security", "application security",
             "detection engineer", "reverse engineer", "malware", "vulnerability", "exploit",
             "threat", "appsec", "security researcher"}
     return kws

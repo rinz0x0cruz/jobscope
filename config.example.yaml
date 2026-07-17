@@ -21,6 +21,7 @@ search:
     - "application security engineer"
     - "security engineer"
     - "product security"
+    - "threat hunter"
   google_term: ""                     # optional google-jobs specific phrasing
   location: "Remote"
   country_indeed: "India"
