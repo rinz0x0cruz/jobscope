@@ -234,6 +234,84 @@ CREATE TABLE IF NOT EXISTS job_reviews (
     first_seen TEXT NOT NULL,
     reviewed_at TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS outreach_campaigns (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'active', 'paused', 'completed', 'cancelled')),
+    sector TEXT NOT NULL DEFAULT 'cybersecurity',
+    region TEXT NOT NULL DEFAULT 'India',
+    requested_count INTEGER NOT NULL,
+    weights_json TEXT NOT NULL,
+    criteria_json TEXT NOT NULL DEFAULT '{}',
+    resume_name TEXT NOT NULL DEFAULT '',
+    daily_limit INTEGER NOT NULL DEFAULT 2,
+    min_spacing_hours REAL NOT NULL DEFAULT 4,
+    timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+    send_window_start TEXT NOT NULL DEFAULT '10:00',
+    send_window_end TEXT NOT NULL DEFAULT '17:00',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS outreach_campaign_targets (
+    id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL,
+    company_key TEXT NOT NULL,
+    company TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'ranked'
+        CHECK (state IN ('ranked', 'needs_contact', 'draft', 'approved', 'sent',
+                         'skipped', 'failed', 'replied', 'opted_out')),
+    rank_score REAL NOT NULL DEFAULT 0,
+    region_score REAL NOT NULL DEFAULT 0,
+    compensation_score REAL NOT NULL DEFAULT 0,
+    growth_score REAL NOT NULL DEFAULT 0,
+    evidence_coverage REAL NOT NULL DEFAULT 0,
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    domain TEXT NOT NULL DEFAULT '',
+    contacts_json TEXT NOT NULL DEFAULT '[]',
+    selected_email TEXT NOT NULL DEFAULT '',
+    selected_source TEXT NOT NULL DEFAULT '',
+    selected_confidence TEXT NOT NULL DEFAULT '',
+    selected_note TEXT NOT NULL DEFAULT '',
+    subject TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    resume_path TEXT NOT NULL DEFAULT '',
+    resume_sha256 TEXT NOT NULL DEFAULT '',
+    approval_hash TEXT NOT NULL DEFAULT '',
+    approved_at TEXT NOT NULL DEFAULT '',
+    scheduled_at TEXT NOT NULL DEFAULT '',
+    outbound_message_id TEXT NOT NULL DEFAULT '',
+    sent_at TEXT NOT NULL DEFAULT '',
+    replied_at TEXT NOT NULL DEFAULT '',
+    reply_event_id TEXT NOT NULL DEFAULT '',
+    error_code TEXT NOT NULL DEFAULT '',
+    error_detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (campaign_id, company_key),
+    FOREIGN KEY (campaign_id) REFERENCES outreach_campaigns(id)
+);
+CREATE TABLE IF NOT EXISTS outreach_campaign_runs (
+    id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
+    started_at TEXT NOT NULL,
+    completed_at TEXT NOT NULL DEFAULT '',
+    sent_count INTEGER NOT NULL DEFAULT 0,
+    skipped_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    summary_json TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (campaign_id) REFERENCES outreach_campaigns(id)
+);
+CREATE TABLE IF NOT EXISTS outreach_suppressions (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('email', 'domain', 'company')),
+    value TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    UNIQUE (kind, value)
+);
 CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
 CREATE INDEX IF NOT EXISTS idx_mail_events_job ON mail_events(job_id);
@@ -250,6 +328,16 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_decisions_run
     ON reconciliation_decisions(run_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_reconciliation_decisions_application
     ON reconciliation_decisions(application_id);
+CREATE INDEX IF NOT EXISTS idx_outreach_campaigns_status
+    ON outreach_campaigns(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_outreach_campaign_targets_due
+    ON outreach_campaign_targets(campaign_id, state, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_outreach_campaign_targets_company
+    ON outreach_campaign_targets(company_key, sent_at);
+CREATE INDEX IF NOT EXISTS idx_outreach_campaign_runs_campaign
+    ON outreach_campaign_runs(campaign_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_outreach_suppressions_value
+    ON outreach_suppressions(value, kind);
 """
 
 
@@ -329,6 +417,17 @@ class _StoreBase:
             "CREATE INDEX IF NOT EXISTS idx_applications_tombstone "
             "ON applications(tombstoned_at, reconciliation_exempt)"
         )
+        campaign_target = {
+            r["name"] for r in self.conn.execute(
+                "PRAGMA table_info(outreach_campaign_targets)"
+            )
+        }
+        for col in ("resume_sha256", "outbound_message_id", "reply_event_id"):
+            if col not in campaign_target:
+                self.conn.execute(
+                    f"ALTER TABLE outreach_campaign_targets ADD COLUMN {col} "
+                    "TEXT NOT NULL DEFAULT ''"
+                )
         self.conn.commit()
 
     def _seed_reconciliation_baseline(self) -> None:

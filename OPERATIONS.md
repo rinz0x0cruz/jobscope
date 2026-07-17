@@ -63,6 +63,12 @@ then pushes with `--force-with-lease` against the restored SHA. A concurrent or
 unexpected branch change fails instead of being overwritten. The ciphertext that
 successfully restored is retained as the next `jobscope.db.previous.enc`.
 
+Before encryption, `jobscope.core.snapshot --cloud-copy` creates a consistent SQLite
+backup, empties the local-only campaign, target, run, and suppression tables, enables
+secure deletion, and vacuums free pages. The encrypted `data` branch therefore cannot
+expose or restore recruiter-campaign recipients, drafts, approvals, schedules, or
+opt-outs. The original local database is never modified by this redaction step.
+
 Seed the branch once from a validated local database:
 
 ```powershell
@@ -138,6 +144,25 @@ If cloud restore fails, do not delete the `data` branch or rerun with an empty D
 Wrong keys, corrupted ciphertext, unsupported JSDB versions, and invalid SQLite all
 fail closed. Keep `JOBSCOPE_DB_KEY` separate from the dashboard passphrase.
 
+Cloud snapshots intentionally contain no campaign state. Replacing a local database
+with a recovered cloud snapshot preserves jobs, applications, monitors, reviews, and
+mail events, but yields empty campaign tables. Keep timestamped local database backups
+if campaign drafts, approvals, schedules, or suppressions must be recoverable.
+
+## Local Outreach Scheduler And Repair
+
+Registering `scripts/register-outreach-task.ps1` first runs `campaign ready`, then schedules
+`campaign tick` under the interactive user. Each tick incrementally checks configured inboxes,
+reconciles replies/opt-outs, and sends at most one due approved email. The task uses
+`MultipleInstances IgnoreNew`; it never force-sends or bypasses approval, quota, spacing, cooldown,
+application-history, recipient-domain, résumé-hash, or suppression guards.
+
+If Campaigns reports **delivery unknown**, do not retry until checking the SMTP provider's Sent
+folder for the stored Message-ID. Resolve it in the local UI as **Confirmed in Sent** or
+**Confirmed not sent**. The latter returns it to Draft and clears approval, so an intentional retry
+requires review and approval again. A generic same-domain reply is linked only when one unresolved
+target exists for that domain; exact `In-Reply-To` matching always takes precedence.
+
 ## Key Rotation
 
 ### Database Key
@@ -179,10 +204,12 @@ after the verifier confirms:
 - No private field/value serialization appears in text assets.
 - `deployment-manifest.json` records the source commit and SHA-256 of every artifact.
 
-The monitoring and audit migrations are additive. Rolling code back leaves monitor/review/audit tables ignored but intact;
-it does not delete raw jobs, application history, dismiss tombstones, or company provenance. The previous
-encrypted DB generation remains the first recovery option. `search.companies` is retained as seed/fallback
-input, so old code can still run direct ATS scans during a rollback.
+The monitoring, audit, and local campaign migrations are additive. Rolling code back
+leaves their tables ignored but intact; it does not delete raw jobs, application
+history, dismiss tombstones, company provenance, or local campaign rows. The previous
+encrypted cloud DB generation remains the first recovery option for cloud-managed
+state, but never for local-only campaigns. `search.companies` is retained as
+seed/fallback input, so old code can still run direct ATS scans during a rollback.
 
 If publication fails, `refresh:last_date` is not advanced. Check
 `refresh:last_failed_stage` with `jobscope doctor`, repair the stage, and rerun with

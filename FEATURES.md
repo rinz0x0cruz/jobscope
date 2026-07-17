@@ -44,6 +44,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `prep <job_id>` | Builds a review-ready application package folder (tailored resume/cover PDF, filled-answers, index, contacts) and marks status `prepared`. |
 | `apply <job_id> [--assist]` | Opens the posting URL for you to submit. `--assist` = headed Playwright autofill of a **public** ATS form that **stops before submit**. |
 | `outreach <job_id> [--to E] [--send] [--force]` | Drafts a tailored recruiter email + attaches your résumé and **previews it by default**. Resolves a contact deterministically: a real recruiter who emailed you (no-reply/ATS relays filtered out), a published HR/careers email **discovered on the employer's own site** (domain verified by fetching it + matching the company name), or a `careers@` role inbox on that verified domain — or `--to`. Sending is opt-in (`apply.outreach.enabled` + `email.*` + `--send`), **deduped per company** with a cooldown, and honors a do-not-contact list. |
+| `campaign [create\|list\|show\|discover\|draft\|approve\|start\|pause\|skip\|send-approved\|replies\|tick\|ready]` | Local ranked recruiter campaigns. Selects N unique India-relevant cybersecurity companies, excludes all application history, records India/compensation/growth evidence, discovers one recruiter, and requires per-message approval. `tick` checks replies, then sends at most one due approved draft after rechecking every guard. |
 | `dashboard [--public] [--emit-web]` | Emits the private dashboard payload; `--public` writes an **empty schema-valid shell**. `--emit-web` mirrors private data for local development. Publish scripts ship only the empty shell plus encrypted `site.enc.json`. |
 | `serve [--port 8799] [--open]` | Builds (if needed) + serves the **web SPA** on 127.0.0.1 with a localhost-only **Refresh & Publish** button (syncs Gmail -> rescore -> publish -> rebuild). |
 | `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
@@ -63,7 +64,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 
 ## Dashboard UX
 
-- **Company-first IA:** Review, Companies, Pipeline, Applications, Activity, Settings. Review defaults
+- **Company-first IA:** Review, Companies, local-only Campaigns, Pipeline, Applications, Activity, Settings. Review defaults
   to pending monitored matches; broad Discovery, Saved, and Dismissed never mix implicitly. Companies
   owns portal resolution, source health, scan/pause/remove, and per-company pending/saved roles.
 - **Local + encrypted Pages actions:** localhost uses loopback/CSRF APIs immediately. Static Pages stores
@@ -82,6 +83,13 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   `jobscope serve` — it resolves a contact, shows the tailored draft (editable To/Subject/Body), notes the résumé
   it will attach, and sends via the same guardrails as the CLI. Backed by a loopback, CSRF-guarded `/api/outreach`;
   hidden on the public static site (no backend to reach).
+- **Campaigns (local `serve`):** a dense ranked-target workspace creates N-company India cybersecurity
+  campaigns, shows factor evidence and contact source/confidence, and exposes one editable approval at a time.
+  Approval hashes the exact recipient/subject/body/attachment; edits clear it. There is no approve-all action.
+  Static Pages hides Campaigns navigation and a direct URL shows only the local-workspace requirement.
+- **Paced local scheduler:** `register-outreach-task.ps1` calls `campaign tick` hourly under the interactive
+  user. Each invocation incrementally checks inbox replies, then can send one message maximum; default limits
+  remain 2/day, 4 hours apart, 10:00–17:00 Asia/Kolkata. Configuration/keychain readiness is checked first.
 - **Review workspace:** ranked monitored/discovery/saved/dismissed buckets, source-aware actions, preserved
   list position, desktop reader/pipeline split, and a full-screen mobile role reader.
 - **Market intelligence on cards:** structured posting pay is compared with compatible public compensation
@@ -96,6 +104,19 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   cybersecurity/security recruiter titles rank ahead of technical/engineering, then general recruiting/HR.
   Employer domains must come from the company site, verified name/domain match, or inbox evidence—never
   LinkedIn, Indeed, Greenhouse, Lever, Workday, or another aggregator/ATS mail domain.
+- **Finder boundary:** Hunter and Apollo are optional and key-gated. Returned addresses are accepted only when
+  syntactically valid, non-automated, non-ATS, and on the confirmed company domain; confidence/source remain
+  visible and individual approval is mandatory. Role inboxes are never auto-selected for campaigns.
+- **Replies and opt-outs:** every outbound campaign email has a durable Message-ID. Inbox sync prefers exact
+  `In-Reply-To`, then confirmed-domain + post-send timing for new threads. Generic replies are retained even
+  without application keywords; explicit opt-out language creates local email/domain suppressions before body
+  snippets are discarded. Campaign target rows store state/timestamps/event IDs, not reply body copies.
+- **Unknown SMTP outcomes:** a disconnect after `sendmail` begins is not mislabeled failed or retried.
+  Campaigns locks it as delivery unknown until the user checks Sent mail and explicitly marks it sent or
+  returns it to Draft for review/reapproval. Provider exception text is reduced to safe type/code metadata.
+- **Quorum boundary:** optional Quorum can improve generated drafts and arbitrate ordinary deterministic
+  inbox-label ties. It cannot rank companies, select recipients, approve/send mail, match replies, or override
+  deterministic `campaign_reply` / `campaign_optout` labels.
 - **Applications + Activity:** operational inbox/board/offers views, preserved Sankey, action queue, and a
   chronological event stream with unique event identity.
 - **Whole-site unlock:** the private payload includes jobs, descriptions, rationale, contacts, profile,
@@ -188,6 +209,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Best-effort and fail-closed:** errors/partial/empty boards update source health but never close stored
   roles. Only a complete, non-empty `OK` board reconciles missing postings. ATS monitoring runs without
   JobSpy. Workday/iCIMS/custom HTML portals are explicit unsupported/Needs-setup states in the MVP.
+- **No hidden external fallback:** a targeted company scan does not fall back to LinkedIn, Indeed, or Google
+  when official ATS resolution fails. Broad discovery is separate and may independently find that company.
 
 ## Taken-down (closed) detection
 

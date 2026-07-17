@@ -38,6 +38,9 @@ try {
     try {
         & $python -m jobscope.core.snapshot $db
         if ($LASTEXITCODE -ne 0) { throw "local database validation failed (exit $LASTEXITCODE)" }
+        $cloudDb = Join-Path $tmp "jobscope.cloud.db"
+        & $python -m jobscope.core.snapshot $db --cloud-copy $cloudDb
+        if ($LASTEXITCODE -ne 0) { throw "cloud-safe database copy failed (exit $LASTEXITCODE)" }
     }
     finally { Pop-Location }
 
@@ -46,7 +49,7 @@ try {
     # call and gate on the exit code instead (2>&1 merges the line so it just prints).
     $eapPrev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    node (Join-Path $RepoRoot "scripts\crypt-file.mjs") encrypt $db (Join-Path $tmp "jobscope.db.enc") 2>&1 |
+    node (Join-Path $RepoRoot "scripts\crypt-file.mjs") encrypt $cloudDb (Join-Path $tmp "jobscope.db.enc") 2>&1 |
         ForEach-Object { Write-Host $_ }
     $encExit = $LASTEXITCODE
     $ErrorActionPreference = $eapPrev
@@ -59,7 +62,7 @@ try {
     $decExit = $LASTEXITCODE
     $ErrorActionPreference = $eapPrev
     if ($decExit -ne 0) { throw "encryption verification failed (exit $decExit)" }
-    if ((Get-FileHash $db).Hash -ne (Get-FileHash $verifyDb).Hash) {
+    if ((Get-FileHash $cloudDb).Hash -ne (Get-FileHash $verifyDb).Hash) {
         throw "encryption verification failed (decrypted bytes differ)"
     }
     Remove-Item $verifyDb -Force

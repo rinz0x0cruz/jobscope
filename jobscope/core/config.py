@@ -173,6 +173,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "max_age_days": 14,
                 "scheduled": False,
             },
+            # Local-only, individually approved cold-outreach campaigns. Ranking
+            # and drafting are safe while outreach is disabled; SMTP still needs
+            # both outreach.enabled and email.enabled.
+            "campaign": {
+                "weights": {"region": 0.50, "compensation": 0.30, "growth": 0.20},
+                "include_default_pool": True,
+                "curated_companies": [],
+                "company_overrides": {},
+                "daily_limit": 2,
+                "min_spacing_hours": 4,
+                "timezone": "Asia/Kolkata",
+                "send_window_start": "10:00",
+                "send_window_end": "17:00",
+            },
         },
     },
     "output": {

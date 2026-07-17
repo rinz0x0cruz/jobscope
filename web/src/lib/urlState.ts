@@ -3,7 +3,7 @@ import type { JobRow } from './schema'
 
 export const TAB_VALUES = ['overview', 'applications', 'outreach', 'all', 'Strong', 'Good', 'Stretch', 'Skip'] as const
 export type TabValue = (typeof TAB_VALUES)[number]
-export const VIEW_VALUES = ['review', 'companies', 'pipeline', 'applications', 'activity', 'settings'] as const
+export const VIEW_VALUES = ['review', 'companies', 'campaigns', 'pipeline', 'applications', 'activity', 'settings'] as const
 export type ViewValue = (typeof VIEW_VALUES)[number]
 export const URL_VIEW_VALUES = [...VIEW_VALUES, 'feed'] as const
 export const REVIEW_BUCKET_VALUES = ['monitored', 'discovery', 'saved', 'dismissed'] as const
@@ -24,6 +24,7 @@ export const searchSchema = z.object({
   view: z.enum(URL_VIEW_VALUES).optional(),
   reviewBucket: z.enum(REVIEW_BUCKET_VALUES).catch('monitored'),
   company: z.string().optional(),
+  campaign: z.string().optional(),
   companyFilter: z.enum(COMPANY_FILTER_VALUES).catch('active'),
   sort: z.enum(FEED_SORT_VALUES).catch('score'),
   flags: z.array(z.enum(FEED_FLAG_VALUES)).catch([]),

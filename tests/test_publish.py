@@ -39,6 +39,15 @@ def test_public_mode_ships_no_data():
 
         store = Store(cfg["output"]["db_path"])
         _seed(store)
+        campaign = store.create_outreach_campaign("Private campaign canary", 1)
+        target = store.upsert_outreach_campaign_target(
+            campaign["id"], "Campaign Only Corp", "campaign only corp", rank_score=90,
+        )
+        store.set_outreach_campaign_draft(
+            target["id"], selected_email="campaign-canary@example.test",
+            subject="Private campaign subject canary",
+            body="Private campaign body canary",
+        )
 
         # Full (local) payload embeds everything.
         full = json.dumps(render.build_data(cfg, store, public=False), ensure_ascii=False)
@@ -46,6 +55,12 @@ def test_public_mode_ships_no_data():
         assert "dana-secret" in full
         assert "threat detection engineer" in full
         assert "1.7y experience" in full
+        for campaign_secret in (
+            "Private campaign canary", "Campaign Only Corp",
+            "campaign-canary@example.test", "Private campaign subject canary",
+            "Private campaign body canary",
+        ):
+            assert campaign_secret not in full
 
         # Public payload -> an empty, schema-valid shell. Nothing consumable ships.
         pub = render.build_data(cfg, store, public=True)
@@ -63,7 +78,10 @@ def test_public_mode_ships_no_data():
         # And none of the seeded private strings survive anywhere in the JSON.
         blob = json.dumps(pub, ensure_ascii=False)
         for secret in ("Senior Security Engineer", "Acme", "Dana Recruiter",
-                       "dana-secret", "threat detection engineer", "1.7y experience"):
+                       "dana-secret", "threat detection engineer", "1.7y experience",
+                       "Private campaign canary", "Campaign Only Corp",
+                       "campaign-canary@example.test", "Private campaign subject canary",
+                       "Private campaign body canary"):
             assert secret not in blob
 
         store.close()

@@ -273,4 +273,7 @@ STATUSES = ["new", "prepared", "applied", "interview", "rejected", "offer", "ski
 
 # Granular per-email signals stored on each MailEvent (richer than the coarse
 # funnel statuses above; several map onto one status via mailrules.signal_to_status).
-SIGNALS = ["confirmation", "recruiter", "assessment", "interview", "offer", "rejection", "other"]
+SIGNALS = [
+    "confirmation", "recruiter", "assessment", "interview", "offer", "rejection",
+    "campaign_reply", "campaign_optout", "other",
+]

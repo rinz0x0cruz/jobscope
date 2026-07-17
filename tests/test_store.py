@@ -86,6 +86,9 @@ def test_ai_cache():
     assert store.ai_cache_get("missing") is None
     store.ai_cache_put("k", "model", "prompt", "resp")
     assert store.ai_cache_get("k") == "resp"
+    assert store.conn.execute(
+        "SELECT prompt FROM ai_cache WHERE key = 'k'"
+    ).fetchone()["prompt"] == ""
     store.close()
 
 

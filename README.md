@@ -83,7 +83,7 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `init` | Scaffold `config.yaml`, `data/`, `.env` |
 | `resume import <path> [--name N]` | Parse `.md`/`.json`/`.pdf`/`.txt` into a named base resume (maximum 3 profiles) |
 | `profile [build\|show] [--resume N] [--force]` | Editable résumé-derived search profile (terms/locations/remote) that drives `scan`; local Settings can upload/build/switch profiles |
-| `companies [seed\|list\|scan\|apply]` | Persistent company watchlist. A targeted scan fetches official portal jobs plus verified recruiter contacts; scheduled contact refresh is optional. |
+| `companies [seed\|list\|scan\|apply]` | Persistent company watchlist. A targeted scan fetches supported official-portal jobs; **Find recruiter** is a separate explicit action. |
 | `scout <company> [--provider P --slug S]` | Preview one company's public ATS board and profile-ranked openings without monitoring it. |
 | `scan [--mode all\|monitored\|discovery] [--force-discovery]` | `all` checks monitored portals and runs broad JobSpy discovery only when its cadence is due; explicit modes isolate either source. |
 | `reviews [sync\|list] [--state S]` | Build/inspect the durable `pending` / `saved` / `dismissed` review queue without resetting prior decisions. |
@@ -93,6 +93,8 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `tailor <job_id>` | Keyword-aligned resume + cover letter (using the best base resume), rendered to PDF |
 | `prep <job_id>` | Application package (docs + pre-filled answers + link + contacts + brief) |
 | `apply <job_id> [--assist]` | Open the application; `--assist` pre-fills public ATS forms, stops before submit |
+| `outreach <job_id> [--send]` | Preview or individually send a résumé-backed recruiter note for one role; local SMTP only |
+| `campaign <action>` | Rank India-relevant cybersecurity companies, review one draft at a time, and send at most one due approved email per invocation |
 | `brief <job_id>` | Blunt, risk-forward company brief (no marketing fluff) |
 | `gaps [--top N]` | Skill-gap learning plan: skills to learn ranked by jobs unlocked |
 | `new` | New Strong/Good jobs since you last reviewed |
@@ -103,6 +105,46 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `export [--format json\|csv]` | Export ranked jobs |
 | `selftest` | Offline self-tests (no network, no keys) |
 | `doctor` | Offline config, SQLite, secret-reference, toolchain, refresh, and source-health checks |
+
+## Ranked recruiter campaigns (local only)
+
+Open **Campaigns** under local `jobscope serve`, choose the number of unique companies, and adjust
+the India / compensation / growth weights. Jobscope combines Watching/Known employers with its curated
+India-relevant cybersecurity pool, removes every company with application history, and stores the factor
+scores and evidence behind each rank. Applied companies stay in the existing per-application follow-up flow.
+
+Contact discovery reuses verified inbound and company-published addresses plus optional Hunter/Apollo results
+when their key environment variables are configured. Finder results must still be valid, non-automated,
+non-ATS, and on the confirmed employer domain. Conventional role inboxes remain visible fallbacks but are
+never auto-selected.
+
+Every target is reviewed separately. Approval binds the exact recipient, subject, body, and résumé attachment;
+editing any of them clears approval. Each sent email carries a stable Jobscope `Message-ID`; the local inbox
+tracker links `In-Reply-To` exactly, with confirmed-domain + post-send timing as a fallback for new threads.
+The Campaigns delivery history shows recipient, subject, send time, reply sender/subject/time, and opt-outs.
+
+The local scheduler runs a campaign tick: incrementally check configured inboxes for replies, then send at
+most one due approved draft. Defaults remain 2/day, at least 4 hours apart, from 10:00–17:00 Asia/Kolkata:
+
+```powershell
+python -m jobscope campaign ready
+./scripts/register-outreach-task.ps1
+python -m jobscope campaign replies          # check now; --no-fetch reconciles stored mail only
+```
+
+SMTP cannot make delivery and the local SQLite update atomic. If the connection fails after delivery begins,
+Jobscope records **delivery unknown**, locks the target out of automatic retries, and keeps its Message-ID.
+Check the provider's Sent folder, then choose **Confirmed in Sent** or **Confirmed not sent** in Campaigns;
+the latter returns the message to Draft and requires a fresh approval before any retry.
+
+Campaign addresses, drafts, approvals, schedules, and logs stay in local SQLite. GitHub Pages and GitHub
+Actions do not expose or send campaign mail.
+
+Quorum is useful here, but bounded. When `ai.enabled` and `quorum.enabled` are both true, draft generation
+uses `quorum.strategy_generative` (normally `council`), and ambiguous ordinary inbox labels may use
+`quorum.strategy_classify` (normally `ensemble`). Company ranking, recipient validation, approval, sending,
+Message-ID/domain reply matching, and opt-out suppression remain deterministic. Quorum cannot mark a campaign
+replied or opted out, and Jobscope still works with AI entirely disabled.
 
 ## Inbox: auto-track applications from Gmail
 
@@ -211,14 +253,18 @@ match:
 
 The dashboard is company-first and master–detail. **Review** defaults to pending matches from
 monitored portals, with Discovery, Saved, and Dismissed as explicit sibling queues. **Companies**
-shows portal health, board/open/pending/saved counts, and a preferred recruiter. **Scan jobs + recruiter**
-checks the supported career portal and refreshes verified contacts together. Contact ranking prefers
+shows portal health, board/open/pending/saved counts, and a preferred recruiter. **Scan jobs** and
+**Find recruiter** are separate actions, so a portal scan never waits on contact discovery. Contact ranking prefers
 cybersecurity/security recruiters, then technical/engineering recruiters, then general recruiting/HR.
 Cards show score, role/company/location, public-market compensation ratio when comparable,
 Glassdoor/Reddit/news signals when available, and a verified recruiter mail or guarded local lookup.
 Clicking one opens the Source Serif reader with the description, company brief, compensation,
 stock/IPO, public reputation, referral leads, and score rationale. The toolbar and Settings both
 provide **Scan Gmail**; local serve uses its CSRF-guarded refresh API and Pages dispatches the existing workflow.
+
+Company-specific scans support Greenhouse, Lever, and Ashby. An unresolved Workday, iCIMS,
+SmartRecruiters, or custom portal does **not** silently fall back to LinkedIn/Indeed/Google; broad discovery
+is a separate workflow and may independently collect roles from that employer.
 
 Remote roles carry a **remote scope**: the dashboard's *remote scope* facet splits
 global remote ("Remote (anywhere)") from geo-restricted remote ("Remote in Ireland"),

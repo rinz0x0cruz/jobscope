@@ -12,9 +12,10 @@ Pages. This document describes what data it holds, how it's protected, and how t
 | Scraped jobs, scores, rationale | `data/jobscope.db` | gitignored |
 | Referral contacts (names, public profile links) | `data/jobscope.db` | public-data leads only |
 | Application funnel + email events (recruiter name/domain, subject) | `data/jobscope.db` | see *Data minimization* |
+| Campaign ranks, recipients, drafts, approvals, schedules, suppressions | `data/jobscope.db` | local-only; never added to dashboard payloads |
 | Secrets (Gmail app password, API keys) | OS keychain **or** `.env` | never in `config.yaml`, never committed |
 | Published dashboard | `gh-pages` branch → GitHub Pages | empty locked shell + encrypted full payload (see *Publication*) |
-| Cloud refresh database | private `data` branch | current + last-known-good JSDB v1 AES-GCM ciphertext |
+| Cloud refresh database | private `data` branch | current + last-known-good JSDB v1 AES-GCM ciphertext; campaign tables stripped and vacuumed |
 
 Everything under `data/`, plus `.env` and `config.*`, is **gitignored** and never leaves your
 machine — except the redacted dashboard you explicitly publish.
@@ -56,6 +57,8 @@ machine — except the redacted dashboard you explicitly publish.
   stronger isolation).
 - **Email bodies are not persisted by default.** Snippets are used in memory to classify a message,
   then discarded; set `inbox.store_snippets: true` only if you want to keep a short excerpt.
+- Campaign reply reconciliation stores only target state/timestamps and the matching mail-event ID. It never
+  copies a subject or snippet into campaign or suppression records.
 - Wipe stored data anytime:
   ```bash
   jobscope purge --mail                 # delete stored email events (recruiter PII + snippets)
@@ -80,23 +83,41 @@ machine — except the redacted dashboard you explicitly publish.
 - The cloud SQLite snapshot is separately encrypted as versioned JSDB AES-256-GCM. Restore and
   save fail closed, retain one validated fallback generation, validate SQLite before use, and use
   a guarded `force-with-lease` update. See [OPERATIONS.md](OPERATIONS.md) for recovery and rotation.
+- Campaign tables are intentionally excluded from the empty shell, encrypted dashboard payload, and the
+  encrypted cloud SQLite copy. Campaign APIs exist only on loopback `jobscope serve`; GitHub Pages and
+  Actions never expose or send campaign mail. Campaign recovery therefore requires a local database backup.
 
-## Recruiter outreach (opt-in, not a mailer)
+## Recruiter outreach (opt-in, individually approved)
 
-`jobscope outreach <job_id>` can email a recruiter your résumé, but it is built to be a considered,
-one-at-a-time action — never a bulk mailer:
+`jobscope outreach <job_id>` handles one role. Local Campaigns can pace several companies, but every message
+still requires its own explicit approval and immutable content hash:
 
 - **Preview by default.** It renders the recipient + email + attachment and sends nothing unless you
   pass `--send`; sending also requires `apply.outreach.enabled: true` and a configured `email.*` SMTP.
-- **No fabricated addresses, no people-finders.** The recipient is only ever a real address a recruiter
+- **No fabricated addresses.** The recipient is only ever a real address a recruiter
   emailed you from, a published email **found on the employer's own website** (whose domain is confirmed
   by loading the site and matching the company name), or a conventional role inbox (`careers@`, …) on that
-  confirmed domain. It filters out no-reply / applicant-tracking relay addresses and never guesses a
-  personal address or uses a paid people-finder API.
-- **Discovery is best-effort + local.** Resolving an address only fetches public employer pages (the site
-  + posting) — no third-party service; disable it entirely with `apply.outreach.discover: false`.
+  confirmed domain. Optional Hunter/Apollo lookups run only when you configure their key environment variables;
+  every result must be valid, non-automated, non-ATS, and on that confirmed domain. Confidence/source is shown,
+  role inboxes are not auto-selected for campaigns, and Jobscope never guesses an address.
+- **Discovery is best-effort + locally controlled.** Employer-page discovery and optional finders run from
+  your machine; disable site discovery with `apply.outreach.discover: false` and omit finder keys to disable providers.
 - **Deduped + cooldown + opt-out.** One outreach per company (recorded on the application), a
-  configurable `cooldown_days`, and a `do_not_contact` list are all honored before anything sends.
+  configurable `cooldown_days`, `do_not_contact`, application-history exclusion, and local opt-out suppressions
+  are all rechecked before a campaign send.
+- **No bulk approval.** Campaign edits clear approval. The scheduler sends one due approved target per run and
+  also enforces the configured local window, daily cap, and minimum spacing. It has no force-send option.
+- **Durable reply correlation.** Campaign mail carries a stable Message-ID. Read-only IMAP sync matches
+  `In-Reply-To` first and confirmed-domain/post-send time second. Generic replies and opt-outs are classified
+  deterministically; opt-out bodies need not be retained for suppression to work.
+- **Unknown delivery fails closed.** SMTP acceptance cannot be atomically committed with SQLite. Once
+  `sendmail` starts, an exception becomes `delivery_unknown`, never an automatic retry. The user must inspect
+  Sent mail and explicitly resolve the attempt. Error records contain only safe exception type/code metadata.
+- **Quorum is advisory.** If explicitly enabled, Quorum may rewrite a draft or break an ordinary inbox-label
+  tie. It never controls ranking, recipient validity, approval, sending, reply correlation, or suppression.
+  Campaign reply and opt-out labels cannot be overwritten by the model path.
+- **AI cache minimization.** Cache identity is derived from a SHA-256 key; new cache rows retain the response
+  but not the plaintext prompt. Existing local rows are not rewritten automatically.
 - **Your identity, your account.** Mail is sent from your own SMTP account (honest sender), so normal
   anti-spam / CAN-SPAM / GDPR expectations apply — keep it relevant and low-volume.
 

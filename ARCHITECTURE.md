@@ -189,6 +189,8 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | [apply.py](jobscope/apply/apply.py) | 246 | Prep package + human-in-loop ATS autofill (Playwright); optional generative strategy for filled answers | ai, email, tailor, model, store | `prep()`, `apply()` |
 | [tailor.py](jobscope/apply/tailor.py) | 198 | Per-job resume + cover tailoring (deterministic + AI/quorum rewrite grounded with full JD/news context) | ai, pdf, model, resume, store | `run()`, `analyze()` |
 | [outreach.py](jobscope/apply/outreach.py) | 423 | Resolve a recruiter/HR contact (site-verified) + draft a tailored résumé email; preview/send guardrails; structured `/api/outreach` helpers | ai, email, tailor, model, store, httpx | `run()`, `api_preview()`, `api_send()`, `discover_emails()` |
+| [company_rank.py](jobscope/apply/company_rank.py) | — | Deterministic India/cybersecurity company ranking with explicit security-title and profile-fit gates | companies, geo, store | `rank_companies()`, `is_security_role()` |
+| [campaigns.py](jobscope/apply/campaigns.py) | — | Local campaign orchestration: discover, draft, approve, pace one send, reconcile replies/opt-outs, and lock unknown SMTP outcomes | outreach, company_rank, model, store, email (lazy) | `create_campaign()`, `send_target()`, `sync_replies()`, `tick()` |
 | [interview.py](jobscope/apply/interview.py) | 112 | Interview-prep sheet (fit + JD topics + STAR + brief + referrals + notes); `--note` append | model, coverage, referrals, (tailor lazy) | `prep_sheet()`, `run()` |
 | [referrals.py](jobscope/apply/referrals.py) | 136 | Network-activation digest + per-job referral view (leads + copy-ready draft) | store, (enrich.contacts lazy) | `pipeline_referrals()`, `paths_for()`, `run()` |
 | [track.py](jobscope/apply/track.py) | 114 | Application funnel, status, follow-up reminders | model, store | `run()`, `run_new()` |
@@ -200,7 +202,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 |--------|-----|----------------|------------------|-------------|
 | [render.py](jobscope/deliver/render.py) | — | Encrypted dashboard contract: jobs, applications, monitor summaries, reviews, profile, and outreach; public mode emits an empty shell | companies, store | `build_data()`, `emit_json()` |
 | [pdf.py](jobscope/deliver/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
-| [email.py](jobscope/deliver/email.py) | 36 | SMTP summaries (optional) | config | `send()` |
+| [email.py](jobscope/deliver/email.py) | — | Optional SMTP delivery with stable Message-ID and explicit pre-send vs unknown-outcome errors | config | `send()`, `EmailDeliveryError` |
 | [serve.py](jobscope/deliver/serve.py) | ~430 | Serves the built SPA (`web/dist`) on 127.0.0.1 + a localhost-only, CSRF-guarded API: Refresh/publish (injects the Refresh widget), `/api/token`, and `/api/outreach` (recruiter preview/send) | render, store, (apply.outreach lazy) | `run()`, `perform_refresh()` |
 | [exporter.py](jobscope/deliver/exporter.py) | 22 | Export ranked jobs to JSON/CSV | — | `run()` |
 
@@ -337,9 +339,11 @@ uses the existing prompt/cache path.
 ## 7. Persistence model (`core/store/`)
 
 A single `Store` **facade** over SQLite, composed from per-concern mixins (`base` + `jobs`/
-`enrichment`/`applications`/`mail`/`profile`/`meta`/`monitoring`) over one shared connection. **13 tables**:
-the existing jobs/enrichment/applications/profile/resume/meta/cache/run/mail data plus `company_monitors`,
-`company_monitor_jobs`, and `job_reviews`.
+`enrichment`/`applications`/`mail`/`profile`/`meta`/`monitoring`/`outreach_campaigns`/
+`reconciliation_audit`) over one shared connection. Campaign targets persist exact approved outbound
+content, Message-ID, send/reply timestamps, suppression state, and explicit unknown-delivery attempts.
+`mail_events` remains the inbound source of truth; delivery history joins by `reply_event_id` instead
+of copying reply bodies into campaign rows.
 
 **Migration pattern** — `_ensure_columns()` reads `PRAGMA table_info(...)` and issues
 `ALTER TABLE ... ADD COLUMN` for any missing field. New columns (e.g. `resume_base`,
@@ -350,6 +354,7 @@ Representative API: `upsert_job()`, `update_score()`, `update_ai_seniority()`, `
 `get_job()`, `save_enrichment()`, `get_enrichment()`, `save_contacts()`, `contacts_for()`,
 `set_application()`, `applications()`, `get_application()`, `upsert_mail_event()`, `mail_events()`,
 `upsert_company_monitor()`, `link_monitor_job()`, `ensure_job_review()`, `company_monitor_summaries()`,
+`create_outreach_campaign()`, `outreach_campaign_history()`,
 `ai_cache_get/put()`, `log_run()`.
 
 ---

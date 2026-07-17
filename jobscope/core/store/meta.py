@@ -23,10 +23,12 @@ class MetaMixin:
         return row["response"] if row else None
 
     def ai_cache_put(self, key: str, model: str, prompt: str, response: str) -> None:
+        # The cache key already hashes model + system + user. Persisting the raw
+        # prompt adds unneeded scraped text and candidate context at rest.
         self.conn.execute(
             "INSERT OR REPLACE INTO ai_cache (key, model, prompt, response, created) "
             "VALUES (?, ?, ?, ?, ?)",
-            (key, model, prompt, response, now_iso()),
+            (key, model, "", response, now_iso()),
         )
         self.conn.commit()
 

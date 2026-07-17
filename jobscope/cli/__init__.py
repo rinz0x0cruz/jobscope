@@ -11,6 +11,7 @@ Usage:
     python -m jobscope prep <job_id>               Build a review-ready application package
     python -m jobscope apply <job_id> [--assist]   Open the application (human submits)
     python -m jobscope outreach <job_id> [--send]  Draft/send a recruiter outreach + resume
+    python -m jobscope campaign <action>           Rank/review/send local outreach campaigns
     python -m jobscope brief <job_id>              Blunt, risk-forward company brief
     python -m jobscope atscheck [--job ID]         What an ATS extracts from your resume + warnings
     python -m jobscope coverage <job_id>           Per-requirement JD coverage (responsibilities)
@@ -165,6 +166,109 @@ def cmd_outreach_scan(args, cfg):
     print(f"  outreach scan: discovered {stats['discovered']} compan(ies), "
           f"skipped {stats['skipped']} still-fresh.")
     return 0
+
+
+def cmd_campaign(args, cfg):
+    from ..apply import campaigns
+    try:
+        action = getattr(args, "action", "list")
+        if action == "ready":
+            result = campaigns.sending_readiness(cfg)
+            if result["ok"]:
+                print("  campaign scheduler ready")
+                return 0
+            for error in result["errors"]:
+                print(f"  not ready: {error}", file=sys.stderr)
+            return 1
+        with _store(args, cfg) as store:
+            if action == "create":
+                result = campaigns.create_campaign(
+                    cfg, store, args.name, args.count, resume_name=args.resume,
+                )
+                campaign = result["campaign"]
+                print(f"  created {campaign['id']} — {campaign['name']}")
+                for target in result["targets"]:
+                    print(f"  {target['rank_score']:>5.1f}  {target['company']}  [{target['state']}]")
+                follow_up = result["ranking"]["follow_up"]
+                if follow_up:
+                    print(f"  excluded {len(follow_up)} applied compan(ies); use follow-up outreach")
+                return 0
+            if action == "list":
+                for campaign in campaigns.list_campaigns(store):
+                    counts = ", ".join(
+                        f"{state}={count}" for state, count in sorted(campaign["counts"].items())
+                    ) or "empty"
+                    print(f"  {campaign['id']}  {campaign['status']:<9} "
+                          f"{campaign['name']}  ({counts})")
+                return 0
+            if action == "show":
+                detail = campaigns.get_campaign_detail(store, args.campaign_id)
+                campaign = detail["campaign"]
+                print(f"  {campaign['id']}  {campaign['status']}  {campaign['name']}")
+                for target in detail["targets"]:
+                    recipient = target["selected_email"] or "no contact"
+                    schedule = target["scheduled_at"] or "unscheduled"
+                    print(f"  {target['rank_score']:>5.1f}  {target['company']:<28} "
+                          f"{target['state']:<13} {recipient}  {schedule}")
+                return 0
+            if action == "discover":
+                target = campaigns.discover_target(
+                    cfg, store, args.target_id, force=args.force,
+                    fetch=not args.no_fetch,
+                )
+                print(f"  {target['company']}: {target['state']} — "
+                      f"{target['selected_email'] or 'no verified recruiter selected'}")
+                return 0
+            if action == "draft":
+                target = campaigns.update_draft(
+                    cfg, store, args.target_id, selected_email=args.to,
+                    subject=args.subject, body=args.body,
+                )
+                print(f"  draft saved for {target['company']} -> {target['selected_email']}")
+                return 0
+            if action == "approve":
+                target = campaigns.approve_target(cfg, store, args.target_id)
+                print(f"  approved {target['company']} for {target['scheduled_at']}")
+                return 0
+            if action in {"start", "pause", "cancel"}:
+                status = {"start": "active", "pause": "paused", "cancel": "cancelled"}[action]
+                detail = campaigns.set_campaign_status(store, args.campaign_id, status)
+                print(f"  {detail['campaign']['id']} -> {detail['campaign']['status']}")
+                return 0
+            if action == "skip":
+                target = store.set_outreach_campaign_target_state(
+                    args.target_id, "skipped", error_code="user_skipped",
+                    error_detail="skipped by user",
+                )
+                print(f"  skipped {target['company']}")
+                return 0
+            if action == "send-approved":
+                result = campaigns.send_next_approved(
+                    cfg, store, campaign_id=args.campaign_id or "",
+                )
+                print(f"  {result.get('code') or ('sent' if result.get('sent') else 'no send')}")
+                return 0 if result.get("ok") else 1
+            if action == "replies":
+                result = campaigns.sync_replies(
+                    cfg, store, fetch=not getattr(args, "no_fetch", False),
+                )
+                print(f"  campaign replies: {result['replied']} replied, "
+                      f"{result['opted_out']} opted out; inbox {result['inbox_status']}")
+                return 0 if result["ok"] else 1
+            if action == "tick":
+                result = campaigns.tick(
+                    cfg, store, campaign_id=args.campaign_id or "",
+                )
+                tracking = result["tracking"]
+                delivery = result["delivery"]
+                print(f"  campaign tick: inbox {tracking['inbox_status']}; "
+                      f"{tracking['replied']} replied; "
+                      f"{delivery.get('code') or ('sent' if delivery.get('sent') else 'no send')}")
+                return 0 if result["ok"] else 1
+    except (KeyError, ValueError) as exc:
+        print(f"  campaign error: {exc}", file=sys.stderr)
+        return 2
+    return 2
 
 
 def cmd_apply(args, cfg):
@@ -572,6 +676,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-fetch", action="store_true",
                     help="Skip network discovery -- use only inbox recruiters + role inboxes")
     sp.set_defaults(func=cmd_outreach_scan)
+
+    sp = sub.add_parser(
+        "campaign", help="Rank, review, approve, and pace local recruiter outreach campaigns",
+    )
+    sp.add_argument(
+        "action", nargs="?",
+        choices=["create", "list", "show", "discover", "draft", "approve", "start",
+                 "pause", "cancel", "skip", "send-approved", "ready", "replies", "tick"],
+        default="list",
+    )
+    sp.add_argument("--campaign-id", default="", help="Campaign id for show/start/pause/send")
+    sp.add_argument("--target-id", default="", help="Target id for discover/draft/approve/skip")
+    sp.add_argument("--name", default="India cybersecurity outreach", help="New campaign name")
+    sp.add_argument("--count", type=int, default=10, help="Unique companies to rank for a new campaign")
+    sp.add_argument("--resume", default="", help="Named résumé to attach (default: active résumé)")
+    sp.add_argument("--to", default="", help="Discovered recipient to select while editing a draft")
+    sp.add_argument("--subject", default=None, help="Edited draft subject")
+    sp.add_argument("--body", default=None, help="Edited draft body")
+    sp.add_argument("--force", action="store_true", help="Refresh cached contact discovery only")
+    sp.add_argument("--no-fetch", action="store_true", help="Do not fetch company/contact sources")
+    sp.set_defaults(func=cmd_campaign)
 
     sp = sub.add_parser("dashboard", help="Emit the dashboard JSON payload the web app consumes")
     sp.add_argument("--public", action="store_true",

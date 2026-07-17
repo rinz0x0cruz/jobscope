@@ -23,6 +23,7 @@ import threading
 import webbrowser
 from dataclasses import asdict, dataclass
 from typing import Callable
+from urllib.parse import parse_qs, urlparse
 
 # Single-process refresh state, shared between the request threads and the
 # background worker. Writes are small dict.update() calls (atomic under the GIL);
@@ -30,6 +31,7 @@ from typing import Callable
 _LOCK = threading.Lock()
 _MAX_RESUME_BYTES = 5 * 1024 * 1024
 _MAX_RESUME_REQUEST_BYTES = 7 * 1024 * 1024
+_MAX_CAMPAIGN_REQUEST_BYTES = 256 * 1024
 _RESUME_EXTENSIONS = frozenset({".md", ".txt", ".json", ".pdf"})
 _STATE: dict[str, str] = {
     "state": "idle",     # idle | running | done | skipped | error | busy
@@ -151,6 +153,161 @@ def _build_server(cfg: dict, port: int):
                 if hostname not in ("127.0.0.1", "localhost", "[::1]", "::1"):
                     return False
             return self.headers.get("X-Refresh-Token") == token
+
+        def _json_request(self, max_bytes: int) -> dict | None:
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self._send_json(400, {"ok": False, "error": "invalid content length"})
+                return None
+            if length < 1:
+                return {}
+            if length > max_bytes:
+                self._send_json(413, {"ok": False, "error": "request is too large"})
+                return None
+            try:
+                value = json.loads(self.rfile.read(length))
+            except (UnicodeDecodeError, ValueError):
+                self._send_json(400, {"ok": False, "error": "invalid JSON"})
+                return None
+            if not isinstance(value, dict):
+                self._send_json(400, {"ok": False, "error": "JSON body must be an object"})
+                return None
+            return value
+
+        def _campaigns_get(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            parsed = urlparse(self.path)
+            try:
+                from jobscope.apply import campaigns
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    if parsed.path == "/api/campaigns":
+                        result = {"ok": True, "campaigns": campaigns.list_campaigns(store)}
+                    else:
+                        campaign_id = (parse_qs(parsed.query).get("id") or [""])[0].strip()
+                        if not campaign_id:
+                            self._send_json(400, {"ok": False, "error": "campaign id required"})
+                            return
+                        result = {
+                            "ok": True,
+                            **campaigns.get_campaign_detail(store, campaign_id),
+                        }
+                self._send_json(200, result)
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "campaign not found"})
+            except Exception as exc:  # noqa: BLE001 - surface bounded local API errors
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
+        def _campaigns_post(self, *, create: bool) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            data = self._json_request(_MAX_CAMPAIGN_REQUEST_BYTES)
+            if data is None:
+                return
+            try:
+                from jobscope.apply import campaigns
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    if create:
+                        allowed = {"name", "requested_count", "weights", "resume_name"}
+                        unknown = set(data) - allowed
+                        if unknown:
+                            raise ValueError(f"unknown campaign field(s): {', '.join(sorted(unknown))}")
+                        name = str(data.get("name") or "").strip()
+                        if not name:
+                            raise ValueError("campaign name required")
+                        result = campaigns.create_campaign(
+                            cfg, store, name, int(data.get("requested_count") or 0),
+                            weights=data.get("weights"),
+                            resume_name=str(data.get("resume_name") or ""),
+                        )
+                        response = {"ok": True, **result}
+                    else:
+                        action = str(data.get("action") or "").strip()
+                        allowed_by_action = {
+                            "discover": {"action", "target_id", "force", "fetch"},
+                            "draft": {"action", "target_id", "selected_email", "subject", "body"},
+                            "approve": {"action", "target_id"},
+                            "status": {"action", "campaign_id", "status"},
+                            "skip": {"action", "target_id"},
+                            "discover_pending": {"action", "campaign_id", "limit", "fetch"},
+                            "check_replies": {"action", "fetch"},
+                            "resolve_delivery": {"action", "target_id", "outcome"},
+                            "send_next": {"action", "campaign_id"},
+                            "send_now": {"action", "target_id"},
+                        }
+                        if action not in allowed_by_action:
+                            raise ValueError("unknown campaign action")
+                        unknown = set(data) - allowed_by_action[action]
+                        if unknown:
+                            raise ValueError(f"unknown action field(s): {', '.join(sorted(unknown))}")
+                        if action == "discover":
+                            target = campaigns.discover_target(
+                                cfg, store, str(data.get("target_id") or ""),
+                                force=bool(data.get("force")), fetch=bool(data.get("fetch", True)),
+                            )
+                            response = {"ok": True, "target": target}
+                        elif action == "draft":
+                            target = campaigns.update_draft(
+                                cfg, store, str(data.get("target_id") or ""),
+                                selected_email=str(data.get("selected_email") or ""),
+                                subject=(str(data["subject"]) if "subject" in data else None),
+                                body=(str(data["body"]) if "body" in data else None),
+                            )
+                            response = {"ok": True, "target": target}
+                        elif action == "approve":
+                            target = campaigns.approve_target(
+                                cfg, store, str(data.get("target_id") or ""),
+                            )
+                            response = {"ok": True, "target": target}
+                        elif action == "status":
+                            detail = campaigns.set_campaign_status(
+                                store, str(data.get("campaign_id") or ""),
+                                str(data.get("status") or ""),
+                            )
+                            response = {"ok": True, **detail}
+                        elif action == "skip":
+                            target = store.set_outreach_campaign_target_state(
+                                str(data.get("target_id") or ""), "skipped",
+                                error_code="user_skipped", error_detail="skipped by user",
+                            )
+                            response = {"ok": True, "target": target}
+                        elif action == "discover_pending":
+                            response = campaigns.discover_pending_targets(
+                                cfg, store, str(data.get("campaign_id") or ""),
+                                limit=int(data.get("limit") or 5),
+                                fetch=bool(data.get("fetch", True)),
+                            )
+                        elif action == "check_replies":
+                            response = campaigns.sync_replies(
+                                cfg, store, fetch=bool(data.get("fetch", True)),
+                            )
+                        elif action == "resolve_delivery":
+                            target = campaigns.resolve_delivery(
+                                store, str(data.get("target_id") or ""),
+                                str(data.get("outcome") or ""),
+                            )
+                            response = {"ok": True, "target": target}
+                        elif action == "send_next":
+                            response = campaigns.send_next_approved(
+                                cfg, store, campaign_id=str(data.get("campaign_id") or ""),
+                            )
+                        else:
+                            response = campaigns.send_target(
+                                cfg, store, str(data.get("target_id") or ""),
+                                ignore_schedule=True,
+                            )
+                self._send_json(200, response)
+            except KeyError:
+                self._send_json(404, {"ok": False, "error": "campaign or target not found"})
+            except (TypeError, ValueError) as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)[:200]})
+            except Exception as exc:  # noqa: BLE001 - surface bounded local API errors
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
         def _outreach(self) -> None:
             if not self._authorized():
@@ -315,23 +472,32 @@ def _build_server(cfg: dict, port: int):
                         "error": f"profile limit reached ({_profile.MAX_PROFILES})",
                     })
                     return
-                with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as handle:
+                resume_dir = os.path.join(
+                    os.path.dirname(os.path.abspath(cfg["output"]["db_path"])), "resumes",
+                )
+                os.makedirs(resume_dir, exist_ok=True)
+                target_path = os.path.join(resume_dir, f"{name}{extension}")
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=extension, dir=resume_dir,
+                ) as handle:
                     handle.write(content)
                     path = handle.name
                 with Store(cfg["output"]["db_path"]) as store:
                     if _resume.import_resume(path, store, cfg, name=name) != 0:
                         self._send_json(400, {"ok": False, "error": "could not import resume"})
                         return
-                    uploaded = store.get_resume(name)
-                    if uploaded is not None:
-                        uploaded.source_path = filename
-                        store.save_resume(uploaded, name=name)
                     if _profile.run(
                         cfg, store, action="build", resume_name=name,
                         name=name, force=True,
                     ) != 0 or not _profile.set_active(cfg, name):
                         self._send_json(500, {"ok": False, "error": "could not build profile"})
                         return
+                    os.replace(path, target_path)
+                    path = ""
+                    uploaded = store.get_resume(name)
+                    if uploaded is not None:
+                        uploaded.source_path = target_path
+                        store.save_resume(uploaded, name=name)
                     prof = render._profile_data(cfg, store)
                 self._send_json(200, {
                     "ok": True,
@@ -430,6 +596,9 @@ def _build_server(cfg: dict, port: int):
             if route == "/api/status":
                 self._send_json(200, dict(_STATE))
                 return
+            if route in {"/api/campaigns", "/api/campaigns/detail"}:
+                self._campaigns_get()
+                return
             if route in ("/", "/index.html"):
                 self._serve_index()
                 return
@@ -465,6 +634,12 @@ def _build_server(cfg: dict, port: int):
                 return
             if route == "/api/monitoring/actions":
                 self._monitoring_actions()
+                return
+            if route == "/api/campaigns":
+                self._campaigns_post(create=True)
+                return
+            if route == "/api/campaigns/action":
+                self._campaigns_post(create=False)
                 return
             if route != "/api/refresh":
                 self.send_error(404)
@@ -577,6 +752,12 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
                     cfg, store, since=since, initiator="local_refresh",
                 ),
                 nonzero_is_failure=True,
+            ))
+
+            from jobscope.apply import campaigns as _campaigns
+            stages.append(_run_stage(
+                "campaign_replies", required=False,
+                action=lambda: _campaigns.reconcile_replies(store),
             ))
 
             step("match", "Scoring matches\u2026")

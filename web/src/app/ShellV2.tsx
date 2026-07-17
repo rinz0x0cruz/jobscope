@@ -4,6 +4,7 @@ import { AppShell } from '@/app/AppShell'
 import { Board } from '@/features/board'
 import { FeedView } from '@/features/feed'
 import { CompaniesView } from '@/features/companies'
+import { CampaignsUnavailable, CampaignsView } from '@/features/campaigns'
 import { PipelinePreview, PipelineView } from '@/features/pipeline'
 import { Timeline } from '@/features/timeline'
 import { Settings } from '@/features/settings'
@@ -16,6 +17,7 @@ import { buildTimeline } from '@/lib/timeline'
 import { filterData } from '@/lib/viewFilter'
 import { activeView, type SearchState, type ViewValue } from '@/lib/urlState'
 import { scanNewMail, syncMonitoringQueue } from '@/lib/refresh'
+import { localServeToken } from '@/lib/outreach'
 import { viewTransition } from '@/ui'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import type { DashboardData } from '@/lib/schema'
@@ -34,7 +36,8 @@ export interface ShellV2Props {
   onLock: () => void
 }
 
-const VIEW_ORDER: ViewValue[] = ['review', 'companies', 'pipeline', 'applications', 'activity', 'settings']
+const PUBLIC_VIEW_ORDER: ViewValue[] = ['review', 'companies', 'pipeline', 'applications', 'activity', 'settings']
+const LOCAL_VIEW_ORDER: ViewValue[] = ['review', 'companies', 'campaigns', 'pipeline', 'applications', 'activity', 'settings']
 
 function toggleTheme() {
   viewTransition(() => {
@@ -56,6 +59,7 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
   const [workingData, setWorkingData] = useState(() =>
     projectMonitoringActions(data, queuedMonitoringActions()),
   )
+  const [serveToken, setServeToken] = useState<string | null>()
   const mobileReader = useMediaQuery('(max-width: 1399px)')
   const view = activeView(state)
   const selectedJob = useMemo(
@@ -74,7 +78,7 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
   const companies = useMemo(() => buildCompanies(workingData, state.q), [workingData, state.q])
   const board = useMemo(() => buildBoard(searchedData), [searchedData])
   const timeline = useMemo(() => buildTimeline(searchedData), [searchedData])
-  const navigate = (next: ViewValue) => onStateChange({ view: next, job: undefined, company: undefined })
+  const navigate = (next: ViewValue) => onStateChange({ view: next, job: undefined, company: undefined, campaign: undefined })
   const open = (jobId: string) => onStateChange({ job: jobId })
   const close = () => onStateChange({ job: undefined }, { replace: true })
   const refresh = useCallback(() => void scanNewMail(), [])
@@ -123,6 +127,12 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
   }
 
   useEffect(() => {
+    let live = true
+    void localServeToken().then((token) => live && setServeToken(token))
+    return () => { live = false }
+  }, [])
+
+  useEffect(() => {
     const updateCount = () => setPendingChanges(queuedMonitoringActions().length)
     window.addEventListener(MONITORING_QUEUE_EVENT, updateCount)
     return () => window.removeEventListener(MONITORING_QUEUE_EVENT, updateCount)
@@ -149,8 +159,9 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
         close()
         return
       }
-      if (event.key >= '1' && event.key <= '6') {
-        const next = VIEW_ORDER[Number(event.key) - 1]
+      if (event.key >= '1' && event.key <= '7') {
+        const order = serveToken ? LOCAL_VIEW_ORDER : PUBLIC_VIEW_ORDER
+        const next = order[Number(event.key) - 1]
         if (next) navigate(next)
       }
     }
@@ -171,6 +182,7 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
         onLock={onLock}
         pendingChanges={pendingChanges}
         onSyncChanges={() => void syncMonitoringQueue()}
+        campaignsAvailable={Boolean(serveToken)}
       >
         {view === 'review' ? (
           <div className="mx-auto grid h-full min-h-0 w-full max-w-[1600px] grid-cols-1 pb-16 lg:pb-0 min-[1400px]:grid-cols-[minmax(600px,1.08fr)_minmax(500px,.92fr)]">
@@ -220,6 +232,19 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
               onOpenJob={open}
               onActions={(actions) => runMonitoringActions(actions)}
             />
+          </div>
+        ) : view === 'campaigns' ? (
+          <div className="h-full min-h-0 pb-16 lg:pb-0">
+            {serveToken ? (
+              <CampaignsView
+                token={serveToken}
+                selectedId={state.campaign}
+                onSelect={(campaign) => onStateChange({ campaign })}
+                onOpenApplications={() => navigate('applications')}
+              />
+            ) : (
+              <CampaignsUnavailable />
+            )}
           </div>
         ) : view === 'pipeline' ? (
           <div className="px-3 pb-20 pt-4 sm:px-5 lg:px-7 lg:pb-6">

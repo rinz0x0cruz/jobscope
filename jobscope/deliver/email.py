@@ -17,8 +17,22 @@ from typing import Optional
 from jobscope.core.config import smtp_password
 
 
+class EmailDeliveryError(RuntimeError):
+    """SMTP failure with an explicit external-effect outcome classification."""
+
+    def __init__(self, detail: str, *, outcome_unknown: bool):
+        super().__init__(detail)
+        self.outcome_unknown = outcome_unknown
+
+
+def _safe_smtp_error(exc: Exception) -> str:
+    code = getattr(exc, "smtp_code", None)
+    return f"{type(exc).__name__}{f' ({code})' if code else ''}"
+
+
 def send(cfg: dict, subject: str, text: str, html: Optional[str] = None, *,
-         to: Optional[str] = None, attachments: Optional[list[str]] = None) -> bool:
+         to: Optional[str] = None, attachments: Optional[list[str]] = None,
+         message_id: str = "", raise_errors: bool = False) -> bool:
     ec = cfg.get("email", {})
     if not ec.get("enabled"):
         return False
@@ -45,16 +59,25 @@ def send(cfg: dict, subject: str, text: str, html: Optional[str] = None, *,
     msg["Subject"] = subject
     msg["From"] = ec["from_addr"]
     msg["To"] = recipient
+    if message_id:
+        msg["Message-ID"] = f"<{message_id.strip().strip('<>')}>"
 
+    delivery_started = False
     try:
         with smtplib.SMTP(ec["smtp_host"], int(ec["smtp_port"]), timeout=20) as s:
             s.starttls(context=ssl.create_default_context())
             s.login(ec["from_addr"], pw)
+            delivery_started = True
             s.sendmail(ec["from_addr"], [recipient], msg.as_string())
         print(f"  [email] sent to {recipient}")
         return True
     except Exception as e:  # noqa: BLE001 - email is optional
-        print(f"  [email] error: {e}")
+        detail = _safe_smtp_error(e)
+        print(f"  [email] error: {detail}")
+        if raise_errors:
+            raise EmailDeliveryError(
+                detail, outcome_unknown=delivery_started,
+            ) from e
         return False
 
 

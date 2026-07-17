@@ -437,7 +437,13 @@ Python, AWS, threat modeling, application security
             )
             assert code == 409
             with Store(cfg["output"]["db_path"]) as store:
-                assert len(store.list_resumes()) == 3
+                resumes = store.list_resumes()
+                assert len(resumes) == 3
+                assert all(os.path.isfile(resume.source_path) for _, resume in resumes)
+                assert all(
+                    os.path.basename(os.path.dirname(resume.source_path)) == "resumes"
+                    for _, resume in resumes
+                )
             from jobscope.analyze import profile
             assert profile.list_profiles(cfg) == ["consulting", "product", "research"]
             assert profile.active_name(cfg) == "product"

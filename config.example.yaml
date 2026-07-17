@@ -188,6 +188,19 @@ apply:
       enabled: true                   # Find recruiter prefers security, then technical/engineering recruiters
       max_age_days: 14                # scheduled scans reuse fresh contacts; explicit lookup forces refresh
       scheduled: false                # true refreshes stale contacts during every all-company scheduled scan
+    campaign:                         # local-only ranked campaigns; every message needs individual approval
+      weights:                        # deterministic score; values must be non-negative and sum to 1
+        region: 0.50                  # India roles and India/APAC/global-remote eligibility (hard gate >= 0.60)
+        compensation: 0.30            # compatible salary evidence; company tiers are lower-confidence fallbacks
+        growth: 0.20                  # security hiring velocity, funding tier, and growth/hiring news
+      include_default_pool: true      # combine Watching/Known with Jobscope's curated India-security employers
+      curated_companies: []           # strings, or {name: Example, india_relevance: 0.8}
+      company_overrides: {}           # optional auditable region/compensation/growth evidence overrides
+      daily_limit: 2                  # global campaign sends allowed per local calendar day
+      min_spacing_hours: 4            # minimum delay between any two campaign emails
+      timezone: Asia/Kolkata
+      send_window_start: "10:00"
+      send_window_end: "17:00"
 
 output:
   db_path: "data/jobscope.db"

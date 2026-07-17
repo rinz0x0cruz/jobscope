@@ -3,10 +3,12 @@
 # mail scan runs here on GitHub's runners rather than localhost, so it needs a few
 # repository Secrets -- see the SETUP block at the bottom of this file.
 #
-# Privacy model: the SQLite DB (jobs, monitors, reviews, mail, and applications) is kept AES-256-GCM
-# encrypted on the private `data` branch -- the latest and one last-known-good
-# encrypted blob are stored, and both are useless without JOBSCOPE_DB_KEY. Pages receives
-# an empty public shell plus the passphrase-encrypted whole-site payload. AI is left off here.
+# Privacy model: a cloud-safe SQLite copy (jobs, monitors, reviews, mail, and
+# applications) is kept AES-256-GCM encrypted on the private `data` branch. Local
+# campaign tables are emptied and vacuumed from that copy before encryption. The
+# latest and one last-known-good encrypted blob are stored, and both are useless
+# without JOBSCOPE_DB_KEY. Pages receives an empty public shell plus the
+# passphrase-encrypted whole-site payload. AI is left off here.
 
 name: refresh
 run-name: ${{ inputs.mutation_nonce && format('Monitoring sync {0}', inputs.mutation_nonce) || format('Refresh ({0})', github.event_name) }}
@@ -169,12 +171,14 @@ jobs:
         run: |
           set -euo pipefail
           python -m jobscope.core.snapshot data/jobscope.db
-          node scripts/crypt-file.mjs encrypt data/jobscope.db data/jobscope.db.enc
+          cloud_db="$(mktemp)"
           verify_db="$(mktemp)"
-          trap 'rm -f "$verify_db"' EXIT
+          trap 'rm -f "$cloud_db" "$verify_db"' EXIT
+          python -m jobscope.core.snapshot data/jobscope.db --cloud-copy "$cloud_db"
+          node scripts/crypt-file.mjs encrypt "$cloud_db" data/jobscope.db.enc
           node scripts/crypt-file.mjs decrypt data/jobscope.db.enc "$verify_db"
           python -m jobscope.core.snapshot "$verify_db"
-          cmp --silent data/jobscope.db "$verify_db"
+          cmp --silent "$cloud_db" "$verify_db"
 
           tmp="$(mktemp -d)"
           cp data/jobscope.db.enc "$tmp/jobscope.db.enc"

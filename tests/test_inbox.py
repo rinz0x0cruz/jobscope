@@ -593,6 +593,73 @@ def test_link_job_matches_scraped_company():
     store.close()
 
 
+def _seed_sent_campaign(store, *, domain="acme.com", sent_at="2026-06-01T09:00:00Z"):
+    campaign = store.create_outreach_campaign("Reply tracking", 1)
+    target = store.upsert_outreach_campaign_target(
+        campaign["id"], "Acme", "acme", rank_score=80,
+    )
+    contacts = [{"email": f"recruiter@{domain}", "source": "hunter",
+                 "confidence": "medium", "note": "recruiter"}]
+    store.set_outreach_campaign_contacts(
+        target["id"], domain=domain, contacts=contacts, state="draft",
+    )
+    store.set_outreach_campaign_draft(
+        target["id"], domain=domain, contacts=contacts,
+        selected_email=f"recruiter@{domain}", subject="Hello", body="Body",
+    )
+    store.approve_outreach_campaign_target(target["id"])
+    assert store.claim_outreach_campaign_target_send(target["id"])
+    store.mark_outreach_campaign_target_sent(target["id"], sent_at)
+    return target["id"]
+
+
+def test_inbox_keeps_generic_reply_from_sent_campaign_domain(monkeypatch):
+    FakeIMAP.mailbox = {
+        1: _raw("Alex <alex@acme.com>", "Re: Hello",
+                "Thanks for reaching out. Can we speak tomorrow?", "<reply@acme.com>"),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    cfg = _cfg(monkeypatch)
+    store = _store()
+    target_id = _seed_sent_campaign(store)
+
+    assert inbox.run(cfg, store) == 0
+    events = store.mail_events()
+
+    assert len(events) == 1 and events[0]["signal"] == "campaign_reply"
+    assert store.get_application(events[0]["job_id"]) is None
+    from jobscope.apply import campaigns
+    assert campaigns.reconcile_replies(store) == {"replied": 1, "opted_out": 0}
+    assert store.get_outreach_campaign_target(target_id)["state"] == "replied"
+    store.close()
+
+
+def test_inbox_keeps_campaign_optout_without_storing_body(monkeypatch):
+    FakeIMAP.mailbox = {
+        1: _raw("Alex <alex@acme.com>", "Re: Hello",
+                "Please do not contact me again.", "<stop@acme.com>"),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    cfg = _cfg(monkeypatch)
+    cfg["inbox"]["store_snippets"] = False
+    store = _store()
+    target_id = _seed_sent_campaign(store)
+
+    assert inbox.run(cfg, store) == 0
+    event = store.mail_events()[0]
+
+    assert event["signal"] == "campaign_optout" and event["snippet"] == ""
+    from jobscope.apply import campaigns
+    assert campaigns.reconcile_replies(store) == {"replied": 0, "opted_out": 1}
+    assert store.get_outreach_campaign_target(target_id)["state"] == "opted_out"
+    assert store.is_outreach_suppressed("domain", "acme.com")
+    store.close()
+
+
 # --- inbox: end-to-end IMAP sync (fake mailbox) -----------------------------
 def _load_mailbox():
     FakeIMAP.mailbox = {

@@ -10,6 +10,7 @@ import {
   Lock,
   MoreHorizontal,
   MailSearch,
+  Send,
   Search,
   Settings,
   SunMedium,
@@ -29,12 +30,14 @@ export interface AppShellProps {
   onLock?: () => void
   pendingChanges?: number
   onSyncChanges?: () => void
+  campaignsAvailable?: boolean
   children: ReactNode
 }
 
 const NAV_ITEMS: Array<{ value: ViewValue; label: string; Icon: typeof ListFilter }> = [
   { value: 'review', label: 'Review', Icon: ListFilter },
   { value: 'companies', label: 'Companies', Icon: Building2 },
+  { value: 'campaigns', label: 'Campaigns', Icon: Send },
   { value: 'pipeline', label: 'Pipeline', Icon: Workflow },
   { value: 'applications', label: 'Applications', Icon: BriefcaseBusiness },
   { value: 'activity', label: 'Activity', Icon: Activity },
@@ -45,7 +48,7 @@ const MOBILE_VIEWS: ViewValue[] = ['review', 'companies', 'pipeline', 'applicati
 
 const NAV_SECTIONS: Array<{ label: string; views: ViewValue[] }> = [
   { label: 'Workspace', views: ['review', 'companies'] },
-  { label: 'Progress', views: ['pipeline', 'applications', 'activity'] },
+  { label: 'Progress', views: ['campaigns', 'pipeline', 'applications', 'activity'] },
   { label: 'System', views: ['settings'] },
 ]
 
@@ -54,11 +57,13 @@ function DesktopSidebar({
   onNavigate,
   onToggleTheme,
   onLock,
+  campaignsAvailable,
 }: {
   active: ViewValue
   onNavigate: (view: ViewValue) => void
   onToggleTheme?: () => void
   onLock?: () => void
+  campaignsAvailable: boolean
 }) {
   return (
     <aside className="hidden h-dvh min-h-0 flex-col border-r border-line bg-panel lg:flex">
@@ -82,7 +87,7 @@ function DesktopSidebar({
           <div key={section.label} className={sectionIndex ? 'mt-5' : ''}>
             <p className="mb-1.5 px-2 text-[9px] font-semibold uppercase text-ink-3">{section.label}</p>
             <div className="space-y-1">
-              {section.views.map((value) => {
+              {section.views.filter((value) => value !== 'campaigns' || campaignsAvailable).map((value) => {
                 const item = NAV_ITEMS.find((candidate) => candidate.value === value)
                 if (!item) return null
                 const { label, Icon } = item
@@ -131,9 +136,9 @@ function DesktopSidebar({
   )
 }
 
-function MobileNav({ active, onNavigate }: { active: ViewValue; onNavigate: (view: ViewValue) => void }) {
+function MobileNav({ active, onNavigate, campaignsAvailable }: { active: ViewValue; onNavigate: (view: ViewValue) => void; campaignsAvailable: boolean }) {
   const [moreOpen, setMoreOpen] = useState(false)
-  const moreActive = active === 'activity' || active === 'settings'
+  const moreActive = !MOBILE_VIEWS.includes(active)
   return (
     <>
       <nav aria-label="Mobile primary" className="grid h-16 grid-cols-5 border-t border-line bg-panel/95 shadow-[0_-8px_24px_-20px_rgba(0,0,0,.55)] backdrop-blur">
@@ -169,7 +174,7 @@ function MobileNav({ active, onNavigate }: { active: ViewValue; onNavigate: (vie
           <Dialog.Overlay className="fixed inset-0 z-40 bg-black/45" />
           <Dialog.Content className="fixed inset-x-0 bottom-0 z-50 border-t border-line bg-panel p-4 outline-none">
             <Dialog.Title className="mb-2 text-[12px] font-semibold uppercase text-ink-3">More views</Dialog.Title>
-            {NAV_ITEMS.filter((item) => item.value === 'activity' || item.value === 'settings').map(({ value, label, Icon }) => (
+            {NAV_ITEMS.filter((item) => !MOBILE_VIEWS.includes(item.value) && (item.value !== 'campaigns' || campaignsAvailable)).map(({ value, label, Icon }) => (
               <button
                 key={value}
                 type="button"
@@ -197,6 +202,7 @@ export function AppShell({
   onLock,
   pendingChanges = 0,
   onSyncChanges,
+  campaignsAvailable = false,
   children,
 }: AppShellProps) {
   const title = NAV_ITEMS.find((item) => item.value === active)?.label ?? 'Feed'
@@ -207,6 +213,7 @@ export function AppShell({
         onNavigate={onNavigate}
         onToggleTheme={onToggleTheme}
         onLock={onLock}
+        campaignsAvailable={campaignsAvailable}
       />
 
       <div className="flex min-h-0 min-w-0 flex-col">
@@ -287,7 +294,7 @@ export function AppShell({
 
       <main className="min-h-0 flex-1 overflow-auto">{children}</main>
       <div className="fixed inset-x-0 bottom-0 z-30 lg:hidden">
-        <MobileNav active={active} onNavigate={onNavigate} />
+        <MobileNav active={active} onNavigate={onNavigate} campaignsAvailable={campaignsAvailable} />
       </div>
       </div>
     </div>

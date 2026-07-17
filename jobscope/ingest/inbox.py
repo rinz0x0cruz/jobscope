@@ -181,6 +181,15 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
     for j in store.jobs(order_by_score=False):
         if j.company:
             job_index.setdefault(mailrules.normalize_company(j.company), j.id)
+    campaign_reply_watches = [
+        {
+            "domain": target.get("domain") or "",
+            "sent_at": target.get("sent_at") or "",
+            "outbound_message_id": target.get("outbound_message_id") or "",
+        }
+        for target in store.sent_outreach_campaign_targets()
+        if target.get("state") == "sent" and target.get("domain") and target.get("sent_at")
+    ]
 
     track_new_ids = not (dry_run or backfill)
     initial_event_ids = {
@@ -196,6 +205,7 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
             kept = 0
             for folder in _folders_for(icfg):
                 kept += _sync_folder(M, addr, folder, store, cfg, job_index,
+                                     campaign_reply_watches,
                                      dry_run=dry_run, since=since, backfill=backfill,
                                      lookback_days=lookback_days)
             status = "recovered" if attempt > 1 else "ok"
@@ -246,7 +256,8 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
     return _AccountSyncResult(0, False)
 
 
-def _sync_folder(M, addr: str, folder: str, store, cfg: dict, job_index: dict, *,
+def _sync_folder(M, addr: str, folder: str, store, cfg: dict, job_index: dict,
+                 campaign_reply_watches: list[dict], *,
                  dry_run: bool, since: Optional[str], backfill: bool,
                  lookback_days: int) -> int:
     """Scan a single IMAP folder for one account; returns the newly-ingested count.
@@ -294,8 +305,10 @@ def _sync_folder(M, addr: str, folder: str, store, cfg: dict, job_index: dict, *
         if u > max_uid:
             max_uid = u
         try:
-            ev = _process_uid(M, addr, uid, store, cfg, job_index, dry_run=dry_run,
-                              rescore=backfill)
+            ev = _process_uid(
+                M, addr, uid, store, cfg, job_index, campaign_reply_watches,
+                dry_run=dry_run, rescore=backfill,
+            )
         except _TransientIMAPError:
             raise
         except Exception:  # noqa: BLE001 - one bad message never sinks the run
@@ -346,6 +359,7 @@ def _search_uids(M, last_uid: int, since: Optional[str], lookback_days: int,
 
 
 def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
+                 campaign_reply_watches: list[dict],
                  *, dry_run: bool, rescore: bool = False) -> Optional[MailEvent]:
     uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
 
@@ -356,6 +370,10 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
     subject = _dh(hdr.get("Subject", ""))
     from_name, from_addr = _eu.parseaddr(from_raw)
     from_domain = from_addr.split("@")[-1].lower() if "@" in from_addr else ""
+    message_date = _parse_date(hdr.get("Date", ""))
+    campaign_reply = _is_campaign_reply_candidate(
+        from_addr, message_date, campaign_reply_watches,
+    )
 
     # Skip job-board digests / alerts / community mail (not application status),
     # and newsletter/content platforms (Substack/Medium/...) whose subjects
@@ -371,7 +389,8 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
     # Cheap first pass on headers only; skip clearly-irrelevant mail from
     # non-ATS domains without ever fetching a body.
     sig = mailrules.classify_signal(from_addr, subject, "")
-    if not mailrules.is_job_related(from_domain, sig) and not mailrules.is_ats_domain(from_domain):
+    if (not campaign_reply and not mailrules.is_job_related(from_domain, sig)
+            and not mailrules.is_ats_domain(from_domain)):
         return None
 
     configured_limit = int(cfg.get("inbox", {}).get("classification_chars", 6000))
@@ -379,14 +398,21 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
     if mailrules.is_transactional(subject, snippet):
         return None  # some OTP/verification mail carries the tell only in the body
     sig, _scores, ambiguous, tied = mailrules.classify_scored(subject, snippet)
-    if not mailrules.is_job_related(from_domain, sig):
+    if not campaign_reply and not mailrules.is_job_related(from_domain, sig):
         return None
+
+    if campaign_reply:
+        from jobscope.apply.campaigns import is_optout_text
+        if is_optout_text(subject, snippet):
+            sig = "campaign_optout"
+        elif sig == "other":
+            sig = "campaign_reply"
 
     company, role = mailrules.parse_company_role(from_name, from_domain, subject, snippet)
 
     # Deterministic weights decide the vast majority; only a genuine tie (>=2
     # close verdicts) defers to the optional quorum layer (gated, None-safe).
-    if ambiguous:
+    if ambiguous and not sig.startswith("campaign_"):
         sig = _quorum_pick(cfg, store, subject, snippet, tied) or sig
 
     job_id = _link_job(company, role, job_index)
@@ -394,7 +420,7 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
         account=addr, uid=uid_s, message_id=(hdr.get("Message-ID") or "").strip(),
         thread_id=_thread_key(hdr, subject),
         from_addr=from_addr, from_name=from_name, from_domain=from_domain,
-        subject=subject, date=_parse_date(hdr.get("Date", "")),
+        subject=subject, date=message_date,
         company=company, role=role, signal=sig, job_id=job_id,
         snippet=(snippet[:500] if cfg.get("inbox", {}).get("store_snippets", False) else ""),
         first_seen=now_iso(),
@@ -417,6 +443,35 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
         store.update_mail_event(ev.id, signal=sig, job_id=job_id)
         return ev
     return None
+
+
+def _is_campaign_reply_candidate(
+    from_addr: str, message_date: str, watches: list[dict],
+) -> bool:
+    """Match only non-automated, post-send mail on a confirmed campaign domain."""
+    if not from_addr or not message_date:
+        return False
+    try:
+        event_at = _dt.datetime.fromisoformat(message_date.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    from jobscope.apply.outreach import valid_company_recipient
+    for watch in watches:
+        domain = str(watch.get("domain") or "")
+        sent_raw = str(watch.get("sent_at") or "")
+        if not valid_company_recipient(from_addr, domain):
+            continue
+        try:
+            sent_at = _dt.datetime.fromisoformat(sent_raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if event_at.tzinfo is None:
+            event_at = event_at.replace(tzinfo=_dt.timezone.utc)
+        if sent_at.tzinfo is None:
+            sent_at = sent_at.replace(tzinfo=_dt.timezone.utc)
+        if event_at > sent_at:
+            return True
+    return False
 
 
 def _link_job(company: str, role: str, job_index: dict) -> str:
