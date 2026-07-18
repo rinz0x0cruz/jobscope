@@ -150,8 +150,8 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
 | [scrape.py](jobscope/ingest/scrape.py) | — | Cadence-gated broad JobSpy discovery; monitored sources are a separate mode | model, store | `run()`, `discovery_due()` |
-| [ats.py](jobscope/ingest/ats.py) | — | Typed Greenhouse/Lever/Ashby resolution, career-URL parsing, and board fetch | httpx, model | `resolve_board_result()`, `fetch_company_result()` |
-| [monitor.py](jobscope/ingest/monitor.py) | — | Seed/resolve/scan persistent company monitors; health + fail-closed reconciliation | ats, review, store | `seed_monitors()`, `scan_active_monitors()` |
+| [ats.py](jobscope/ingest/ats.py) | — | Typed Greenhouse/Lever/Ashby plus curated Phenom resolution, career-URL parsing, bounded pagination, and board fetch | httpx, model | `resolve_board_result()`, `fetch_company_result()` |
+| [monitor.py](jobscope/ingest/monitor.py) | — | Seed/resolve/scan persistent company monitors; observable decision funnel, canonical skip reasons, health + fail-closed reconciliation | ats, review, store | `seed_monitors()`, `scan_active_monitors()` |
 | [inbox.py](jobscope/ingest/inbox.py) | 402 | Gmail IMAP sync (read-only, incremental) → weighted classify (+ optional quorum tie-break) → `mail_events`; drops transactional/OTP mail; `--reclassify` offline repair; recomputes the funnel after each sync | ats, config, model, store, mailrules, reconcile, (ai lazy) | `run()` |
 | [mailrules.py](jobscope/ingest/mailrules.py) | 643 | Deterministic **weighted-keyword** email classification (smart-quote-normalized scoring + ambiguity flag) + transactional/OTP detection + company/role parsing (pure, no I/O) | — | `classify_signal()`, `classify_scored()`, `is_job_related()`, `is_transactional()`, `parse_company_role()`, `signal_to_status()`, `advance_status()`, `normalize_company()` |
 | [reconcile.py](jobscope/ingest/reconcile.py) | 170 | Rebuild the funnel from the mail timeline — instance-split (reapply / concurrent roles) + conservative reclassify (drop OTP, downgrade false interview/assessment) | model, store, mailrules | `recompute()`, `reclassify()`, `split_instances()` |
@@ -163,7 +163,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | [match/](jobscope/analyze/match/) | 670 | **Package** — transparent fit scoring, tiers, filters, resume routing; split into `seniority`/`experience`/`filters`/`scoring`/`routing`/`run` submodules (all public + private names re-exported) | model, resume, (companies lazy) | `score_job()`, `apply_filters()`, `select_base()`, `run()`, `SENIORITY_RANK` |
 | [classify.py](jobscope/analyze/classify.py) | 61 | Optional AI/quorum seniority + discipline tie-breaker, routed through the classify strategy | ai, match, model | `classify_seniority()` |
 | [resume.py](jobscope/analyze/resume.py) | 345 | Parse Markdown/JSON-Resume/PDF/text → `Resume` + skills; seeds the search profile on first import | match, model, (profile lazy) | `import_resume()`, `parse_resume()`, `SKILL_LEXICON` |
-| [profile.py](jobscope/analyze/profile.py) | 201 | Résumé-derived editable **search profile** (`data/profile.yaml`) that drives `scan` | model, resume | `build_profile()`, `load()`, `ensure_seeded()`, `apply_to_search()`, `run()` |
+| [profile.py](jobscope/analyze/profile.py) | — | Résumé-derived named **search profiles** (`data/profiles/`) with editable intent that drives `scan` | model, resume | `build_profile()`, `update_profile()`, `reset_profile()`, `load()`, `apply_to_search()` |
 | [atscheck.py](jobscope/analyze/atscheck.py) | 217 | Deterministic **ATS parse check** — extracted fields + friendliness score + formatting warnings (+ optional JD keyword coverage) | model, (tailor lazy) | `ats_report()`, `coverage()`, `run()` |
 | [coverage.py](jobscope/analyze/coverage.py) | 324 | Per-requirement JD↔résumé coverage (deterministic + optional AI); requirement extraction (perk/mission filtered) | model, resume, (tailor/ai lazy) | `coverage_report()`, `extract_requirements()`, `run()` |
 | [insights.py](jobscope/analyze/insights.py) | 47 | Skill-gap analysis across matched jobs | resume, store | `skill_gap()`, `run()` |
@@ -203,7 +203,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | [render.py](jobscope/deliver/render.py) | — | Encrypted dashboard contract: jobs, applications, monitor summaries, reviews, profile, and outreach; public mode emits an empty shell | companies, store | `build_data()`, `emit_json()` |
 | [pdf.py](jobscope/deliver/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
 | [email.py](jobscope/deliver/email.py) | — | Optional SMTP delivery with stable Message-ID and explicit pre-send vs unknown-outcome errors | config | `send()`, `EmailDeliveryError` |
-| [serve.py](jobscope/deliver/serve.py) | ~430 | Serves the built SPA (`web/dist`) on 127.0.0.1 + a localhost-only, CSRF-guarded API: Refresh/publish (injects the Refresh widget), `/api/token`, and `/api/outreach` (recruiter preview/send) | render, store, (apply.outreach lazy) | `run()`, `perform_refresh()` |
+| [serve.py](jobscope/deliver/serve.py) | — | Local control plane on 127.0.0.1: guarded live dashboard/profile/mutation/campaign APIs; refreshes SQLite without publication; optional CLI publication remains explicit | render, store, feature services (lazy) | `run()`, `perform_refresh()` |
 | [exporter.py](jobscope/deliver/exporter.py) | 22 | Export ranked jobs to JSON/CSV | — | `run()` |
 
 Plus [schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) — the JSON-Schema
@@ -232,9 +232,9 @@ artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboar
 
 ### web/ — React dashboard (SPA)
 
-The single dashboard is a Vite + React + TypeScript PWA in `web/` that consumes baked `dashboard.json`
-locally or a lazily fetched AES-encrypted whole-site payload on Pages. `AuthGate` exposes no application
-surface until the payload is available; the public bundle contains only an empty shell.
+The single dashboard is a Vite + React + TypeScript PWA in `web/`. Local serve replaces the baked startup
+fallback with `GET /api/dashboard` data from current SQLite; Pages lazily fetches an AES-encrypted whole-site
+snapshot. `AuthGate` exposes no Pages surface until the payload is available; the public bundle is empty.
 
 **Company-first data flow:** `company_monitors` owns watched portals; `company_monitor_jobs` records
 provenance; `job_reviews` owns pending/saved/dismissed state. Monitor scans and daily broad discovery both
@@ -258,8 +258,9 @@ the batch, scans, matches, saves the DB, verifies the artifact, and republishes.
   normalized payload in sessionStorage and can clear it on lock.
 - **Chrome:** `AppShell` owns search, command palette, Refresh, theme, lock, queued-change Sync, responsive
   desktop/mobile navigation, and the shared IBM Plex/Source Serif token system.
-- **Refresh/actions:** `lib/refresh.ts` dispatches and polls `refresh.yml`; `companyActions.ts` applies local
-  loopback changes immediately or collapses encrypted-Pages decisions into a durable browser queue.
+- **Refresh/actions:** `lib/refresh.ts` starts/polls local SQLite refresh under serve, otherwise dispatches and
+  polls `refresh.yml`; `companyActions.ts` applies loopback changes immediately or collapses Pages decisions
+  into a durable browser queue.
 - **Tests:** a Vitest + Testing-Library suite in `web/test/` (kept outside `src/` so the production `tsc -b`
   never compiles it) covers the lib modules + the Refresh button. Runs via `npm test` and the `web` job in
   `.github/workflows/ci.yml`.
@@ -362,14 +363,15 @@ Representative API: `upsert_job()`, `update_score()`, `update_ai_seniority()`, `
 ## 8. Web dashboard (`web/` + encrypted whole-site payload)
 
 Vite + React 19 + TypeScript + Tailwind v4 + TanStack Router (hash) + Radix Dialog + TanStack Virtual.
-Local builds bake the private dashboard payload. Published builds bake only an empty schema-valid shell and
-a pointer to `site.enc.json`; `AuthGate` decrypts and normalizes the full payload before mounting `ShellV2`.
+Local serve reads private dashboard data at runtime from its guarded `/api/dashboard`; baked data is only a
+startup fallback. Published builds bake an empty schema-valid shell and a pointer to `site.enc.json`;
+`AuthGate` decrypts and normalizes that read-only snapshot before mounting `ShellV2`.
 
 | Area | Files | Responsibility |
 |------|-------|----------------|
 | **Entry/auth** | [main.tsx](web/src/main.tsx), [router.tsx](web/src/router.tsx), [App.tsx](web/src/App.tsx), `app/AuthGate.tsx` | Mount, hash state, whole-site unlock/session cache |
 | **Shell** | `app/AppShell.tsx`, `app/ShellV2.tsx` | Six desktop views, five-slot mobile nav, shared search/commands, optimistic state |
-| **Contract** | [data/index.ts](web/src/data/index.ts), [lib/schema.ts](web/src/lib/schema.ts), [lib/unlock.ts](web/src/lib/unlock.ts) | Normalize current/legacy private payloads and decrypt Pages data |
+| **Contract** | [data/index.ts](web/src/data/index.ts), [lib/schema.ts](web/src/lib/schema.ts), [lib/unlock.ts](web/src/lib/unlock.ts), [lib/outreach.ts](web/src/lib/outreach.ts) | Normalize live local/legacy payloads and decrypt Pages data |
 | **Review** | `features/feed/FeedView.tsx`, [lib/feed.ts](web/src/lib/feed.ts) | Durable monitored/discovery/saved/dismissed queues and role actions |
 | **Companies** | `features/companies/CompaniesView.tsx`, [lib/companies.ts](web/src/lib/companies.ts) | Monitor list/detail, resolution, source health, per-company jobs |
 | **Actions/refresh** | [lib/companyActions.ts](web/src/lib/companyActions.ts), [lib/refresh.ts](web/src/lib/refresh.ts) | Local CSRF API or collapsed Pages queue; correlated workflow dispatch/poll |
@@ -379,6 +381,8 @@ a pointer to `site.enc.json`; `AuthGate` decrypts and normalizes the full payloa
 flowchart LR
   URL[(Hash search state)] --> Shell[ShellV2]
   Private[(Private DashboardData)] --> Shell
+  SQLite[(Local SQLite)] --> GuardedAPI[Loopback /api/dashboard]
+  GuardedAPI --> Private
   Shell --> Review
   Shell --> Companies
   Shell --> Pipeline

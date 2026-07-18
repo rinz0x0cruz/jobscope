@@ -211,9 +211,12 @@ encrypted cloud DB generation remains the first recovery option for cloud-manage
 state, but never for local-only campaigns. `search.companies` is retained as
 seed/fallback input, so old code can still run direct ATS scans during a rollback.
 
-If publication fails, `refresh:last_date` is not advanced. Check
-`refresh:last_failed_stage` with `jobscope doctor`, repair the stage, and rerun with
-`jobscope refresh --force`.
+Local data refresh and publication are independent. A successful scan/sync/match advances
+`refresh:last_date`; only a verified encrypted publish advances
+`publish:last_date`. If publication fails, current SQLite data remains available through
+`jobscope serve`. Check `refresh:last_failed_stage` with `jobscope doctor`, repair the
+stage, and rerun `jobscope refresh` to publish current data without rescanning (or use
+`--force` to repeat every stage). `jobscope refresh --local-only` never publishes.
 
 To roll back GitHub Pages, reset the disposable `gh-pages` branch to a previously
 verified deployment commit and push it. Compare that commit's

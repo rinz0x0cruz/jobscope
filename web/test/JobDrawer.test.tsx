@@ -31,6 +31,13 @@ function makeApp(): Application {
         from: 'ibm.com',
         summary: 'We would like to schedule a call to discuss the role.',
       },
+      {
+        date: '2026-07-17',
+        signal: 'manual',
+        subject: 'Assessment submitted (user-confirmed)',
+        from: 'User record',
+        summary: '',
+      },
     ],
   }
 }
@@ -40,13 +47,15 @@ describe('JobDrawer', () => {
     render(
       <JobDrawer job={null} application={makeApp()} allRows={[]} onOpen={() => {}} onClose={() => {}} />,
     )
-    expect(screen.getByText('Emails (2)')).toBeInTheDocument()
+    expect(screen.getByText('Activity (3)')).toBeInTheDocument()
     expect(
       screen.getByText('You have successfully submitted your IBM job application'),
     ).toBeInTheDocument()
     expect(screen.getByText('Invitation to interview at IBM')).toBeInTheDocument()
     expect(screen.getByText(/thank you for applying/i)).toBeInTheDocument()
     expect(screen.getByText(/schedule a call/i)).toBeInTheDocument()
+    expect(screen.getByText('Manual update')).toBeInTheDocument()
+    expect(screen.getByText('Assessment submitted (user-confirmed)')).toBeInTheDocument()
   })
 
   it('renders nothing when neither a job nor an application is provided', () => {

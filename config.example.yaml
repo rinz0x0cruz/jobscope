@@ -209,12 +209,11 @@ output:
 retention:
   reconciliation_audit_days: 730      # purge detailed decisions after N days; run summaries/tombstones persist
 
-# Local dashboard server (`jobscope serve`). The served page shows a
-# localhost-only "Refresh & Publish" button that syncs your Gmail inbox
-# (append-only), rescores matches, rebuilds the dashboard, and publishes the
-# redacted/encrypted site -- at most once per day. Never exposed on the public site.
+# Local dashboard control plane (`jobscope serve`). The served page reads live
+# SQLite data and can sync Gmail + rescore locally without rebuilding or publishing.
+# Publication remains an explicit encrypted snapshot operation.
 serve:
-  refresh_enabled: true      # show/allow the Refresh & Publish button
+  refresh_enabled: true      # show/allow the local Gmail refresh button
   refresh_full_scan: false   # also re-scrape job boards (429-prone) before matching
   inbox_days: 7              # Gmail lookback window for the button's inbox sync
   build_on_start: false      # rebuild the SPA when `serve` starts (else serve the last build)

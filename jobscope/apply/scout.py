@@ -1,5 +1,5 @@
-"""On-demand company scout: fetch a company's public ATS board (Greenhouse / Lever /
-Ashby) and score its openings against the *active* search profile's résumé.
+"""On-demand company scout: fetch a supported public ATS board and score its
+openings against the *active* search profile's résumé.
 
 Unlike the batch ``scan`` (config-listed companies), this resolves a company by
 name at call time -- known slug, an explicit ``provider|slug`` override, or a
@@ -29,7 +29,7 @@ def scout(cfg: dict, store, company: str, *, provider: Optional[str] = None,
     resolved = ats.resolve_board(company, provider=provider, slug=slug)
     if resolved is None:
         return {"ok": False, "needs_slug": True,
-                "error": (f"no public Greenhouse/Lever/Ashby board found for '{company}'. "
+                "error": (f"no supported public ATS board found for '{company}'. "
                           f"Try an explicit board, e.g. \"{company}|lever|<slug>\".")}
     name, prov, board_slug = resolved
 
@@ -49,12 +49,20 @@ def scout(cfg: dict, store, company: str, *, provider: Optional[str] = None,
         return result
 
     try:
+        candidates = ats.filter_profile_jobs(cfg, store, board)
+        ats.hydrate_company_jobs(prov, candidates)
         scored = score_jobs(cfg, store, board)
+        candidate_ids = {job.id for job in candidates}
+        for item in scored:
+            if item.job.id not in candidate_ids:
+                item.tier = "Skip"
+                item.rationale = f"outside active profile title/location scope | {item.rationale}"
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
     saved = 0
     results: list[dict[str, Any]] = []
+    result["matched"] = sum(item.tier != "Skip" for item in scored)
     for item in scored[: max(1, limit)]:
         job = item.job
         rec = {
@@ -68,7 +76,6 @@ def scout(cfg: dict, store, company: str, *, provider: Optional[str] = None,
             rec["saved"] = True
         results.append(rec)
 
-    result["matched"] = sum(1 for r in results if r["tier"] != "Skip")
     result["saved"] = saved
     result["results"] = results
     return result

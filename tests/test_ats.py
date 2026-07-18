@@ -1,4 +1,5 @@
 """Tests for ATS-direct company board fetching (HTTP is mocked; no network)."""
+import json
 import os
 import tempfile
 
@@ -45,6 +46,33 @@ ASHBY = {
     ]
 }
 
+PHENOM = {
+    "refineSearch": {
+        "status": 200,
+        "hits": 2,
+        "totalHits": 2,
+        "data": {"jobs": [
+            {
+                "jobId": "P-100131",
+                "title": "SASE ENGINEER",
+                "location": "Noida, India",
+                "multi_location": ["Noida, India", "Bengaluru, India"],
+                "postedDate": "2026-07-01T00:00:00.000+0000",
+                "descriptionTeaser": "Security platform engineering",
+                "ml_job_parser": {"descriptionTeaser_ats": "SIEM and SASE operations"},
+            },
+            {
+                "jobId": "P-100130",
+                "title": "Platform Support Engineer L2",
+                "location": "Bengaluru, India",
+                "multi_location": [],
+                "postedDate": "2026-06-30T00:00:00.000+0000",
+                "descriptionTeaser": "SIEM platform support",
+            },
+        ]},
+    },
+}
+
 
 def _fake_get_json(url, **_kw):
     if "greenhouse" in url:
@@ -53,6 +81,8 @@ def _fake_get_json(url, **_kw):
         return LEVER
     if "ashby" in url:
         return ASHBY
+    if "phenompeople" in url:
+        return PHENOM
     return None
 
 
@@ -82,6 +112,10 @@ def test_resolve_known_and_explicit_override():
     assert ats._resolve("Acme|lever|acme-co") == ("Acme", "lever", "acme-co")
     assert ats._resolve("Acme:ashby:acme") == ("Acme", "ashby", "acme")
     assert ats._resolve("totally-unknown-co") is None
+    assert ats._resolve("NTT DATA") == ("NTT DATA", "phenom", "NTT1GLOBAL")
+    assert ats.board_url("phenom", "NTT1GLOBAL") == (
+        "https://careers.services.global.ntt/global/en/search-results"
+    )
 
 
 def test_greenhouse_run_filters_by_location_and_role(monkeypatch):
@@ -108,13 +142,22 @@ def test_board_filter_targets_threat_hunter_without_generic_engineering_roles():
     })
     jobs = [
         Job(title="Senior Threat Hunter", location="Remote", is_remote=True),
+        Job(title="SOC Engineer - L2", location="Remote", is_remote=True),
+        Job(title="Associate Information Security Analyst", location="Remote", is_remote=True),
+        Job(title="Application-Security-Engineer", location="Remote", is_remote=True),
         Job(title="Manager, Software Engineering", location="Remote", is_remote=True),
+        Job(title="Social Media Manager", location="Remote", is_remote=True),
         Job(title="Engineering Manager - Backend", location="Remote", is_remote=True),
     ]
 
     kept = ats.filter_board_jobs(cfg, jobs)
 
-    assert [job.title for job in kept] == ["Senior Threat Hunter"]
+    assert [job.title for job in kept] == [
+        "Senior Threat Hunter",
+        "SOC Engineer - L2",
+        "Associate Information Security Analyst",
+        "Application-Security-Engineer",
+    ]
 
 
 def test_description_html_is_stripped_and_unescaped(monkeypatch):
@@ -146,6 +189,49 @@ def test_ashby_remote_flag(monkeypatch):
     assert len(jobs) == 1
     assert jobs[0].is_remote is True
     assert jobs[0].title == "Product Security Engineer"
+
+
+def test_phenom_fetches_bounded_category_and_normalizes_jobs(monkeypatch):
+    calls = []
+
+    def fetch(url, **kwargs):
+        calls.append((url, kwargs["params"]))
+        return PHENOM
+
+    _patch_json(monkeypatch, fetch)
+    result = ats.fetch_company_result("NTT DATA", "phenom", "NTT1GLOBAL")
+
+    assert result.status == ats.BoardStatus.OK and len(result.jobs) == 2
+    assert result.attempts == 1 and len(calls) == 1
+    assert json.loads(calls[0][1]["payload"])["selected_fields"] == {
+        "category": ["Information Security"],
+    }
+    sase = next(job for job in result.jobs if job.title == "SASE ENGINEER")
+    assert sase.location == "Noida, India | Bengaluru, India"
+    assert sase.description == "SIEM and SASE operations"
+    assert sase.date_posted == "2026-07-01"
+    assert sase.url.endswith("/job/P-100131/SASE-ENGINEER")
+
+
+def test_phenom_hydrates_full_description_after_filtering(monkeypatch):
+    detail = {
+        "jobDetail": {"data": {"job": {
+            "description": "<p>Monitor SIEM alerts &amp; support incident response.</p>",
+        }}},
+    }
+    html = f"<script>phApp.ddo = {json.dumps(detail)};</script>"
+    monkeypatch.setattr(ats.httpx, "get_text_result", lambda *_a, **_k: (
+        ats.httpx.HttpResult(True, 200, 1, html, "")
+    ))
+    job = Job(
+        title="Associate Information Security Analyst",
+        url="https://careers.services.global.ntt/global/en/job/R-1/role",
+        description="short teaser",
+    )
+
+    hydrated = ats.hydrate_company_jobs("phenom", [job])
+
+    assert hydrated[0].description == "Monitor SIEM alerts & support incident response."
 
 
 def test_board_fetch_result_distinguishes_empty_error_and_invalid(monkeypatch):

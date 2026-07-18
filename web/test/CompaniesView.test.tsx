@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { CompaniesView } from '@/features/companies'
 import { buildCompanies } from '@/lib/companies'
 import { application, dashboard, jobRow, monitoredCompany } from './factories'
@@ -21,7 +21,101 @@ function setup(selectedId?: string) {
   return { onActions, onSelect }
 }
 
+function renderCompany(item: ReturnType<typeof monitoredCompany>, onActions = vi.fn().mockResolvedValue(undefined)) {
+  render(<CompaniesView
+    model={buildCompanies(dashboard({ companies: [item] }))}
+    filter="all"
+    selectedId={item.id}
+    onFilter={vi.fn()}
+    onSelect={vi.fn()}
+    onOpenJob={vi.fn()}
+    onActions={onActions}
+  />)
+  return onActions
+}
+
 describe('CompaniesView', () => {
+  it('resolves an unresolved monitor once and blocks duplicate clicks', async () => {
+    let finish: (() => void) | undefined
+    const onActions = vi.fn(() => new Promise<void>((resolve) => { finish = resolve }))
+    const unresolved = monitoredCompany({
+      id: 'company:ntt', company: 'NTT DATA', lifecycle: 'watching', status: 'active',
+      resolution_status: 'unresolved', provider: '', slug: '', careers_url: '',
+    })
+    renderCompany(unresolved, onActions)
+
+    const resolveButton = screen.getByRole('button', { name: 'Resolve & scan' })
+    fireEvent.click(resolveButton)
+    fireEvent.click(resolveButton)
+    expect(onActions).toHaveBeenCalledTimes(1)
+    expect(onActions).toHaveBeenCalledWith([
+      { type: 'monitor.scan', monitor_id: unresolved.id },
+    ])
+    expect(resolveButton).toBeDisabled()
+    finish?.()
+    await waitFor(() => expect(resolveButton).toBeEnabled())
+  })
+
+  it('resumes a paused monitor before allowing a scan', async () => {
+    const onActions = vi.fn(async () => undefined)
+    const paused = monitoredCompany({
+      id: 'company:paused', company: 'Acme', lifecycle: 'watching', status: 'paused',
+      resolution_status: 'resolved', provider: 'greenhouse', slug: 'acme',
+    })
+    renderCompany(paused, onActions)
+
+    expect(screen.queryByRole('button', { name: 'Scan jobs' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Resume to scan' }))
+    await waitFor(() => expect(onActions).toHaveBeenCalledWith([
+      { type: 'monitor.status', monitor_id: paused.id, status: 'active' },
+    ]))
+  })
+
+  it('keeps authoritative posting counts when hidden reviews are not rendered', () => {
+    const item = monitoredCompany({
+      id: 'company:ntt', company: 'NTT DATA', pending_count: 4,
+      resolution_status: 'resolved', provider: 'phenom', slug: 'NTT1GLOBAL',
+    })
+    const visible = jobRow({ id: 'visible', company: 'NTT DATA', tier: 'Stretch' })
+    const hiddenReview = {
+      job_id: 'hidden-skip', state: 'pending' as const, origins: ['monitored' as const],
+      monitor_ids: [item.id], first_seen: '', reviewed_at: '',
+    }
+    const model = buildCompanies(dashboard({
+      companies: [item], rows: [visible], reviews: [hiddenReview],
+    }))
+
+    expect(model.allItems[0].pending_count).toBe(4)
+    expect(model.allItems[0].pendingJobs).toEqual([])
+  })
+
+  it('shows the latest scan funnel and exclusion reasons', () => {
+    const item = monitoredCompany({
+      id: 'company:ntt', company: 'NTT DATA', provider: 'phenom', slug: 'NTT1GLOBAL',
+    })
+    render(<CompaniesView
+      model={buildCompanies(dashboard({ companies: [item] }))}
+      filter="all" selectedId={item.id} onFilter={vi.fn()} onSelect={vi.fn()}
+      onOpenJob={vi.fn()} onActions={vi.fn().mockResolvedValue(undefined)}
+      scanFunnels={{
+        [item.id]: {
+          board: 76, geo_eligible: 11, title_eligible: 11,
+          details_attempted: 11, details_hydrated: 11,
+          details_failed: 0, details_truncated: 0,
+          experience_eligible: 4, matched: 4,
+          skip_reasons: { geography: 65, experience_cap: 7 },
+        },
+      }}
+    />)
+
+    const funnel = screen.getByRole('region', { name: 'Latest scan funnel' })
+    expect(funnel).toHaveTextContent('Board76')
+    expect(funnel).toHaveTextContent('Geo11')
+    expect(funnel).toHaveTextContent('Experience4')
+    expect(funnel).toHaveTextContent('Matched4')
+    expect(funnel).toHaveTextContent('Full details hydrated 11/11')
+    expect(funnel).toHaveTextContent('Geography 65 · Experience cap 7')
+  })
   it('renders monitored companies and status filters', () => {
     setup()
     expect(screen.getByText('Companies and career portals')).toBeInTheDocument()
@@ -135,7 +229,7 @@ describe('CompaniesView', () => {
     expect(screen.getByLabelText('Company name')).not.toHaveAttribute('readonly')
   })
 
-  it('shows the preferred recruiter and keeps jobs/contact scans separate', () => {
+  it('shows the preferred recruiter and keeps jobs/contact scans separate', async () => {
     const onActions = vi.fn().mockResolvedValue(undefined)
     const company = monitoredCompany({
       id: 'acme', company: 'Acme', recruiter_count: 3,
@@ -157,7 +251,10 @@ describe('CompaniesView', () => {
     expect(screen.getByText('3 candidates')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Scan jobs' }))
     expect(onActions).toHaveBeenCalledWith([{ type: 'monitor.scan', monitor_id: 'acme' }])
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Find recruiter' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Find recruiter' }))
-    expect(onActions).toHaveBeenCalledWith([{ type: 'monitor.contacts', monitor_id: 'acme' }])
+    await waitFor(() => expect(onActions).toHaveBeenCalledWith([
+      { type: 'monitor.contacts', monitor_id: 'acme' },
+    ]))
   })
 })

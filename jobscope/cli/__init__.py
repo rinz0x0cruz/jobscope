@@ -299,6 +299,7 @@ def cmd_serve(args, cfg):
 def cmd_refresh(args, cfg):
     from ..deliver import serve
     res = serve.perform_refresh(cfg, force=args.force, full_scan=args.full_scan,
+                                publish_site=not args.local_only,
                                 on_step=lambda name, message: print(f"  {message}"))
     print(f"  {res['message']}")
     return 0
@@ -607,9 +608,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_profile)
 
     sp = sub.add_parser("scout",
-                        help="Scout a company's ATS board (Greenhouse/Lever/Ashby) and rank openings vs your active profile")
+                        help="Scout a supported public ATS board and rank openings vs your active profile")
     sp.add_argument("company", help="Company name (or 'Name|provider|slug' to force a board)")
-    sp.add_argument("--provider", default=None, help="ATS provider: greenhouse | lever | ashby")
+    sp.add_argument("--provider", default=None,
+                    help="ATS provider: greenhouse | lever | ashby | phenom")
     sp.add_argument("--slug", default=None, help="Board slug (skips name resolution)")
     sp.add_argument("--save", action="store_true", help="Save matching openings into your pipeline")
     sp.add_argument("--limit", type=int, default=20, help="Max openings to show (default 20)")
@@ -717,11 +719,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_serve)
 
     sp = sub.add_parser("refresh",
-                        help="Sync Gmail + rescore + rebuild + publish (once-per-day guard)")
+                        help="Sync Gmail + rescore + publish (once-per-day guard)")
     sp.add_argument("--force", action="store_true",
                     help="Run even if already refreshed today")
     sp.add_argument("--full-scan", action="store_true",
                     help="Also re-scrape job boards before matching (slower, 429-prone)")
+    sp.add_argument("--local-only", action="store_true",
+                    help="Refresh SQLite without publishing the encrypted Pages snapshot")
     sp.set_defaults(func=cmd_refresh)
 
     sp = sub.add_parser("track", help="View / update application status")
@@ -846,7 +850,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
     # A --db override is authoritative for the whole run, so sibling paths derived
-    # from it (e.g. the search profile at <db-dir>/profile.yaml) stay consistent.
+    # from it (e.g. named profiles under <db-dir>/profiles/) stay consistent.
     if getattr(args, "db", None):
         cfg.setdefault("output", {})["db_path"] = args.db
     try:

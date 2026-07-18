@@ -5,8 +5,8 @@ Two deterministic, offline repairs:
 * **reclassify** -- re-check each stored event against the *current* rules: drop
   transactional/OTP mail that slipped in, and downgrade a false ``interview`` /
   ``assessment`` tag (e.g. an acknowledgment whose body merely mentioned
-  "interview") to its real signal. Conservative: it never disturbs an event that
-  is already a confirmation / rejection / offer.
+    "interview") or promotional ``offer`` to its real signal. Conservative: an
+    ambiguous terminal event is preserved unless retained evidence disproves it.
 
 * **recompute** -- rebuild each application's status from its events in date
   order, *splitting* the timeline into separate application instances so one
@@ -225,8 +225,9 @@ def _reclassification(ev: dict) -> tuple[str | None, str]:
 
     Conservative repair: drop OTP/verification mail and content/practice-platform
     newsletters (LeetCode contests, course "challenges", ...), and downgrade a
-    false ``interview`` / ``assessment`` tag to whatever the current rules say --
-    but never disturb an event already classed confirmation / rejection / offer.
+    false ``interview`` / ``assessment`` / ``offer`` tag to whatever the current
+    rules say. Terminal events are only reconsidered when their body evidence was
+    retained; otherwise reconciliation stays conservative.
     """
     subject = ev.get("subject") or ""
     snippet = ev.get("snippet") or ""
@@ -235,7 +236,7 @@ def _reclassification(ev: dict) -> tuple[str | None, str]:
     if mailrules.is_newsletter_domain(ev.get("from_domain") or ""):
         return None, "newsletter_event"
     sig = ev.get("signal") or ""
-    if sig in ("interview", "assessment"):
+    if sig in ("interview", "assessment", "offer"):
         new = mailrules.classify_scored(subject, snippet)[0]
         # Downgrade to a CLEAR acknowledgment/terminal whenever the re-score says so.
         if new in ("confirmation", "rejection"):
@@ -246,6 +247,9 @@ def _reclassification(ev: dict) -> tuple[str | None, str]:
         # snippet we stay conservative -- a real interview whose cue lived in a body we
         # no longer store must never be silently dropped.
         if new == "other" and (snippet or "").strip():
+            return "other", "classification_rule_changed"
+        if (sig == "offer" and new == "other"
+                and mailrules.is_non_employment_offer(subject, snippet)):
             return "other", "classification_rule_changed"
     return sig, ""
 

@@ -1,4 +1,4 @@
-"""Company-targeted fetching from public ATS job boards (Greenhouse / Lever / Ashby).
+"""Company-targeted fetching from public ATS job boards.
 
 These boards expose a company's *published* jobs as JSON with **no auth and no
 key**. That surfaces roles at specific well-funded companies (e.g. unicorns) that
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import html as _html
+import json
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -75,7 +76,22 @@ COMPANY_BOARDS: dict[str, tuple[str, str]] = {
     "tines": ("greenhouse", "tines"),
     "material": ("ashby", "materialsecurity"),
     "orca": ("greenhouse", "orcasecurity"),
+    "ntt data": ("phenom", "NTT1GLOBAL"),
 }
+
+
+_PHENOM_BOARDS = {
+    "ntt1global": {
+        "site": "https://careers.services.global.ntt/global/en",
+        "category": "Information Security",
+    },
+}
+_PHENOM_HOSTS = {
+    "careers.services.global.ntt": "NTT1GLOBAL",
+}
+_PHENOM_PAGE_SIZE = 50
+_PHENOM_MAX_JOBS = 500
+_PHENOM_MAX_DETAILS = 25
 
 
 class BoardStatus(StrEnum):
@@ -288,7 +304,121 @@ def _ashby(company: str, slug: str) -> BoardFetchResult:
         attempts=attempts, status_code=status_code)
 
 
-_FETCHERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby}
+def _phenom(company: str, slug: str) -> BoardFetchResult:
+    board = _PHENOM_BOARDS.get((slug or "").lower())
+    if not board:
+        return BoardFetchResult(
+            company, "phenom", slug, BoardStatus.UNSUPPORTED,
+            detail=f"unknown Phenom tenant: {slug or '<empty>'}",
+        )
+    endpoint = f"https://content-ir.phenompeople.com/api/{slug}/refineSearch"
+    selected_fields = {"category": [board["category"]]} if board.get("category") else {}
+    jobs_by_id: dict[str, Job] = {}
+    malformed = 0
+    attempts = 0
+    status_code: int | None = None
+    total_hits: int | None = None
+    for start in range(0, _PHENOM_MAX_JOBS, _PHENOM_PAGE_SIZE):
+        payload = {
+            "ddoKey": "refineSearch",
+            "from": start,
+            "size": _PHENOM_PAGE_SIZE,
+            "global": True,
+            "keywords": "",
+            "all_fields": ["city", "state", "category", "type", "orgFunction", "country"],
+            "selected_fields": selected_fields,
+            "sortBy": "",
+            "subsearch": "",
+            "jdsource": "facets",
+            "siteType": "external",
+            "forceSpellCheck": True,
+            "jobs": True,
+            "counts": True,
+            "isSliderEnable": False,
+        }
+        data, error, page_attempts, page_status = _load_json(
+            endpoint,
+            params={
+                "locale": "en_global",
+                "siteType": "external",
+                "deviceType": "desktop",
+                "payload": json.dumps(payload, separators=(",", ":")),
+            },
+        )
+        attempts += page_attempts
+        status_code = page_status
+        if error:
+            status = BoardStatus.PARTIAL if jobs_by_id else BoardStatus.ERROR
+            return BoardFetchResult(
+                company, "phenom", slug, status, list(jobs_by_id.values()), error,
+                attempts, status_code,
+            )
+        search = data.get("refineSearch") if isinstance(data, dict) else None
+        rows = ((search.get("data") or {}).get("jobs") if isinstance(search, dict) else None)
+        if not isinstance(rows, list):
+            return BoardFetchResult(
+                company, "phenom", slug,
+                BoardStatus.PARTIAL if jobs_by_id else BoardStatus.INVALID,
+                list(jobs_by_id.values()), "response does not contain a jobs list",
+                attempts, status_code,
+            )
+        try:
+            total_hits = int(search.get("totalHits") or 0)
+        except (TypeError, ValueError):
+            total_hits = None
+        for posting in rows:
+            try:
+                job_id = str(posting.get("jobId") or posting.get("reqId") or "").strip()
+                title = str(posting.get("title") or "").strip()
+                if not job_id or not title:
+                    raise ValueError("job id and title required")
+                locations = posting.get("multi_location") or []
+                location = " | ".join(str(item).strip() for item in locations if str(item).strip())
+                location = location or str(posting.get("location") or "").strip()
+                parser = posting.get("ml_job_parser") or {}
+                description = (
+                    parser.get("descriptionTeaser_ats")
+                    or parser.get("descriptionTeaser_keyword")
+                    or posting.get("descriptionTeaser")
+                    or ""
+                )
+                url_title = re.sub(r"[^A-Za-z0-9]+", "-", title).strip("-")
+                job = _mk(
+                    company, title, location,
+                    f"{board['site']}/job/{job_id}/{url_title}",
+                    str(description), str(posting.get("postedDate") or ""),
+                )
+                jobs_by_id[job_id] = job
+            except (AttributeError, TypeError, ValueError):
+                malformed += 1
+        if not rows or total_hits is None or len(jobs_by_id) >= total_hits:
+            break
+    jobs = list(jobs_by_id.values())
+    expected = min(total_hits or len(jobs), _PHENOM_MAX_JOBS)
+    if len(jobs) < expected:
+        return BoardFetchResult(
+            company, "phenom", slug, BoardStatus.PARTIAL, jobs,
+            f"received {len(jobs)} of {expected} expected jobs",
+            attempts, status_code,
+        )
+    if total_hits is not None and total_hits > _PHENOM_MAX_JOBS:
+        return BoardFetchResult(
+            company, "phenom", slug, BoardStatus.PARTIAL, jobs,
+            f"board has {total_hits} jobs; capped at {_PHENOM_MAX_JOBS}",
+            attempts, status_code,
+        )
+    return _finish_result(
+        company, "phenom", slug, jobs, malformed,
+        attempts=attempts, status_code=status_code,
+    )
+
+
+_FETCHERS = {
+    "greenhouse": _greenhouse,
+    "lever": _lever,
+    "ashby": _ashby,
+    "phenom": _phenom,
+}
 SUPPORTED_PROVIDERS = frozenset(_FETCHERS)
 
 
@@ -346,6 +476,9 @@ def board_url(provider: str, slug: str) -> str:
         "lever": "https://jobs.lever.co/{slug}",
         "ashby": "https://jobs.ashbyhq.com/{slug}",
     }
+    if (provider == "phenom"):
+        board = _PHENOM_BOARDS.get((slug or "").lower())
+        return f"{board['site']}/search-results" if board else ""
     template = templates.get((provider or "").lower())
     return template.format(slug=slug) if template and slug else ""
 
@@ -368,6 +501,8 @@ def parse_board_url(url: str) -> tuple[str, str] | None:
         return "lever", parts[0]
     if host == "jobs.ashbyhq.com" and parts:
         return "ashby", parts[0]
+    if host in _PHENOM_HOSTS:
+        return "phenom", _PHENOM_HOSTS[host]
     return None
 
 
@@ -475,7 +610,7 @@ def resolve_board_result(name: str, *, provider: str | None = None,
                 )
     return BoardResolution(
         display, ResolutionStatus.UNRESOLVED, careers_url=careers_url,
-        detail="no public Greenhouse, Lever, or Ashby board found",
+        detail="no public Greenhouse, Lever, Ashby, or curated Phenom board found",
     )
 
 
@@ -492,8 +627,20 @@ def _role_keywords(search: dict) -> set[str]:
     kws = {t.lower().strip() for t in (search.get("terms") or []) if t.strip()}
     kws |= {"threat hunter", "product security", "application security",
             "detection engineer", "reverse engineer", "malware", "vulnerability", "exploit",
-            "threat", "appsec", "security researcher"}
+            "threat", "appsec", "security researcher", "soc", "information security",
+            "security analyst", "incident response", "penetration tester", "red team", "siem"}
     return kws
+
+
+def _title_has_role(title: str, role: str) -> bool:
+    normalized_title = re.sub(r"[^a-z0-9+#]+", " ", title.lower()).strip()
+    normalized_role = re.sub(r"[^a-z0-9+#]+", " ", role.lower()).strip()
+    if not normalized_role:
+        return False
+    return bool(re.search(
+        r"(?<![a-z0-9])" + re.escape(normalized_role) + r"(?![a-z0-9])",
+        normalized_title,
+    ))
 
 
 def _target_locations(search: dict) -> set[str]:
@@ -511,14 +658,23 @@ def _target_locations(search: dict) -> set[str]:
 
 def _matches(job: Job, locs: set[str], roles: set[str], want_remote: bool,
              home: str = "India", geo_on: bool = True) -> bool:
+    return (
+        _location_matches(job, locs, want_remote, home, geo_on)
+        and _role_matches(job, roles)
+    )
+
+
+def _location_matches(job: Job, locs: set[str], want_remote: bool,
+                      home: str = "India", geo_on: bool = True) -> bool:
     if geo_on:
-        loc_ok = geo.in_scope(job, home)
-    else:
-        loc = (job.location or "").lower()
-        loc_ok = (want_remote and job.is_remote) or (not locs) or any(s in loc for s in locs)
+        return geo.in_scope(job, home)
+    loc = (job.location or "").lower()
+    return (want_remote and job.is_remote) or (not locs) or any(s in loc for s in locs)
+
+
+def _role_matches(job: Job, roles: set[str]) -> bool:
     title = (job.title or "").lower()
-    role_ok = (not roles) or any(k in title for k in roles)
-    return loc_ok and role_ok
+    return (not roles) or any(_title_has_role(title, role) for role in roles)
 
 
 def filter_board_jobs(cfg: dict, jobs: list[Job]) -> list[Job]:
@@ -533,18 +689,86 @@ def filter_board_jobs(cfg: dict, jobs: list[Job]) -> list[Job]:
     return [job for job in jobs if _matches(job, locs, roles, want_remote, home, geo_on)]
 
 
+def filter_profile_jobs(cfg: dict, store, jobs: list[Job]) -> list[Job]:
+    """Apply active profile fetch intent before the standard board filter."""
+    candidates, _ = filter_profile_jobs_with_funnel(cfg, store, jobs)
+    return candidates
+
+
+def filter_profile_jobs_with_funnel(
+    cfg: dict, store, jobs: list[Job],
+) -> tuple[list[Job], dict[str, Any]]:
+    """Return active-profile candidates plus observable geo/title stage counts."""
+    from jobscope.analyze import profile
+
+    current = profile.load(cfg)
+    search = cfg.get("search", {}) or {}
+    if current:
+        search = profile.apply_to_search(search, current)
+    locs = _target_locations(search)
+    roles = _role_keywords(search)
+    want_remote = bool(search.get("is_remote", True)) or any(
+        item.get("is_remote") for item in (search.get("profiles") or [])
+    )
+    home = search.get("home_country", "India")
+    geo_on = bool(search.get("scope_to_home", True))
+    geo_jobs = [
+        job for job in jobs
+        if _location_matches(job, locs, want_remote, home, geo_on)
+    ]
+    candidates = [job for job in geo_jobs if _role_matches(job, roles)]
+    return candidates, {
+        "board": len(jobs),
+        "geo_eligible": len(geo_jobs),
+        "title_eligible": len(candidates),
+    }
+
+
+def hydrate_company_jobs(
+    provider: str, jobs: list[Job], *, stats: dict[str, int] | None = None,
+) -> list[Job]:
+    """Best-effort detail hydration after geo/title filtering has bounded the set."""
+    if stats is not None:
+        stats.update(attempted=0, hydrated=0, failed=0)
+    if (provider or "").lower() != "phenom":
+        return jobs
+    marker = "phApp.ddo = "
+    for job in jobs[:_PHENOM_MAX_DETAILS]:
+        if stats is not None:
+            stats["attempted"] += 1
+        result = httpx.get_text_result(job.url)
+        if not result.ok or not isinstance(result.data, str):
+            if stats is not None:
+                stats["failed"] += 1
+            continue
+        start = result.data.find(marker)
+        if start < 0:
+            if stats is not None:
+                stats["failed"] += 1
+            continue
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(result.data[start + len(marker):])
+            detail = payload["jobDetail"]["data"]["job"]
+            description = _strip_html(detail.get("description") or "")
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            if stats is not None:
+                stats["failed"] += 1
+            continue
+        if description:
+            job.description = description
+            if stats is not None:
+                stats["hydrated"] += 1
+        elif stats is not None:
+            stats["failed"] += 1
+    return jobs
+
+
 def run(cfg: dict, store) -> int:
     """Fetch each configured target company's board, filter, and upsert. Returns new count."""
     s = cfg.get("search", {})
     entries = s.get("companies") or []
     if not entries:
         return 0
-    locs = _target_locations(s)
-    roles = _role_keywords(s)
-    want_remote = bool(s.get("is_remote", True)) or any(
-        p.get("is_remote") for p in (s.get("profiles") or []))
-    home = s.get("home_country", "India")
-    geo_on = bool(s.get("scope_to_home", True))
     print("\n  == ATS boards (direct company fetch) ==")
     new_total = 0
     closed_total = 0
@@ -567,7 +791,8 @@ def run(cfg: dict, store) -> int:
             print(f"  [{name}] {result.status.value}: {result.detail}")
             store.log_run(f"ats:{name}", 0, result.status.value)
             continue
-        kept = [j for j in board if _matches(j, locs, roles, want_remote, home, geo_on)]
+        kept = filter_profile_jobs(cfg, store, board)
+        kept = hydrate_company_jobs(provider, kept)
         new_here = 0
         for job in kept:
             if job.title and job.company and store.upsert_job(job):

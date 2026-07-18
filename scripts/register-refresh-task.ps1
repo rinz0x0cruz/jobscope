@@ -68,7 +68,7 @@ if (-not $have) {
     Write-Host    "    $Py -m jobscope secrets set JOBSCOPE_APPS_PASSPHRASE"
 }
 
-# python -m jobscope refresh --force: full Gmail-sync -> match -> rebuild ->
+# python -m jobscope refresh --force: full Gmail-sync -> match -> encrypted
 # publish. --force so the nightly run always executes (the schedule is the
 # once-a-day guard); it stamps refresh:last_date for the dashboard button.
 $refreshArgs = "-m jobscope refresh --force"
@@ -87,7 +87,7 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force | Out-Null
 
 Write-Host "Registered scheduled task '$TaskName':"
-Write-Host "  runs 'jobscope refresh --force' daily at $Time (Gmail sync -> match -> rebuild -> publish)."
+Write-Host "  runs 'jobscope refresh --force' daily at $Time (Gmail sync -> match -> encrypted publish)."
 Write-Host "  stamps refresh:last_date so the dashboard button won't repeat the same day."
 Write-Host ""
 Write-Host "Run it now:  Start-ScheduledTask -TaskName '$TaskName'"

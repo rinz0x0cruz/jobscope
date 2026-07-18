@@ -101,6 +101,34 @@ def test_role_inbox_is_not_auto_selected(seeded, monkeypatch):
     assert result["contacts"][0]["source"] == "role_inbox"
 
 
+def test_off_domain_recruiter_does_not_block_valid_on_domain_contact(seeded, monkeypatch):
+    cfg, store = seeded
+    target = campaigns.create_campaign(
+        cfg, store, "India security", 1, candidates=["Acme Security"], now=NOW,
+    )["targets"][0]
+    monkeypatch.setattr(
+        "jobscope.apply.outreach.refresh_company_contacts",
+        lambda *_args, **_kwargs: {
+            "status": "updated",
+            "domain": "acme.example",
+            "contacts": [
+                {"email": "agent@agency.example", "source": "recruiter",
+                 "confidence": "high", "note": "security recruiter at an agency"},
+                {"email": "talent@acme.example", "source": "hunter",
+                 "confidence": "medium", "note": "technical recruiter via Hunter.io"},
+            ],
+        },
+    )
+
+    result = campaigns.discover_target(cfg, store, target["id"], fetch=False)
+
+    assert result["state"] == "draft"
+    assert result["selected_email"] == "talent@acme.example"
+    assert {contact["email"] for contact in result["contacts"]} == {
+        "agent@agency.example", "talent@acme.example",
+    }
+
+
 def test_bounded_discovery_prepares_ranked_targets_without_approval(seeded, monkeypatch):
     cfg, store = seeded
     created = campaigns.create_campaign(

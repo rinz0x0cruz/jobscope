@@ -10,7 +10,7 @@ from jobscope.ingest import ats, monitor
 
 def _setup():
     directory = tempfile.mkdtemp()
-    cfg = load_config(None)
+    cfg = load_config(os.path.join(directory, "missing-config.yaml"))
     cfg["output"]["db_path"] = os.path.join(directory, "scan.db")
     cfg["search"]["companies"] = []
     cfg["search"]["scope_to_home"] = False
@@ -42,6 +42,9 @@ def test_supported_board_urls_and_official_page_discovery(monkeypatch):
     assert ats.parse_board_url("https://job-boards.greenhouse.io/acme/jobs/123") == ("greenhouse", "acme")
     assert ats.parse_board_url("https://jobs.lever.co/acme/123") == ("lever", "acme")
     assert ats.parse_board_url("https://jobs.ashbyhq.com/acme/123") == ("ashby", "acme")
+    assert ats.parse_board_url(
+        "https://careers.services.global.ntt/global/en/search-results",
+    ) == ("phenom", "NTT1GLOBAL")
 
     monkeypatch.setattr(ats.httpx, "get_text_result", lambda *_a, **_k: HttpResult(
         True, 200, 1, '<a href="https://jobs.lever.co/acme">Jobs</a>', "",
@@ -249,4 +252,97 @@ def test_unresolved_recruiter_lookup_reports_domain_error(monkeypatch):
     assert result["ok"] is False
     assert result["contact_status"] == "unresolved"
     assert result["contact_error"] == "could not confirm a company domain"
+    store.close()
+
+
+def test_rescan_demotes_existing_match_and_excludes_pending_count(monkeypatch):
+    cfg, store = _setup()
+    cfg["filters"]["max_years_experience"] = 2
+    company = store.upsert_company_monitor(
+        "Acme", provider="greenhouse", slug="acme", added_from="user",
+    )
+    job = _job("Security Engineer", "https://x/seasoned")
+    job.description = "SIEM incident response"
+    job.tier = "Good"
+    job.score = 60
+    store.upsert_job(job)
+    store.link_monitor_job(company["id"], job.id)
+    store.ensure_job_review(job.id, origins=["monitored"])
+    fetched = _job("Security Engineer", "https://x/seasoned")
+    fetched.description = "Seasoned subject matter expert with seasoned SOC experience"
+    monkeypatch.setattr(ats, "fetch_company_result", lambda *_a, **_k: _fetch(jobs=[fetched]))
+
+    result = monitor.scan_monitor(cfg, store, company)
+
+    assert result["ok"] and result["matched"] == 0
+    assert store.get_job(job.id).tier == "Skip"
+    summary = next(item for item in store.company_monitor_summaries() if item["id"] == company["id"])
+    assert summary["open_matches"] == 0 and summary["pending_count"] == 0
+    store.close()
+
+
+def test_scan_monitor_reports_decision_funnel(monkeypatch):
+    cfg, store = _setup()
+    cfg["filters"]["max_years_experience"] = 2
+    company = store.upsert_company_monitor(
+        "Acme", provider="greenhouse", slug="acme", added_from="user",
+    )
+    jobs = [
+        _job("Security Engineer", "https://x/good"),
+        _job("Associate Information Security Analyst", "https://x/stretch"),
+        _job("Senior Security Engineer", "https://x/senior"),
+        Job(source="ats", title="Security Engineer", company="Acme",
+            location="London, UK", url="https://x/foreign").ensure_id(),
+        Job(source="ats", title="Sales Manager", company="Acme",
+            location="Remote", is_remote=True, url="https://x/sales").ensure_id(),
+    ]
+    for job in jobs[:3]:
+        job.description = "Python AWS security engineering"
+    monkeypatch.setattr(ats, "fetch_company_result", lambda *_a, **_k: _fetch(jobs=jobs))
+
+    result = monitor.scan_monitor(cfg, store, company)
+
+    assert result["matched"] == 2
+    assert result["funnel"] == {
+        "board": 5,
+        "geo_eligible": 4,
+        "title_eligible": 3,
+        "details_attempted": 0,
+        "details_hydrated": 0,
+        "details_failed": 0,
+        "details_truncated": 0,
+        "experience_eligible": 2,
+        "matched": 2,
+        "skip_reasons": {"geography": 1, "title": 1, "experience_cap": 1},
+    }
+    assert sum(result["funnel"]["skip_reasons"].values()) + result["matched"] == 5
+    store.close()
+
+
+def test_scan_funnel_reports_truncated_phenom_hydration(monkeypatch):
+    cfg, store = _setup()
+    company = store.upsert_company_monitor(
+        "Acme", provider="phenom", slug="NTT1GLOBAL", added_from="user",
+    )
+    jobs = [
+        _job("Security Engineer", "https://x/one"),
+        _job("Detection Engineer", "https://x/two"),
+    ]
+    monkeypatch.setattr(ats, "fetch_company_result", lambda *_a, **_k: ats.BoardFetchResult(
+        "Acme", "phenom", "NTT1GLOBAL", ats.BoardStatus.OK, jobs,
+        attempts=1, status_code=200,
+    ))
+    monkeypatch.setattr(ats, "_PHENOM_MAX_DETAILS", 1)
+    detail = '{"jobDetail":{"data":{"job":{"description":"<p>Python AWS security engineering</p>"}}}}'
+    monkeypatch.setattr(ats.httpx, "get_text_result", lambda *_a, **_k: HttpResult(
+        True, 200, 1, f"<script>phApp.ddo = {detail};</script>", "",
+    ))
+
+    result = monitor.scan_monitor(cfg, store, company)
+
+    assert result["funnel"]["title_eligible"] == 2
+    assert result["funnel"]["details_attempted"] == 1
+    assert result["funnel"]["details_hydrated"] == 1
+    assert result["funnel"]["details_failed"] == 0
+    assert result["funnel"]["details_truncated"] == 1
     store.close()

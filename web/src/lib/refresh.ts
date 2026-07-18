@@ -1,11 +1,10 @@
 import { toast } from 'sonner'
 import { acknowledgeMonitoringActions, queuedMonitoringActions } from './companyActions'
-import { localServeToken } from './outreach'
+import { localDashboard, localServeToken, resetLocalServeToken } from './outreach'
+import type { DashboardData } from './schema'
 
-// The live dashboard is a static build served from GitHub Pages; new results are
-// produced by the `refresh.yml` Action (scan mailbox -> rescore -> republish).
-// These helpers let the UI (a) pull the freshest published build into the PWA
-// and (b) kick that Action on demand instead of waiting for the 3-hour cron.
+// Local serve refreshes SQLite and reloads DashboardData in memory. Static Pages
+// dispatches `refresh.yml` and pulls the next encrypted snapshot instead.
 const OWNER = 'rinz0x0cruz'
 const REPO = 'jobscope'
 const WORKFLOW = 'refresh.yml'
@@ -146,8 +145,32 @@ export async function pullLatestData(): Promise<void> {
  *  de-dupes against an already-running scan so rapid taps never stack runs.
  *  With a stored token it POSTs `workflow_dispatch` (and polls to completion);
  *  otherwise it opens GitHub's Run-workflow page — no secret ever required. */
-export async function scanNewMail(): Promise<void> {
-  const localToken = await localServeToken(true)
+async function updateAfterLocalRefresh(
+  token: string,
+  onData: (data: DashboardData) => void,
+): Promise<void> {
+  const deadline = Date.now() + 15 * 60 * 1000
+  while (Date.now() < deadline) {
+    await sleep(1000)
+    const response = await fetch(`${location.origin}/api/status`, {
+      headers: { 'X-Refresh-Token': token },
+      cache: 'no-store',
+    })
+    if (!response.ok) throw new Error(`Refresh status HTTP ${response.status}`)
+    const status = await response.json() as { state?: string; message?: string }
+    if (status.state === 'done' || status.state === 'skipped') {
+      onData(await localDashboard(token, true))
+      toast.success(status.state === 'skipped' ? 'Local data already current' : 'Local workspace refreshed')
+      return
+    }
+    if (status.state === 'error') throw new Error(status.message || 'Local refresh failed')
+  }
+  throw new Error('Local refresh timed out')
+}
+
+export async function scanNewMail(onLocalData?: (data: DashboardData) => void): Promise<void> {
+  resetLocalServeToken()
+  const localToken = await localServeToken()
   if (localToken) {
     const id = toast.loading('Starting Gmail scan…')
     try {
@@ -160,6 +183,11 @@ export async function scanNewMail(): Promise<void> {
       toast.dismiss(id)
       if (response.ok && ['started', 'busy'].includes(payload.state || '')) {
         toast.success(payload.state === 'busy' ? 'Gmail scan already running' : 'Gmail scan started')
+        if (onLocalData) {
+          void updateAfterLocalRefresh(localToken, onLocalData).catch((error) => {
+            toast.error(error instanceof Error ? error.message : 'Could not reload local data')
+          })
+        }
       } else {
         toast.error(payload.message || `Could not start Gmail scan (HTTP ${response.status})`)
       }

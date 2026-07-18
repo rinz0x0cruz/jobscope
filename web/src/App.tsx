@@ -28,9 +28,12 @@ export default function App() {
   const { state, set } = useSearchState()
   return (
     <AuthGate baked={dashboard} encrypted={encryptedSite}>
-      {(data, lock) => (
+      {(data, lock, source, localToken) => (
         <ShellV2
+          key={source}
           data={data}
+          mode={source}
+          serveToken={localToken}
           state={state}
           onStateChange={set}
           onLock={lock}

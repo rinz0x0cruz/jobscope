@@ -5,6 +5,15 @@ import { AppShell } from '@/app/AppShell'
 const NAV_LABELS = ['Review', 'Companies', 'Pipeline', 'Applications', 'Activity', 'Settings']
 
 describe('AppShell', () => {
+  it('omits snapshot locking when no lock handler is available', () => {
+    render(
+      <AppShell active="review" onNavigate={() => {}} search="" onSearch={() => {}}>
+        <div>Content</div>
+      </AppShell>,
+    )
+    expect(screen.queryByRole('button', { name: 'Lock' })).not.toBeInTheDocument()
+  })
+
   it('renders the six primary sections and marks the active one', () => {
     render(
       <AppShell active="applications" onNavigate={() => {}} search="" onSearch={() => {}}>

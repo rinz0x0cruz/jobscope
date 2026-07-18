@@ -141,7 +141,7 @@ export function PipelineView({ applications, onOpen }: PipelineViewProps) {
                     <Clock3 size={11} aria-hidden="true" />{shortDate(application.updated || application.applied_at)}
                   </span>
                   <span className="inline-flex items-center gap-1 text-[11px] text-ink-3">
-                    <Mail size={11} aria-hidden="true" />{application.timeline.length} email{application.timeline.length === 1 ? '' : 's'}
+                    <Mail size={11} aria-hidden="true" />{application.timeline.length} update{application.timeline.length === 1 ? '' : 's'}
                   </span>
                 </button>
               </li>

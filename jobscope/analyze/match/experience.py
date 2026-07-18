@@ -43,10 +43,14 @@ def required_experience_years(job: Job) -> Optional[float]:
     for m in re.finditer(r"(?<![\d-])(\d{1,2})\s*(?:or more|plus)\s+(?:years?|yrs?)", text):  # "5 or more years"
         nums.append(int(m.group(1)))
     explicit = max((n for n in nums if 1 <= n <= 25), default=None)
+    qualitative = 4 if re.search(
+        r"\bseasoned\s+(?:subject\s+matter\s+expert|experience|knowledge)\b",
+        text,
+    ) else None
 
     rank = _job_seniority(job)
     tmin = _SENIORITY_MIN_YEARS.get(rank) if rank is not None else None
     ai_years = getattr(job, "ai_required_years", None)
 
-    vals = [v for v in (explicit, tmin, ai_years) if v is not None]
+    vals = [v for v in (explicit, qualitative, tmin, ai_years) if v is not None]
     return float(max(vals)) if vals else None

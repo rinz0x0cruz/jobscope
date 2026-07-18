@@ -1,10 +1,9 @@
-"""Refresh & Publish pipeline + serve endpoint guards.
+"""Refresh/publication pipeline + serve endpoint guards.
 
 Covers the once-per-day guard, the shared ``perform_refresh`` wiring (inbox ->
-match -> publish -> rebuild local SPA, with the optional board scan), the
-serve-time Refresh-widget injection into the SPA, and the loopback / CSRF-token
-guard on ``/api/refresh``. Fully offline: the networked steps, the publish
-subprocess, and the npm build are stubbed; the SPA is a one-line fixture.
+match -> optional encrypted publish, with the optional board scan), live dashboard
+and profile APIs, and the loopback / CSRF-token guard. Fully offline: networked
+steps and publication are stubbed; the SPA is a one-line fixture.
 """
 import datetime as dt
 import base64
@@ -107,10 +106,9 @@ def test_perform_refresh_runs_and_stamps(monkeypatch):
         assert res["state"] == "done"
         assert calls["inbox"] == 1 and calls["match"] == 1 and calls["publish"] == 1
         assert calls["monitor"] == 1 and calls["review"] == 1
-        assert calls["render"] == 1
+        assert calls["render"] == 0
         assert calls["scrape"] == 1  # first broad discovery is due on an empty DB
-        # Public publish happens before the local un-redacted rebuild.
-        assert calls["order"] == ["publish", "render"]
+        assert calls["order"] == ["publish"]
         days = cfg["serve"]["inbox_days"]
         assert calls["since"] == (dt.date.today() - dt.timedelta(days=days)).isoformat()
         with Store(cfg["output"]["db_path"]) as store:
@@ -122,6 +120,7 @@ def test_per_day_guard_skips(monkeypatch):
         cfg = _cfg(tmp)
         with Store(cfg["output"]["db_path"]) as store:
             store.meta_set("refresh:last_date", dt.date.today().isoformat())
+            store.meta_set("publish:last_date", dt.date.today().isoformat())
         calls = _patch_pipeline(monkeypatch)
 
         res = serve.perform_refresh(cfg, force=False)
@@ -129,6 +128,35 @@ def test_per_day_guard_skips(monkeypatch):
         assert res["state"] == "skipped"
         assert calls["inbox"] == 0 and calls["match"] == 0 and calls["publish"] == 0
         assert calls["render"] == 0
+
+
+def test_local_refresh_never_publishes_or_rebuilds(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        calls = _patch_pipeline(monkeypatch)
+
+        res = serve.perform_refresh(cfg, force=True, publish_site=False)
+
+        assert res["state"] == "done" and res["message"] == "Local workspace refreshed."
+        assert calls["inbox"] == 1 and calls["match"] == 1
+        assert calls["publish"] == 0 and calls["render"] == 0
+        with Store(cfg["output"]["db_path"]) as store:
+            assert store.meta_get("refresh:last_date") == dt.date.today().isoformat()
+            assert store.meta_get("publish:last_date") is None
+
+
+def test_local_refresh_daily_guard_needs_only_data_marker(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with Store(cfg["output"]["db_path"]) as store:
+            store.meta_set("refresh:last_date", dt.date.today().isoformat())
+        calls = _patch_pipeline(monkeypatch)
+
+        res = serve.perform_refresh(cfg, publish_site=False)
+
+        assert res["state"] == "skipped"
+        assert calls["inbox"] == 0 and calls["publish"] == 0 and calls["render"] == 0
 
 
 def test_force_overrides_guard(monkeypatch):
@@ -155,28 +183,41 @@ def test_full_scan_toggle(monkeypatch):
         assert calls["scrape"] == 1
 
 
-@pytest.mark.parametrize("failed_stage", ["publish", "render"])
-def test_publish_or_render_failure_does_not_stamp_success(monkeypatch, failed_stage):
+def test_publish_failure_keeps_data_success_separate(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
         Store(cfg["output"]["db_path"]).close()
         _patch_pipeline(monkeypatch)
 
         def fail(*_args, **_kwargs):
-            raise RuntimeError(f"{failed_stage} exploded")
+            raise RuntimeError("publish exploded")
 
-        if failed_stage == "publish":
-            monkeypatch.setattr(serve, "_publish", fail)
-        else:
-            monkeypatch.setattr(serve, "_build_local_spa", fail)
+        monkeypatch.setattr(serve, "_publish", fail)
 
-        with pytest.raises(RuntimeError, match=f"required stage '{failed_stage}' failed"):
+        with pytest.raises(RuntimeError, match="required stage 'publish' failed"):
             serve.perform_refresh(cfg, force=True)
 
         with Store(cfg["output"]["db_path"]) as store:
-            assert store.meta_get("refresh:last_date") is None
+            assert store.meta_get("refresh:last_date") == dt.date.today().isoformat()
+            assert store.meta_get("publish:last_date") is None
             assert store.meta_get("refresh:last_failure")
-            assert store.meta_get("refresh:last_failed_stage") == failed_stage
+            assert store.meta_get("refresh:last_failed_stage") == "publish"
+
+
+def test_current_local_data_can_publish_without_rescanning(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with Store(cfg["output"]["db_path"]) as store:
+            store.meta_set("refresh:last_date", dt.date.today().isoformat())
+        calls = _patch_pipeline(monkeypatch)
+
+        res = serve.perform_refresh(cfg)
+
+        assert res["state"] == "done"
+        assert calls["inbox"] == 0 and calls["match"] == 0
+        assert calls["publish"] == 1 and calls["render"] == 0
+        with Store(cfg["output"]["db_path"]) as store:
+            assert store.meta_get("publish:last_date") == dt.date.today().isoformat()
 
 
 @pytest.mark.parametrize("failed_stage", ["inbox", "match"])
@@ -210,7 +251,7 @@ def test_optional_scan_failure_completes_degraded(monkeypatch):
         stages = {stage["name"]: stage for stage in res["stages"]}
         assert stages["scan"]["required"] is False
         assert stages["scan"]["status"] == "degraded"
-        assert calls["publish"] == 1 and calls["render"] == 1
+        assert calls["publish"] == 1 and calls["render"] == 0
         with Store(cfg["output"]["db_path"]) as store:
             assert store.meta_get("refresh:last_date") == dt.date.today().isoformat()
 
@@ -233,7 +274,7 @@ def test_digest_delivery_failure_completes_degraded(monkeypatch):
         assert res["degraded"] is True
         assert stages["digest"]["status"] == "degraded"
         assert "SMTP unavailable" in stages["digest"]["detail"]
-        assert calls["publish"] == 1 and calls["render"] == 1
+        assert calls["publish"] == 1 and calls["render"] == 0
 
 
 # ---- endpoints / CSRF guard -------------------------------------------------
@@ -447,6 +488,124 @@ Python, AWS, threat modeling, application security
             from jobscope.analyze import profile
             assert profile.list_profiles(cfg) == ["consulting", "product", "research"]
             assert profile.active_name(cfg) == "product"
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_profile_api_edits_intent_and_resets_from_resume():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with Store(cfg["output"]["db_path"]) as store:
+            resume = Resume(
+                full_name="Jane Doe", location="Pune, India",
+                skills=["application security", "python"],
+                titles=["Security Researcher"], seniority="junior",
+            )
+            store.save_resume(resume, name="research")
+            from jobscope.analyze import profile
+            profile.ensure_seeded(cfg, resume, "research")
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        headers = {"X-Refresh-Token": token, "Origin": base, "Content-Type": "application/json"}
+        try:
+            code, current = _req("GET", base + "/api/profile", headers=headers)
+            assert code == 200 and current["profile"]["name"] == "research"
+
+            code, edited = _req(
+                "PUT", base + "/api/profile", headers=headers,
+                data=json.dumps({
+                    "name": "research",
+                    "search_terms": ["Detection Engineer", "Threat Researcher"],
+                    "locations": ["India", "Remote"],
+                    "remote": False,
+                }),
+            )
+            assert code == 200 and edited["profile"]["search_terms"] == [
+                "Detection Engineer", "Threat Researcher",
+            ]
+            assert edited["profile"]["remote"] is False
+            assert edited["profile"]["top_skills"] == ["application security", "python"]
+
+            code, reset = _req(
+                "POST", base + "/api/profile/reset", headers=headers,
+                data=json.dumps({"name": "research"}),
+            )
+            assert code == 200 and "Security Researcher" in reset["profile"]["search_terms"]
+            assert reset["profile"]["remote"] is True
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_resume_replacement_preserves_intent_and_refreshes_derived_facts():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with Store(cfg["output"]["db_path"]) as store:
+            resume = Resume(
+                full_name="Jane Doe", location="Pune, India",
+                skills=["python"], titles=["Security Researcher"], seniority="junior",
+            )
+            store.save_resume(resume, name="research")
+            from jobscope.analyze import profile
+            profile.ensure_seeded(cfg, resume, "research")
+            profile.update_profile(
+                cfg, "research", search_terms=["Custom Security Role"],
+                locations=["India"], remote=False,
+            )
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        headers = {"X-Refresh-Token": token, "Origin": base, "Content-Type": "application/json"}
+        replacement = """# Jane Doe
+## Experience
+Senior Cloud Security Engineer, 2018 - Present
+## Skills
+AWS, cloud security, terraform
+"""
+        try:
+            code, result = _req(
+                "POST", base + "/api/resume/upload", headers=headers,
+                data=json.dumps({
+                    "name": "research",
+                    "filename": "research.md",
+                    "content_base64": base64.b64encode(replacement.encode()).decode(),
+                }),
+            )
+            assert code == 200 and result["ok"] is True
+            assert result["profile"]["search_terms"] == ["Custom Security Role"]
+            assert result["profile"]["locations"] == ["India"]
+            assert result["profile"]["remote"] is False
+            assert "cloud security" in result["profile"]["top_skills"]
+            assert result["profile"]["seniority"] != "junior"
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_dashboard_api_returns_live_data_and_requires_token():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with Store(cfg["output"]["db_path"]) as store:
+            store.upsert_job(Job(
+                id="live-job", title="Security Engineer", company="Example",
+                location="Remote", url="https://example.test/job", source="test",
+                tier="Strong", score=91,
+            ))
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        try:
+            code, _ = _req("GET", base + "/api/dashboard")
+            assert code == 403
+
+            code, result = _req(
+                "GET", base + "/api/dashboard",
+                headers={"X-Refresh-Token": token, "Origin": base},
+            )
+            assert code == 200 and result["ok"] is True and result["mode"] == "local"
+            assert result["data"]["rows"][0]["id"] == "live-job"
         finally:
             httpd.shutdown()
             httpd.server_close()

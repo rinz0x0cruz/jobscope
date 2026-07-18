@@ -80,18 +80,30 @@ class ApplicationsMixin:
         )
         return cur.rowcount > 0
 
-    def append_note(self, job_id_: str, text: str) -> None:
+    def _append_note(self, job_id_: str, text: str, *, when: str = "") -> bool:
         """Append a date-stamped note to an application (creating the row if needed),
-        without disturbing its status or other fields."""
-        stamped = f"[{now_iso()[:10]}] {text.strip()}"
+        without disturbing its status or other fields. Exact retries are no-ops."""
+        stamped = f"[{(when or now_iso())[:10]}] {text.strip()}"
+        existing = self.conn.execute(
+            "SELECT notes FROM applications WHERE job_id = ?", (job_id_,),
+        ).fetchone()
+        if existing and stamped in (existing["notes"] or "").splitlines():
+            return False
         self.conn.execute(
             "INSERT INTO applications (job_id, status, notes, updated) "
             "VALUES (?, 'new', ?, ?) "
             "ON CONFLICT(job_id) DO UPDATE SET "
-            "notes = TRIM(COALESCE(applications.notes, '') || char(10) || excluded.notes), "
+            "notes = CASE WHEN TRIM(COALESCE(applications.notes, '')) = '' "
+            "THEN excluded.notes ELSE RTRIM(applications.notes, char(10)) || char(10) "
+            "|| excluded.notes END, "
             "updated = excluded.updated",
             (job_id_, stamped, now_iso()))
+        return True
+
+    def append_note(self, job_id_: str, text: str, *, when: str = "") -> bool:
+        added = self._append_note(job_id_, text, when=when)
         self.conn.commit()
+        return added
 
     def mark_outreach(self, job_id_: str, to_addr: str, when: str = "") -> None:
         """Record a recruiter outreach for this job without disturbing its status."""

@@ -47,6 +47,7 @@ const SIGNAL_TEXT: Record<string, (c: string) => string> = {
   interview: (c) => `Interview step with ${c}`,
   offer: (c) => `Offer from ${c}`,
   rejection: (c) => `Passed by ${c}`,
+  manual: (c) => `Manual update for ${c}`,
 }
 
 const SIGNAL_TONE: Record<string, ItemTone> = {
@@ -57,6 +58,7 @@ const SIGNAL_TONE: Record<string, ItemTone> = {
   interview: 'good',
   offer: 'brand',
   rejection: 'danger',
+  manual: 'neutral',
 }
 
 const BUCKET_LABEL: Record<TimeBucket, string> = {
@@ -136,7 +138,7 @@ export function buildTimeline(data: DashboardData, now = Date.now()): Timeline {
         date: e.date,
         dateLabel: shortDate(e.date, d),
         signal: e.signal,
-        text: mk(a.company),
+        text: e.signal === 'manual' && e.subject ? e.subject : mk(a.company),
         company: a.company,
         jobId: a.job_id,
         tone: SIGNAL_TONE[e.signal] ?? 'neutral',

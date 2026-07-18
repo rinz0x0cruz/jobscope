@@ -196,12 +196,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "retention": {
         "reconciliation_audit_days": 730,
     },
-    # Local dashboard server (`jobscope serve`). The served page shows a
-    # localhost-only "Refresh & Publish" button that syncs the Gmail inbox
-    # (append-only), rescores matches, rebuilds the dashboard, and publishes the
-    # redacted/encrypted site -- at most once per day. Never exposed publicly.
+    # Local dashboard control plane (`jobscope serve`). Reads current SQLite data
+    # and can sync Gmail + rescore without rebuilding or publishing.
     "serve": {
-        "refresh_enabled": True,     # show/allow the Refresh & Publish button
+        "refresh_enabled": True,     # show/allow the local Gmail refresh button
         "refresh_full_scan": False,  # also re-scrape job boards (429-prone) before matching
         "inbox_days": 7,             # Gmail lookback window for the button's inbox sync
         "build_on_start": False,     # rebuild the SPA when `serve` starts (else serve the last build)

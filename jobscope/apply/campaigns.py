@@ -211,15 +211,21 @@ def discover_target(cfg: dict, store, target_id: str, *, force: bool = False,
         force=force, fetch=fetch,
     )
     contacts = outreach.rank_recruiter_contacts(result.get("contacts") or [])
+    domain = result.get("domain") or ""
     selectable = next(
-        (contact for contact in contacts if contact.get("source") != "role_inbox"), None,
+        (
+            contact for contact in contacts
+            if contact.get("source") != "role_inbox"
+            and outreach.valid_company_recipient(contact.get("email") or "", domain)
+        ),
+        None,
     )
     if selectable is None:
         return store.set_outreach_campaign_contacts(
-            target_id, domain=result.get("domain") or "", contacts=contacts,
+            target_id, domain=domain, contacts=contacts,
         )
     store.set_outreach_campaign_contacts(
-        target_id, domain=result.get("domain") or "", contacts=contacts, state="draft",
+        target_id, domain=domain, contacts=contacts, state="draft",
     )
     return update_draft(cfg, store, target_id, selected_email=selectable["email"])
 

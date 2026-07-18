@@ -255,6 +255,43 @@ def test_application_restore_action_owns_audit_run_and_is_idempotent():
     store.close()
 
 
+def test_application_note_action_is_validated_idempotent_and_preserves_status():
+    cfg, store = _setup()
+    job_id = "mail:ibm-124835"
+    store.set_application(Application(
+        job_id=job_id, status="rejected", company="IBM",
+        title="Security Consultant-SOC(XSIAM)", source="inbox",
+    ))
+    action = {
+        "type": "application.note",
+        "job_id": job_id,
+        "when": "2026-07-17",
+        "text": "Recorded competency interview submitted (user-confirmed, requisition 124835)",
+    }
+
+    first = monitoring.apply_actions(cfg, store, [action])
+    repeated = monitoring.apply_actions(cfg, store, [action])
+
+    assert first["results"] == [{"ok": True, "job_id": job_id, "added": True}]
+    assert repeated["results"] == [{"ok": True, "job_id": job_id, "added": False}]
+    application = store.get_application(job_id)
+    assert application["status"] == "rejected"
+    assert application["notes"].splitlines() == [
+        "[2026-07-17] Recorded competency interview submitted "
+        "(user-confirmed, requisition 124835)",
+    ]
+    manual = [
+        event for event in repeated["applications"][0]["timeline"]
+        if event["signal"] == "manual"
+    ]
+    assert len(manual) == 1 and manual[0]["date"] == "2026-07-17"
+    with pytest.raises(ValueError, match="ISO date"):
+        monitoring.apply_actions(cfg, store, [{**action, "when": "17 July"}])
+    with pytest.raises(ValueError, match="unknown fields"):
+        monitoring.apply_actions(cfg, store, [{**action, "status": "offer"}])
+    store.close()
+
+
 def test_restore_failure_rolls_back_the_entire_action_batch(monkeypatch):
     cfg, store = _setup()
     review_job = Job(
@@ -267,6 +304,10 @@ def test_restore_failure_rolls_back_the_entire_action_batch(monkeypatch):
         job_id=recover_job, status="applied", company="Acme", source="inbox",
     ))
     reconcile.recompute(store)
+    note_job = "mail:batch-note"
+    store.set_application(Application(
+        job_id=note_job, status="rejected", company="IBM", source="inbox",
+    ))
 
     def fail_restore(*_args, **_kwargs):
         raise RuntimeError("injected restore failure")
@@ -276,10 +317,15 @@ def test_restore_failure_rolls_back_the_entire_action_batch(monkeypatch):
     with pytest.raises(RuntimeError, match="injected restore failure"):
         monitoring.apply_actions(cfg, store, [
             {"type": "review.set", "job_id": review_job.id, "state": "saved"},
+            {"type": "application.note", "job_id": note_job,
+             "when": "2026-07-17", "text": "must roll back"},
             {"type": "application.restore", "job_id": recover_job},
         ])
 
     assert store.get_job_review(review_job.id)["state"] == "pending"
+    assert "must roll back" not in (
+        store.get_application(note_job)["notes"] or ""
+    )
     assert store.get_application(recover_job) is None
     assert store.get_application(recover_job, include_tombstoned=True)["tombstoned_at"]
     latest = store.reconciliation_runs()[0]
@@ -303,4 +349,33 @@ def test_monitor_upsert_promotes_archived_application_company():
     assert promoted["status"] == "active"
     assert promoted["origins"] == ["application", "user"]
     assert result["companies"][0]["lifecycle"] == "watching"
+    store.close()
+
+
+def test_ntt_scan_resolves_curated_phenom_board(monkeypatch):
+    cfg, store = _setup()
+    company = store.upsert_company_monitor("NTT DATA", added_from="user")
+    ntt_job = Job(
+        source="ats", title="SASE Engineer", company="NTT DATA",
+        location="Bengaluru, India", url="https://careers.services.global.ntt/job/1",
+        description="Security operations SIEM SASE",
+    ).ensure_id()
+    monkeypatch.setattr(ats, "fetch_company_result", lambda company, provider, slug: (
+        ats.BoardFetchResult(
+            company, provider, slug, ats.BoardStatus.OK, [ntt_job],
+            attempts=1, status_code=200,
+        )
+    ))
+    monkeypatch.setattr(
+        ats, "hydrate_company_jobs",
+        lambda _provider, jobs, **_kwargs: jobs,
+    )
+
+    result = monitoring.apply_actions(cfg, store, [
+        {"type": "monitor.scan", "monitor_id": company["id"]},
+    ])
+
+    resolved = store.get_company_monitor(company["id"])
+    assert resolved["provider"] == "phenom" and resolved["slug"] == "NTT1GLOBAL"
+    assert result["scans"][0]["ok"] is True
     store.close()

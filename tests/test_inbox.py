@@ -586,8 +586,8 @@ def test_link_job_matches_scraped_company():
     store = _store()
     j = Job(source="ats", title="SE", company="Databricks").ensure_id()
     store.upsert_job(j)
-    index = {mailrules.normalize_company(job.company): job.id
-             for job in store.jobs(order_by_score=False) if job.company}
+    index = {}
+    inbox._index_job(index, j.company, j.title, j.id)
     assert inbox._link_job("Databricks, Inc.", "SE", index) == j.id      # linked
     assert inbox._link_job("Unknown Co", "SE", index).startswith("mail:")  # synthetic
     store.close()
@@ -657,6 +657,138 @@ def test_inbox_keeps_campaign_optout_without_storing_body(monkeypatch):
     assert campaigns.reconcile_replies(store) == {"replied": 0, "opted_out": 1}
     assert store.get_outreach_campaign_target(target_id)["state"] == "opted_out"
     assert store.is_outreach_suppressed("domain", "acme.com")
+    store.close()
+
+
+def test_inbox_fetches_generic_subject_body_from_known_employer(monkeypatch):
+    FakeIMAP.mailbox = {
+        1: _raw(
+            "Acme Recruiter <recruiter@acme.com>", "Next steps",
+            "We would like to schedule a video interview. Please share your availability.",
+            "<next-steps@acme.com>",
+        ),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    cfg = _cfg(monkeypatch)
+    store = _store()
+    job = Job(
+        source="ats", title="Security Engineer", company="Acme",
+        location="Remote", url="https://acme.com/jobs/1",
+    ).ensure_id()
+    store.upsert_job(job)
+
+    assert inbox.run(cfg, store) == 0
+
+    events = store.mail_events(job.id)
+    assert len(events) == 1 and events[0]["signal"] == "interview"
+    assert store.get_application(job.id)["status"] == "interview"
+    assert any(
+        call[0] == "fetch" and "BODY.PEEK[]" in str(call[1])
+        for call in FakeIMAP.instances[0].uid_calls
+    )
+    store.close()
+
+
+def test_inbox_fetches_generic_followup_after_discovering_employer_in_same_scan(monkeypatch):
+    FakeIMAP.mailbox = {
+        1: _raw(
+            "IBM Talent Acquisition <talent@ibm.com>",
+            "You have successfully submitted your IBM job application - 124720 - "
+            "Security Analyst Level 2 - SIEM & SOAR",
+            "Thank you for applying to IBM.", "<ibm-confirm@ibm.com>",
+        ),
+        2: _raw(
+            "IBM Talent Acquisition <talent@ibm.com>", "Your IBM Application: Next Steps",
+            "Ref: 124720 - Security Analyst Level 2 - SIEM & SOAR Dear Mohit, "
+            "please complete the online assessment.", "<ibm-next@ibm.com>",
+        ),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    cfg = _cfg(monkeypatch)
+    store = _store()
+
+    assert inbox.run(cfg, store) == 0
+
+    events = store.mail_events()
+    assert [event["signal"] for event in events] == ["confirmation", "assessment"]
+    assert {event["role"] for event in events} == {
+        "Security Analyst Level 2 - SIEM & SOAR",
+    }
+    assert len({event["job_id"] for event in events}) == 1
+    store.close()
+
+
+def test_inbox_keeps_concurrent_ibm_requisitions_separate(monkeypatch):
+    FakeIMAP.mailbox = {
+        1: _raw(
+            "IBM Talent Acquisition <talent@ibm.com>",
+            "You have successfully submitted your IBM job application - 124720 - "
+            "Security Analyst Level 2 - SIEM & SOAR",
+            "Thank you for applying to IBM.", "<ibm-124720@ibm.com>",
+        ),
+        2: _raw(
+            "IBM Talent Acquisition <talent@ibm.com>",
+            "You have successfully submitted your IBM job application - 124835 - "
+            "Security Consultant-SOC(XSIAM)",
+            "Thank you for applying to IBM.", "<ibm-124835@ibm.com>",
+        ),
+        3: _raw(
+            "IBM Talent Acquisition <talent@ibm.com>", "Your IBM Application: Next Steps",
+            "Ref: 124835 - Security Consultant-SOC(XSIAM) Dear Mohit, "
+            "please complete the online assessment.", "<ibm-next-124835@ibm.com>",
+        ),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    cfg = _cfg(monkeypatch)
+    store = _store()
+
+    assert inbox.run(cfg, store) == 0
+
+    events = store.mail_events()
+    by_role = {}
+    for event in events:
+        by_role.setdefault(event["role"], set()).add(event["job_id"])
+    assert set(by_role) == {
+        "Security Analyst Level 2 - SIEM & SOAR",
+        "Security Consultant-SOC(XSIAM)",
+    }
+    assert all(len(job_ids) == 1 for job_ids in by_role.values())
+    assert len({event["job_id"] for event in events}) == 2
+    applications = {app["title"]: app["status"] for app in store.applications()}
+    assert applications == {
+        "Security Analyst Level 2 - SIEM & SOAR": "applied",
+        "Security Consultant-SOC(XSIAM)": "interview",
+    }
+    store.close()
+
+
+def test_inbox_drops_generic_unknown_sender_without_fetching_body(monkeypatch):
+    FakeIMAP.mailbox = {
+        1: _raw(
+            "Unknown <person@untracked-example.com>", "Next steps",
+            "We would like to schedule a video interview. Please share your availability.",
+            "<unknown-next-steps@example.com>",
+        ),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    cfg = _cfg(monkeypatch)
+    store = _store()
+
+    assert inbox.run(cfg, store) == 0
+
+    assert store.mail_events() == []
+    assert not any(
+        call[0] == "fetch" and "BODY.PEEK[]" in str(call[1])
+        for call in FakeIMAP.instances[0].uid_calls
+    )
     store.close()
 
 

@@ -2,12 +2,12 @@
 localhost-only mutation and refresh APIs.
 
 `jobscope serve` serves the built SPA from ``web/dist`` on 127.0.0.1 (building it
-first, un-redacted, if it is missing). The React Scan Gmail control POSTs to
-``/api/refresh``; the server then syncs the
-Gmail inbox (last ``serve.inbox_days`` days, append-only), rescores matches,
-publishes the redacted/encrypted public site, and rebuilds the local un-redacted
-SPA -- at most once per day unless forced. The endpoints bind to loopback and are
-CSRF-guarded (loopback Origin + a per-run token).
+if missing). The SPA reads current private data from ``/api/dashboard`` instead
+of requiring a data-baked rebuild. Its Scan Gmail control refreshes local SQLite
+(last ``serve.inbox_days`` days, append-only) and rescored matches at most once
+per day unless forced. Publishing the encrypted Pages snapshot is a separate CLI
+operation. Endpoints bind to loopback and are CSRF-guarded (loopback Origin plus
+a per-run token).
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ _LOCK = threading.Lock()
 _MAX_RESUME_BYTES = 5 * 1024 * 1024
 _MAX_RESUME_REQUEST_BYTES = 7 * 1024 * 1024
 _MAX_CAMPAIGN_REQUEST_BYTES = 256 * 1024
+_MAX_PROFILE_REQUEST_BYTES = 32 * 1024
 _RESUME_EXTENSIONS = frozenset({".md", ".txt", ".json", ".pdf"})
 _STATE: dict[str, str] = {
     "state": "idle",     # idle | running | done | skipped | error | busy
@@ -426,6 +427,94 @@ def _build_server(cfg: dict, port: int):
             except Exception as exc:  # noqa: BLE001 - surface to the UI
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
+        def _profile_get(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            try:
+                from jobscope.core.store import Store
+                from jobscope.deliver import render
+                with Store(cfg["output"]["db_path"]) as store:
+                    prof = render._profile_data(cfg, store)
+                self._send_json(200, {"ok": True, "profile": prof})
+            except Exception as exc:  # noqa: BLE001 - surface bounded local API errors
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
+        def _dashboard_get(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            try:
+                from jobscope.core.store import Store
+                from jobscope.deliver import render
+                with Store(cfg["output"]["db_path"]) as store:
+                    data = render.build_data(cfg, store, public=False)
+                self._send_json(200, {"ok": True, "mode": "local", "data": data})
+            except Exception as exc:  # noqa: BLE001 - surface bounded local API errors
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
+        def _profile_update(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            data = self._json_request(_MAX_PROFILE_REQUEST_BYTES)
+            if data is None:
+                return
+            allowed = {"name", "search_terms", "locations", "remote"}
+            unknown = set(data) - allowed
+            if unknown:
+                self._send_json(400, {
+                    "ok": False,
+                    "error": f"unknown profile field(s): {', '.join(sorted(unknown))}",
+                })
+                return
+            try:
+                from jobscope.analyze import profile as _profile
+                from jobscope.core.store import Store
+                from jobscope.deliver import render
+                name = str(data.get("name") or "").strip()
+                if not name:
+                    raise ValueError("profile name required")
+                _profile.update_profile(
+                    cfg, name,
+                    search_terms=data.get("search_terms"),
+                    locations=data.get("locations"),
+                    remote=data.get("remote"),
+                )
+                with Store(cfg["output"]["db_path"]) as store:
+                    prof = render._profile_data(cfg, store)
+                self._send_json(200, {"ok": True, "profile": prof})
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)[:200]})
+            except Exception as exc:  # noqa: BLE001 - surface bounded local API errors
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
+        def _profile_reset(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            data = self._json_request(_MAX_PROFILE_REQUEST_BYTES)
+            if data is None:
+                return
+            if set(data) - {"name"}:
+                self._send_json(400, {"ok": False, "error": "unknown profile reset field"})
+                return
+            try:
+                from jobscope.analyze import profile as _profile
+                from jobscope.core.store import Store
+                from jobscope.deliver import render
+                name = str(data.get("name") or "").strip()
+                if not name:
+                    raise ValueError("profile name required")
+                with Store(cfg["output"]["db_path"]) as store:
+                    _profile.reset_profile(cfg, store, name)
+                    prof = render._profile_data(cfg, store)
+                self._send_json(200, {"ok": True, "profile": prof})
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)[:200]})
+            except Exception as exc:  # noqa: BLE001 - surface bounded local API errors
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
         def _resume_upload(self) -> None:
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
@@ -483,6 +572,7 @@ def _build_server(cfg: dict, port: int):
                     handle.write(content)
                     path = handle.name
                 with Store(cfg["output"]["db_path"]) as store:
+                    existing_profile = _profile._load_named(cfg, name)
                     if _resume.import_resume(path, store, cfg, name=name) != 0:
                         self._send_json(400, {"ok": False, "error": "could not import resume"})
                         return
@@ -498,6 +588,14 @@ def _build_server(cfg: dict, port: int):
                     if uploaded is not None:
                         uploaded.source_path = target_path
                         store.save_resume(uploaded, name=name)
+                    if existing_profile is not None:
+                        rebuilt = _profile._load_named(cfg, name) or {}
+                        rebuilt.update({
+                            "search_terms": existing_profile.get("search_terms") or [],
+                            "locations": existing_profile.get("locations") or [],
+                            "remote": bool(existing_profile.get("remote", True)),
+                        })
+                        _profile.write_profile(_profile._profile_file(cfg, name), rebuilt)
                     prof = render._profile_data(cfg, store)
                 self._send_json(200, {
                     "ok": True,
@@ -596,6 +694,12 @@ def _build_server(cfg: dict, port: int):
             if route == "/api/status":
                 self._send_json(200, dict(_STATE))
                 return
+            if route == "/api/profile":
+                self._profile_get()
+                return
+            if route == "/api/dashboard":
+                self._dashboard_get()
+                return
             if route in {"/api/campaigns", "/api/campaigns/detail"}:
                 self._campaigns_get()
                 return
@@ -622,6 +726,9 @@ def _build_server(cfg: dict, port: int):
                 return
             if route == "/api/profile/use":
                 self._profile_use()
+                return
+            if route == "/api/profile/reset":
+                self._profile_reset()
                 return
             if route == "/api/resume/upload":
                 self._resume_upload()
@@ -669,6 +776,13 @@ def _build_server(cfg: dict, port: int):
                              daemon=True).start()
             self._send_json(200, {"state": "started"})
 
+        def do_PUT(self):  # noqa: N802 - http.server API
+            route = self.path.split("?", 1)[0]
+            if route == "/api/profile":
+                self._profile_update()
+                return
+            self.send_error(404)
+
     class Server(http.server.ThreadingHTTPServer):
         allow_reuse_address = True
         daemon_threads = True
@@ -694,16 +808,15 @@ def run(cfg: dict, port: int = 8799, open_browser: bool = False) -> int:
 
 
 def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
-                    on_step=None) -> dict:
-    """Run the shared refresh pipeline: (optional scan) -> inbox -> match ->
-    publish -> local render.
+                    publish_site: bool = True, on_step=None) -> dict:
+    """Refresh local data and optionally publish the encrypted snapshot.
 
     Guarded to run at most once per calendar day unless ``force``. Append-only:
     the inbox sync is incremental (UID watermark) and mail events dedupe, so a
     same-day rerun never double-counts. ``on_step(name, message)`` is called
     before each phase. Required stages raise on failure; optional stages are
-    reported as degraded. The success marker is written only after publication
-    and the local rebuild finish.
+    reported as degraded. Data and publication success use separate markers so
+    the loopback API can refresh SQLite without rebuilding Vite or pushing Pages.
     """
     from jobscope.core.store import Store
 
@@ -716,7 +829,9 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
     want_scan = full_scan or bool(serve_cfg.get("refresh_full_scan", False))
     today = _today()
     with Store(cfg["output"]["db_path"]) as store:
-        if not force and (store.meta_get("refresh:last_date", "") or "") == today:
+        data_current = (store.meta_get("refresh:last_date", "") or "") == today
+        publish_current = (store.meta_get("publish:last_date", "") or "") == today
+        if not force and data_current and (not publish_site or publish_current):
             step("skipped", "Already refreshed today.")
             return {"state": "skipped", "message": "Already refreshed today.",
                     "last_date": today, "stages": []}
@@ -725,79 +840,76 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
         current_stage = ""
         note = ""
         try:
-            from jobscope.ingest import monitor, scrape
-            step("monitors", "Scanning monitored company portals")
-            stages.append(_run_stage(
-                "monitors", required=False,
-                action=lambda: monitor.scan_active_monitors(cfg, store),
-            ))
-
-            if want_scan or scrape.discovery_due(cfg, store):
-                step("scan", "Scanning job boards\u2026")
+            if force or not data_current:
+                from jobscope.ingest import monitor, scrape
+                step("monitors", "Scanning monitored company portals")
                 stages.append(_run_stage(
-                    "scan", required=False,
-                    action=lambda: scrape.run(
-                        cfg, store, mode="discovery", force_discovery=want_scan,
+                    "monitors", required=False,
+                    action=lambda: monitor.scan_active_monitors(cfg, store),
+                ))
+
+                if want_scan or scrape.discovery_due(cfg, store):
+                    step("scan", "Scanning job boards...")
+                    stages.append(_run_stage(
+                        "scan", required=False,
+                        action=lambda: scrape.run(
+                            cfg, store, mode="discovery", force_discovery=want_scan,
+                        ),
+                        nonzero_is_failure=True,
+                    ))
+
+                step("inbox", f"Syncing Gmail (last {days} days)...")
+                from jobscope.ingest import inbox
+                since = (_dt.date.today() - _dt.timedelta(days=days)).isoformat()
+                current_stage = "inbox"
+                stages.append(_run_stage(
+                    "inbox", required=True,
+                    action=lambda: inbox.run(
+                        cfg, store, since=since, initiator="local_refresh",
                     ),
                     nonzero_is_failure=True,
                 ))
 
-            step("inbox", f"Syncing Gmail (last {days} days)\u2026")
-            from jobscope.ingest import inbox
-            since = (_dt.date.today() - _dt.timedelta(days=days)).isoformat()
-            current_stage = "inbox"
-            stages.append(_run_stage(
-                "inbox", required=True,
-                action=lambda: inbox.run(
-                    cfg, store, since=since, initiator="local_refresh",
-                ),
-                nonzero_is_failure=True,
-            ))
+                from jobscope.apply import campaigns as _campaigns
+                stages.append(_run_stage(
+                    "campaign_replies", required=False,
+                    action=lambda: _campaigns.reconcile_replies(store),
+                ))
 
-            from jobscope.apply import campaigns as _campaigns
-            stages.append(_run_stage(
-                "campaign_replies", required=False,
-                action=lambda: _campaigns.reconcile_replies(store),
-            ))
+                step("match", "Scoring matches...")
+                from jobscope.analyze import match
+                current_stage = "match"
+                stages.append(_run_stage(
+                    "match", required=True,
+                    action=lambda: match.run(cfg, store),
+                    nonzero_is_failure=True,
+                ))
 
-            step("match", "Scoring matches\u2026")
-            from jobscope.analyze import match
-            current_stage = "match"
-            stages.append(_run_stage(
-                "match", required=True,
-                action=lambda: match.run(cfg, store),
-                nonzero_is_failure=True,
-            ))
+                from jobscope.analyze import review
+                stages.append(_run_stage(
+                    "reviews", required=True,
+                    action=lambda: review.sync_reviews(store),
+                ))
 
-            from jobscope.analyze import review
-            stages.append(_run_stage(
-                "reviews", required=True,
-                action=lambda: review.sync_reviews(store),
-            ))
+                from jobscope.apply import track as _track
+                stages.append(_run_stage(
+                    "digest", required=False,
+                    action=lambda: _require_digest(_track.send_digest_result(cfg, store)),
+                ))
+                store.meta_set("refresh:last_date", today)
 
-            from jobscope.apply import track as _track
-            stages.append(_run_stage(
-                "digest", required=False,
-                action=lambda: _require_digest(_track.send_digest_result(cfg, store)),
-            ))
+            if publish_site:
+                step("publish", "Publishing to GitHub Pages...")
+                current_stage = "publish"
 
-            # Publish first (it builds the public artifact), then restore web/dist
-            # to the local un-redacted dashboard. Both are required for completion.
-            step("publish", "Publishing to GitHub Pages\u2026")
-            current_stage = "publish"
+                def publish_snapshot() -> None:
+                    nonlocal note
+                    note = _publish(cfg)
 
-            def publish() -> None:
-                nonlocal note
-                note = _publish(cfg)
-
-            stages.append(_run_stage("publish", required=True, action=publish))
-
-            step("render", "Rebuilding local dashboard\u2026")
-            current_stage = "render"
-            stages.append(_run_stage(
-                "render", required=True,
-                action=lambda: _build_local_spa(cfg, store),
-            ))
+                stages.append(_run_stage(
+                    "publish", required=True, action=publish_snapshot,
+                ))
+                store.meta_set("publish:last_date", today)
         except Exception:
             store.meta_set("refresh:last_failure", _now())
             store.meta_set("refresh:last_failed_stage", current_stage or "unknown")
@@ -805,13 +917,16 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
             raise
 
         degraded = any(stage.status == "degraded" for stage in stages)
-        store.meta_set("refresh:last_date", today)
         store.meta_set("refresh:last_failure", "")
         store.meta_set("refresh:last_failed_stage", "")
         store.log_run("refresh", 0, "degraded" if degraded else "ok")
 
-    message = ("Refreshed & published with optional-stage warnings."
-               if degraded else "Refreshed & published.") + note
+    if publish_site:
+        message = ("Refreshed & published with optional-stage warnings."
+                   if degraded else "Refreshed & published.") + note
+    else:
+        message = ("Local workspace refreshed with optional-stage warnings."
+                   if degraded else "Local workspace refreshed.")
     return {"state": "done", "message": message, "last_date": today,
             "degraded": degraded, "stages": [asdict(stage) for stage in stages]}
 
@@ -823,7 +938,9 @@ def _run_refresh(cfg: dict, force: bool, full_scan: bool) -> None:
         _STATE.update(step=name, message=message)
 
     try:
-        res = perform_refresh(cfg, force=force, full_scan=full_scan, on_step=on_step)
+        res = perform_refresh(
+            cfg, force=force, full_scan=full_scan, publish_site=False, on_step=on_step,
+        )
         _STATE.update(state=res["state"], step=res["state"], message=res["message"],
                       last_date=res.get("last_date") or _STATE.get("last_date", ""),
                       finished=_now())

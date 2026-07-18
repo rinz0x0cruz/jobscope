@@ -49,6 +49,35 @@ def test_emit_json_shape():
         store.close()
 
 
+def test_application_note_is_private_manual_activity():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = load_config("__no_such_config_for_tests__.yaml")
+        cfg["output"]["db_path"] = os.path.join(tmp, "notes.db")
+        store = Store(cfg["output"]["db_path"])
+        store.set_application(Application(
+            job_id="mail:ibm", status="rejected", company="IBM",
+            title="Security Consultant-SOC(XSIAM)", source="inbox",
+        ))
+        store.append_note(
+            "mail:ibm", "Assessment submitted (user-confirmed)", when="2026-07-17",
+        )
+
+        private = render.build_data(cfg, store, public=False)
+        public = render.build_data(cfg, store, public=True)
+
+        assert private["applications"][0]["status"] == "rejected"
+        assert private["applications"][0]["timeline"] == [{
+            "date": "2026-07-17",
+            "signal": "manual",
+            "subject": "Assessment submitted (user-confirmed)",
+            "from": "User record",
+            "summary": "",
+        }]
+        assert public["applications"] == []
+        assert "Assessment submitted" not in json.dumps(public)
+        store.close()
+
+
 def test_build_data_hides_skip_by_default():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = load_config(None)

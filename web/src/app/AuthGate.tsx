@@ -1,37 +1,61 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Compass, Lock } from 'lucide-react'
 import type { DashboardData, EncRef } from '@/lib/schema'
 import { cacheUnlock, clearUnlock, readCachedUnlock, unlockDashboard } from '@/lib/unlock'
+import { localDashboard, localServeToken } from '@/lib/outreach'
 import { Button, Input } from '@/ui'
 
 export interface AuthGateProps {
-  /** The build-baked payload. Full on a local/dev build (rows present) → the app
-   *  renders straight through; an empty shell on the published build → locked. */
+  /** Startup fallback. Local serve replaces it with live SQLite data; the
+   *  published build contains an empty shell and remains locked. */
   baked: DashboardData
   /** Encrypted whole-site marker (lazy pointer or inline blob), or null. */
   encrypted: EncRef | null
   /** Rendered with the resolved data and a `lock` callback once access is granted. */
-  children: (data: DashboardData, lock: () => void) => ReactNode
+  children: (
+    data: DashboardData,
+    lock: () => void,
+    source: 'baked' | 'local' | 'snapshot',
+    localToken: string | null | undefined,
+  ) => ReactNode
 }
 
 /**
- * Whole-app auth gate. A local un-redacted build (baked rows present) renders
- * straight through. The published build bakes an empty shell, so nothing renders
- * until the AES-256-GCM site blob is unlocked in-browser with the passphrase
- * (cached per-tab in sessionStorage). Locking clears that cache and returns here.
+ * Whole-app auth gate. Local serve replaces the startup payload through its
+ * guarded runtime API. Pages bakes an empty shell, so nothing renders until the
+ * AES-256-GCM snapshot is unlocked in-browser (cached per-tab in sessionStorage).
  */
 export function AuthGate({ baked, encrypted, children }: AuthGateProps) {
   const openLocally = (baked.rows?.length ?? 0) > 0
   const [unlocked, setUnlocked] = useState<DashboardData | null>(() => readCachedUnlock())
-  const data = openLocally ? baked : unlocked
+  const [localSession, setLocalSession] = useState<{
+    data: DashboardData
+    token: string
+  } | null>(null)
+  const data = localSession?.data ?? (openLocally ? baked : unlocked)
+  const source = localSession ? 'local' : (openLocally ? 'baked' : 'snapshot')
+
+  useEffect(() => {
+    let active = true
+    void localServeToken()
+      .then(async (token) => token ? { token, data: await localDashboard(token) } : null)
+      .then((session) => {
+        if (active && session) setLocalSession(session)
+      })
+      .catch(() => {
+        // Static Pages and standalone builds intentionally have no local API.
+      })
+    return () => { active = false }
+  }, [])
 
   const lock = () => {
     clearUnlock()
     setUnlocked(null)
   }
 
-  if (data) return <>{children(data, lock)}</>
+  const localToken = localSession?.token ?? (source === 'snapshot' ? null : undefined)
+  if (data) return <>{children(data, lock, source, localToken)}</>
   return <LockScreen encrypted={encrypted} onUnlock={setUnlocked} />
 }
 

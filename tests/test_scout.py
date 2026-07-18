@@ -14,7 +14,7 @@ from jobscope.ingest import ats
 
 
 def _cfg(tmp):
-    cfg = load_config(None)
+    cfg = load_config(os.path.join(tmp, "missing-config.yaml"))
     cfg["output"]["db_path"] = os.path.join(tmp, "t.db")
     return cfg
 
@@ -93,6 +93,50 @@ def test_scout_scores_and_ranks(monkeypatch):
         assert res["count"] == 2 and len(res["results"]) == 2
         # the security role outranks the sales role
         assert "security" in res["results"][0]["title"].lower()
+        store.close()
+
+
+def test_scout_match_count_is_not_capped_by_display_limit(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        store = Store(cfg["output"]["db_path"])
+        store.save_resume(_resume(), name="research")
+        _patch_json(monkeypatch, lambda *a, **k: _gh_board(
+            "Application Security Engineer",
+            "Detection Engineer",
+        ))
+
+        result = scout.scout(cfg, store, "Rubrik", save=False, limit=1)
+
+        assert result["matched"] == 2
+        assert len(result["results"]) == 1
+        store.close()
+
+
+def test_scout_previews_but_never_counts_or_saves_off_profile_jobs(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        store = Store(cfg["output"]["db_path"])
+        store.save_resume(_resume(), name="research")
+        board = _gh_board(
+            "Application Security Engineer",
+            "Security Engineer",
+            "Sales Manager",
+        )
+        board["jobs"][1]["location"]["name"] = "London, United Kingdom"
+        _patch_json(monkeypatch, lambda *_a, **_k: board)
+
+        result = scout.scout(cfg, store, "Rubrik", save=True, limit=10)
+
+        assert result["count"] == 3 and len(result["results"]) == 3
+        assert result["matched"] == 1 and result["saved"] == 1
+        assert [item["title"] for item in result["results"] if item["tier"] != "Skip"] == [
+            "Application Security Engineer",
+        ]
+        excluded = [item for item in result["results"] if item["tier"] == "Skip"]
+        assert len(excluded) == 2
+        assert all(item["rationale"].startswith("outside active profile") for item in excluded)
+        assert [job.title for job in store.jobs()] == ["Application Security Engineer"]
         store.close()
 
 

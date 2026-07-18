@@ -155,6 +155,18 @@ def scan_monitor(
         "matched": 0,
         "new": 0,
         "closed": 0,
+        "funnel": {
+            "board": 0,
+            "geo_eligible": 0,
+            "title_eligible": 0,
+            "details_attempted": 0,
+            "details_hydrated": 0,
+            "details_failed": 0,
+            "details_truncated": 0,
+            "experience_eligible": 0,
+            "matched": 0,
+            "skip_reasons": {},
+        },
         "status": "",
         "error": "",
         "contact_status": "not-run",
@@ -180,12 +192,18 @@ def scan_monitor(
 
     if monitor.get("resolution_status") != "resolved" or not monitor.get("provider") or not monitor.get("slug"):
         result["status"] = monitor.get("resolution_status") or "unresolved"
-        result["error"] = "company monitor needs a supported career portal"
+        if result["status"] == "unsupported":
+            result["error"] = "this career portal is not supported yet"
+        elif monitor.get("careers_url"):
+            result["error"] = "no supported ATS feed was found at this career portal"
+        else:
+            result["error"] = "add the official career portal URL, then resolve and scan"
         return result
 
     fetch = ats.fetch_company_result(monitor["company"], monitor["provider"], monitor["slug"])
     result["status"] = fetch.status.value
     result["board_count"] = len(fetch.jobs)
+    result["funnel"]["board"] = len(fetch.jobs)
     store.set_source_health(
         f"monitor:{monitor['id']}",
         provider=monitor["provider"],
@@ -201,19 +219,68 @@ def scan_monitor(
         return result
 
     try:
-        scored = score_jobs(cfg, store, ats.filter_board_jobs(cfg, fetch.jobs))
+        candidates, filter_funnel = ats.filter_profile_jobs_with_funnel(
+            cfg, store, fetch.jobs,
+        )
+        result["funnel"].update(filter_funnel)
+        hydration: dict[str, int] = {}
+        candidates = ats.hydrate_company_jobs(
+            monitor["provider"], candidates, stats=hydration,
+        )
+        result["funnel"]["details_attempted"] = hydration.get("attempted", 0)
+        result["funnel"]["details_hydrated"] = hydration.get("hydrated", 0)
+        result["funnel"]["details_failed"] = hydration.get("failed", 0)
+        result["funnel"]["details_truncated"] = (
+            max(0, len(candidates) - hydration.get("attempted", 0))
+            if monitor["provider"] == "phenom" else 0
+        )
+        scored = score_jobs(cfg, store, candidates)
     except ValueError as exc:
         result["error"] = str(exc)
         return result
 
+    skip_reasons = {
+        "geography": result["funnel"]["board"] - result["funnel"]["geo_eligible"],
+        "title": result["funnel"]["geo_eligible"] - result["funnel"]["title_eligible"],
+    }
+    experience_blocked = 0
     for item in scored:
-        if item.tier == "Skip" or not item.job.title or not item.job.company:
+        if not item.job.title or not item.job.company:
+            skip_reasons["invalid"] = skip_reasons.get("invalid", 0) + 1
+            continue
+        if item.tier == "Skip":
+            if item.rationale.startswith("needs ~"):
+                reason = "experience_cap"
+                experience_blocked += 1
+            elif item.rationale.startswith("clearance/citizenship"):
+                reason = "clearance"
+            elif item.rationale.startswith("no visa sponsorship"):
+                reason = "sponsorship"
+            elif item.rationale.startswith("blocked"):
+                reason = "blocked"
+            elif item.rationale.startswith("older than"):
+                reason = "stale"
+            elif " | top:" in item.rationale:
+                reason = "other_filter"
+            else:
+                reason = "below_threshold"
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+            if store.get_job(item.job.id) is not None:
+                persist_scored_job(store, item)
             continue
         if persist_scored_job(store, item):
             result["new"] += 1
         store.link_monitor_job(monitor["id"], item.job.id)
         store.ensure_job_review(item.job.id, origins=["monitored"])
         result["matched"] += 1
+
+    result["funnel"]["experience_eligible"] = max(
+        0, result["funnel"]["title_eligible"] - experience_blocked,
+    )
+    result["funnel"]["matched"] = result["matched"]
+    result["funnel"]["skip_reasons"] = {
+        reason: count for reason, count in skip_reasons.items() if count
+    }
 
     if fetch.status == ats.BoardStatus.OK and fetch.jobs:
         result["closed"] = store.reconcile_monitor_jobs(

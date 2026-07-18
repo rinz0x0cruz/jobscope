@@ -176,11 +176,17 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
     lookback_days = int(acct.get("lookback_days", icfg.get("lookback_days", 90)))
     attempts = max(1, int(icfg.get("imap_attempts", 3)))
 
-    # Prebuild a company -> job-id index once so email->job linking is O(1)/email.
-    job_index: dict[str, str] = {}
+    # Prebuild a company -> role/job candidates index. A company may have several
+    # concurrent applications, so company alone is not a safe identity.
+    job_index: dict[str, list[tuple[str, str]]] = {}
     for j in store.jobs(order_by_score=False):
         if j.company:
-            job_index.setdefault(mailrules.normalize_company(j.company), j.id)
+            _index_job(job_index, j.company, j.title, j.id)
+    for application in store.applications():
+        company = (application.get("company") or "").strip()
+        job_id = (application.get("job_id") or "").strip()
+        if company and job_id:
+            _index_job(job_index, company, application.get("title") or "", job_id)
     campaign_reply_watches = [
         {
             "domain": target.get("domain") or "",
@@ -389,8 +395,14 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
     # Cheap first pass on headers only; skip clearly-irrelevant mail from
     # non-ATS domains without ever fetching a body.
     sig = mailrules.classify_signal(from_addr, subject, "")
+    sender_company = mailrules.company_from_domain(from_domain)
+    known_direct_sender = bool(
+        sender_company
+        and mailrules.best_company_match(sender_company, list(job_index))
+    )
     if (not campaign_reply and not mailrules.is_job_related(from_domain, sig)
-            and not mailrules.is_ats_domain(from_domain)):
+            and not mailrules.is_ats_domain(from_domain)
+            and not known_direct_sender):
         return None
 
     configured_limit = int(cfg.get("inbox", {}).get("classification_chars", 6000))
@@ -416,6 +428,8 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
         sig = _quorum_pick(cfg, store, subject, snippet, tied) or sig
 
     job_id = _link_job(company, role, job_index)
+    if company:
+        _index_job(job_index, company, role, job_id)
     ev = MailEvent(
         account=addr, uid=uid_s, message_id=(hdr.get("Message-ID") or "").strip(),
         thread_id=_thread_key(hdr, subject),
@@ -440,7 +454,9 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
         # changes heal old events (e.g. a mis-tagged interview -> confirmation).
         # The funnel is rebuilt from these signals by the reclassify pass that
         # follows, so only the event's classification needs to be made current.
-        store.update_mail_event(ev.id, signal=sig, job_id=job_id)
+        store.update_mail_event(
+            ev.id, signal=sig, job_id=job_id, company=company, role=role,
+        )
         return ev
     return None
 
@@ -479,9 +495,34 @@ def _link_job(company: str, role: str, job_index: dict) -> str:
     key so email-only applications still dedupe across runs."""
     match = mailrules.best_company_match(company, list(job_index.keys())) if company else None
     if match:
-        return job_index[match]
+        candidates = job_index[match]
+        role_key = _role_key(role)
+        if role_key:
+            exact = next((job_id for known_role, job_id in candidates
+                          if known_role == role_key), None)
+            if exact:
+                return exact
+        else:
+            ids = list(dict.fromkeys(job_id for _known_role, job_id in candidates))
+            if len(ids) == 1:
+                return ids[0]
     basis = f"{mailrules.normalize_company(company)}|{(role or '').lower().strip()}"
     return "mail:" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:12]
+
+
+def _role_key(role: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (role or "").lower()).strip()
+
+
+def _index_job(job_index: dict[str, list[tuple[str, str]]], company: str,
+               role: str, job_id: str) -> None:
+    company_key = mailrules.normalize_company(company)
+    if not company_key or not job_id:
+        return
+    candidate = (_role_key(role), job_id)
+    entries = job_index.setdefault(company_key, [])
+    if candidate not in entries:
+        entries.append(candidate)
 
 
 def _apply_to_application(store, ev: MailEvent) -> None:

@@ -17,7 +17,6 @@ import { buildTimeline } from '@/lib/timeline'
 import { filterData } from '@/lib/viewFilter'
 import { activeView, type SearchState, type ViewValue } from '@/lib/urlState'
 import { scanNewMail, syncMonitoringQueue } from '@/lib/refresh'
-import { localServeToken } from '@/lib/outreach'
 import { viewTransition } from '@/ui'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import type { DashboardData } from '@/lib/schema'
@@ -27,10 +26,13 @@ import {
   queuedMonitoringActions,
   submitMonitoringActions,
   type MonitoringAction,
+  type ScanDecisionFunnel,
 } from '@/lib/companyActions'
 
 export interface ShellV2Props {
   data: DashboardData
+  mode?: 'baked' | 'local' | 'snapshot'
+  serveToken?: string | null
   state: SearchState
   onStateChange: (patch: Partial<SearchState>, options?: { replace?: boolean }) => void
   onLock: () => void
@@ -53,13 +55,14 @@ function toggleTheme() {
   })
 }
 
-export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
+export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange, onLock }: ShellV2Props) {
   const [commandOpen, setCommandOpen] = useState(false)
   const [pendingChanges, setPendingChanges] = useState(() => queuedMonitoringActions().length)
+  const [scanFunnels, setScanFunnels] = useState<Record<string, ScanDecisionFunnel>>({})
   const [workingData, setWorkingData] = useState(() =>
     projectMonitoringActions(data, queuedMonitoringActions()),
   )
-  const [serveToken, setServeToken] = useState<string | null>()
+  const snapshotLock = mode === 'snapshot' ? onLock : undefined
   const mobileReader = useMediaQuery('(max-width: 1399px)')
   const view = activeView(state)
   const selectedJob = useMemo(
@@ -81,7 +84,9 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
   const navigate = (next: ViewValue) => onStateChange({ view: next, job: undefined, company: undefined, campaign: undefined })
   const open = (jobId: string) => onStateChange({ job: jobId })
   const close = () => onStateChange({ job: undefined }, { replace: true })
-  const refresh = useCallback(() => void scanNewMail(), [])
+  const refresh = useCallback(() => void scanNewMail((fresh) => {
+    setWorkingData(projectMonitoringActions(fresh, queuedMonitoringActions()))
+  }), [])
   const runMonitoringActions = async (actions: MonitoringAction[]) => {
     const previous = workingData
     setWorkingData((current) => projectMonitoringActions(current, actions))
@@ -99,12 +104,24 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
         const scan = result.scans?.[0]
         const contacts = result.contacts?.[0]
         if (scan) {
+          const toastId = `monitor-scan:${scan.monitor_id || scan.company}`
+          if (scan.monitor_id && scan.funnel) {
+            setScanFunnels((current) => ({
+              ...current,
+              [scan.monitor_id!]: scan.funnel!,
+            }))
+          }
           if (scan.ok) {
             toast.success(`Scanned jobs at ${scan.company}`, {
-              description: `${scan.matched ?? 0} matched role${scan.matched === 1 ? '' : 's'}`,
+              id: toastId,
+              description: scan.funnel
+                ? `${scan.funnel.board} board → ${scan.funnel.geo_eligible} geo → ${scan.funnel.title_eligible} title → ${scan.funnel.matched} matched`
+                : `${scan.matched ?? 0} matched role${scan.matched === 1 ? '' : 's'}`,
             })
           } else {
-            toast.warning(`Job scan needs attention: ${scan.error || scan.company}`)
+            toast.warning(`Job scan needs attention: ${scan.error || scan.company}`, {
+              id: toastId,
+            })
           }
         } else if (contacts) {
           if (contacts.ok) {
@@ -125,12 +142,6 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
       toast.error(error instanceof Error ? error.message : 'Could not apply change')
     }
   }
-
-  useEffect(() => {
-    let live = true
-    void localServeToken().then((token) => live && setServeToken(token))
-    return () => { live = false }
-  }, [])
 
   useEffect(() => {
     const updateCount = () => setPendingChanges(queuedMonitoringActions().length)
@@ -179,7 +190,7 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
         onOpenCommand={() => setCommandOpen(true)}
         onRefresh={refresh}
         onToggleTheme={toggleTheme}
-        onLock={onLock}
+        onLock={snapshotLock}
         pendingChanges={pendingChanges}
         onSyncChanges={() => void syncMonitoringQueue()}
         campaignsAvailable={Boolean(serveToken)}
@@ -231,6 +242,7 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
               onSelect={(company) => onStateChange({ company })}
               onOpenJob={open}
               onActions={(actions) => runMonitoringActions(actions)}
+              scanFunnels={scanFunnels}
             />
           </div>
         ) : view === 'campaigns' ? (
@@ -271,7 +283,9 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
               profile={workingData.profile}
               generated={workingData.generated}
               total={workingData.total}
-              onLock={onLock}
+              serveToken={serveToken}
+              onLock={snapshotLock}
+              onRefresh={refresh}
               onProfileChange={(profile) => setWorkingData((current) => ({ ...current, profile }))}
             />
           </div>
@@ -287,7 +301,7 @@ export function ShellV2({ data, state, onStateChange, onLock }: ShellV2Props) {
         onOpenJob={open}
         onRefresh={refresh}
         onToggleTheme={toggleTheme}
-        onLock={onLock}
+        onLock={snapshotLock}
       />
 
       <JobDrawer

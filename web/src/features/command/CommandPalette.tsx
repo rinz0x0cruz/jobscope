@@ -31,7 +31,7 @@ export interface CommandPaletteProps {
   onOpenJob: (id: string) => void
   onRefresh: () => void
   onToggleTheme: () => void
-  onLock: () => void
+  onLock?: () => void
 }
 
 const LENSES: { section: ViewValue; label: string; Icon: LucideIcon }[] = [
@@ -123,10 +123,10 @@ export function CommandPalette({
                   <SunMedium size={16} aria-hidden="true" className="text-ink-3" />
                   <span>Toggle theme</span>
                 </Command.Item>
-                <Command.Item value="lock dashboard sign out" onSelect={() => run(onLock)} className={ITEM}>
+                {onLock && <Command.Item value="lock dashboard sign out" onSelect={() => run(onLock)} className={ITEM}>
                   <Lock size={16} aria-hidden="true" className="text-ink-3" />
                   <span>Lock dashboard</span>
-                </Command.Item>
+                </Command.Item>}
               </Command.Group>
 
               {jobs.length > 0 && (

@@ -106,6 +106,32 @@ describe('refresh: scanNewMail dispatch (token path)', () => {
     expect(toast.success).toHaveBeenCalledWith('Gmail scan started')
   })
 
+  it('reloads live local data after a completed refresh', async () => {
+    vi.useFakeTimers()
+    const onData = vi.fn()
+    const data = {
+      generated: '2026-07-18T00:00:00', total: 0, rows: [],
+      overview: { funnel: {}, gaps: [], considered: 0, targets: [] },
+      applications: [], profile: null, applied_outreach: [], companies: [], reviews: [],
+      activity_audit: { recent_runs: [], selected_run_id: '', decisions: [], recoverable_applications: [] },
+    }
+    vi.stubGlobal('fetch', vi.fn(async (url: string, opts?: { method?: string }) => {
+      if (url.endsWith('/api/token')) return { ok: true, json: async () => ({ token: 'local-token' }) } as Response
+      if (url.endsWith('/api/refresh') && opts?.method === 'POST') {
+        return { ok: true, json: async () => ({ state: 'started' }) } as Response
+      }
+      if (url.endsWith('/api/status')) return { ok: true, json: async () => ({ state: 'done' }) } as Response
+      if (url.endsWith('/api/dashboard')) {
+        return { ok: true, json: async () => ({ ok: true, data }) } as Response
+      }
+      throw new Error(`unexpected URL: ${url}`)
+    }))
+
+    await scanNewMail(onData)
+    await vi.advanceTimersByTimeAsync(1000)
+    await vi.waitFor(() => expect(onData).toHaveBeenCalledWith(data))
+  })
+
   it('checks for a running run, then POSTs workflow_dispatch', async () => {
     vi.useFakeTimers() // freeze the post-dispatch poll timer
     localStorage.setItem(GH_TOKEN_KEY, 'ghp_token')

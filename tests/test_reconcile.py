@@ -86,6 +86,30 @@ def test_reclassify_keeps_real_interview():
         {"subject": "Next steps", "snippet": "", "signal": "interview"}) == "interview"
 
 
+def test_reclassify_downgrades_false_offer_when_evidence_is_retained():
+    assert reconcile.reclassify_signal({
+        "subject": "Your summer offer is here",
+        "snippet": "Get 30% off Premium Annual and prepare for interviews.",
+        "signal": "offer",
+    }) == "other"
+
+
+def test_reclassify_keeps_offer_without_retained_body():
+    assert reconcile.reclassify_signal({
+        "subject": "Application update",
+        "snippet": "",
+        "signal": "offer",
+    }) == "offer"
+
+
+def test_reclassify_downgrades_offered_by_subject_without_body():
+    assert reconcile.reclassify_signal({
+        "subject": "Post Graduate Diploma in Management offered by Great Lakes",
+        "snippet": "",
+        "signal": "offer",
+    }) == "other"
+
+
 def test_reclassify_drops_newsletter_domain_event():
     # a LeetCode contest / interview-prep promo mis-tagged interview -> dropped by domain
     assert reconcile.reclassify_signal(

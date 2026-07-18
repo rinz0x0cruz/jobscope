@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ArrowLeft, ArrowRight, Building2, ExternalLink, Loader2, Mail, Pause, Play, RefreshCw, Settings2, Trash2 } from 'lucide-react'
 import { companyNameKey, monitorCheckAge, type CompaniesModel, type CompanyItem } from '@/lib/companies'
 import type { CompanyFilter } from '@/lib/urlState'
-import type { MonitoringAction } from '@/lib/companyActions'
+import type { MonitoringAction, ScanDecisionFunnel } from '@/lib/companyActions'
 
 export interface CompaniesViewProps {
   model: CompaniesModel
@@ -12,6 +12,7 @@ export interface CompaniesViewProps {
   onSelect: (companyId?: string) => void
   onOpenJob: (jobId: string) => void
   onActions: (actions: MonitoringAction[]) => Promise<void>
+  scanFunnels?: Record<string, ScanDecisionFunnel>
 }
 
 const FILTERS: Array<{ value: CompanyFilter; label: string }> = [
@@ -22,7 +23,7 @@ const FILTERS: Array<{ value: CompanyFilter; label: string }> = [
   { value: 'setup', label: 'Needs setup' },
 ]
 
-export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, onOpenJob, onActions }: CompaniesViewProps) {
+export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, onOpenJob, onActions, scanFunnels = {} }: CompaniesViewProps) {
   const [company, setCompany] = useState('')
   const [careersUrl, setCareersUrl] = useState('')
   const [saving, setSaving] = useState(false)
@@ -133,7 +134,7 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
           {visible.length ? <ul>{visible.map((company) => <CompanyRow key={company.id} company={company} selected={company.id === selectedId} onSelect={() => selectCompany(company)} />)}</ul> : <Empty />}
         </div>
         <div className={`${selected ? 'block' : 'hidden lg:block'} min-h-0 overflow-auto`}>
-          {selected ? <CompanyDetail company={selected} onBack={() => onSelect(undefined)} onEdit={() => editPortal(selected)} onOpenJob={onOpenJob} onActions={onActions} /> : <NoSelection />}
+          {selected ? <CompanyDetail company={selected} funnel={scanFunnels[selected.id]} onBack={() => onSelect(undefined)} onEdit={() => editPortal(selected)} onOpenJob={onOpenJob} onActions={onActions} /> : <NoSelection />}
         </div>
       </div>
     </section>
@@ -171,8 +172,19 @@ function collectionSummary(company: CompanyItem): string {
   return parts.join(' · ')
 }
 
-function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { company: CompanyItem; onBack: () => void; onEdit: () => void; onOpenJob: (id: string) => void; onActions: (actions: MonitoringAction[]) => Promise<void> }) {
+function CompanyDetail({ company, funnel, onBack, onEdit, onOpenJob, onActions }: { company: CompanyItem; funnel?: ScanDecisionFunnel; onBack: () => void; onEdit: () => void; onOpenJob: (id: string) => void; onActions: (actions: MonitoringAction[]) => Promise<void> }) {
   const queued = company.id.startsWith('queued:')
+  const [pendingAction, setPendingAction] = useState<string>()
+  const busy = queued || Boolean(pendingAction)
+  const runAction = async (name: string, action: MonitoringAction) => {
+    if (busy) return
+    setPendingAction(name)
+    try {
+      await onActions([action])
+    } finally {
+      setPendingAction(undefined)
+    }
+  }
   return (
     <div>
       <header className="border-b border-line px-5 py-5 sm:px-7">
@@ -203,6 +215,8 @@ function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { comp
         <MetricCell label="Pending" value={company.pending_count} />
         <MetricCell label="Saved" value={company.saved_count} />
       </div>
+
+      {funnel && <DecisionFunnel funnel={funnel} />}
 
       <section className="border-b border-line bg-inset/35 px-5 py-4 sm:px-7" aria-label="Recruiter contacts">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -248,34 +262,64 @@ function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { comp
           </button>
         ) : (
           <>
+        {company.resolution_status === 'unsupported' ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onEdit}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-brand px-3 text-[11px] font-medium text-brand disabled:opacity-40"
+          >
+            <Settings2 size={13} /> Unsupported portal
+          </button>
+        ) : company.resolution_status === 'unresolved' ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void runAction('resolve', { type: 'monitor.scan', monitor_id: company.id })}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-brand px-3 text-[11px] font-medium text-brand disabled:opacity-40"
+          >
+            {pendingAction === 'resolve' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Resolve & scan
+          </button>
+        ) : company.status !== 'active' ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void runAction('resume', { type: 'monitor.status', monitor_id: company.id, status: 'active' })}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-brand px-3 text-[11px] font-medium text-brand disabled:opacity-40"
+          >
+            {pendingAction === 'resume' ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} Resume to scan
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void runAction('scan', { type: 'monitor.scan', monitor_id: company.id })}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-brand px-3 text-[11px] font-medium text-brand disabled:opacity-40"
+          >
+            {pendingAction === 'scan' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Scan jobs
+          </button>
+        )}
         <button
-          disabled={queued}
-          onClick={() => void onActions([{ type: 'monitor.scan', monitor_id: company.id }])}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-brand px-3 text-[11px] font-medium text-brand disabled:opacity-40"
-        >
-          <RefreshCw size={13} /> Scan jobs
-        </button>
-        <button
-          disabled={queued}
-          onClick={() => void onActions([{ type: 'monitor.contacts', monitor_id: company.id }])}
+          disabled={busy}
+          onClick={() => void runAction('contacts', { type: 'monitor.contacts', monitor_id: company.id })}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-3 text-[11px] text-ink-2 disabled:opacity-40"
         >
-          <Mail size={13} /> Find recruiter
+          {pendingAction === 'contacts' ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />} Find recruiter
         </button>
         <button
-          disabled={queued}
-          onClick={() => void onActions([{ type: 'monitor.status', monitor_id: company.id, status: company.status === 'paused' ? 'active' : 'paused' }])}
+          disabled={busy}
+          onClick={() => void runAction('status', { type: 'monitor.status', monitor_id: company.id, status: company.status === 'paused' ? 'active' : 'paused' })}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-3 text-[11px] text-ink-2 disabled:opacity-40"
         >
-          {company.status === 'paused' ? <Play size={13} /> : <Pause size={13} />}
+          {pendingAction === 'status' ? <Loader2 size={13} className="animate-spin" /> : company.status === 'paused' ? <Play size={13} /> : <Pause size={13} />}
           {company.status === 'paused' ? 'Resume' : 'Pause'}
         </button>
         <button type="button" onClick={onEdit} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-3 text-[11px] text-ink-2">
           <Settings2 size={13} /> Edit portal
         </button>
         <button
-          disabled={queued}
-          onClick={() => { onBack(); void onActions([{ type: 'monitor.status', monitor_id: company.id, status: 'removed' }]) }}
+          disabled={busy}
+          onClick={() => { onBack(); void runAction('remove', { type: 'monitor.status', monitor_id: company.id, status: 'removed' }) }}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-3 text-[11px] text-hot disabled:opacity-40"
         >
           <Trash2 size={13} /> Remove
@@ -303,6 +347,55 @@ function CompanyDetail({ company, onBack, onEdit, onOpenJob, onActions }: { comp
 }
 
 function MetricCell({ label, value }: { label: string; value: number }) { return <div className="border-r border-line py-3 last:border-r-0"><span className="block text-[9px] uppercase text-ink-3">{label}</span><strong className="font-mono text-lg text-ink">{value}</strong></div> }
+const SKIP_LABELS: Record<string, string> = {
+  geography: 'Geography',
+  title: 'Title family',
+  experience_cap: 'Experience cap',
+  clearance: 'Clearance',
+  sponsorship: 'Sponsorship',
+  blocked: 'Blocked',
+  stale: 'Stale',
+  other_filter: 'Other filter',
+  below_threshold: 'Below threshold',
+  invalid: 'Invalid posting',
+}
+
+function DecisionFunnel({ funnel }: { funnel: ScanDecisionFunnel }) {
+  const stages = [
+    ['Board', funnel.board],
+    ['Geo', funnel.geo_eligible],
+    ['Title', funnel.title_eligible],
+    ['Experience', funnel.experience_eligible],
+    ['Matched', funnel.matched],
+  ] as const
+  const reasons = Object.entries(funnel.skip_reasons).filter(([, count]) => count > 0)
+  return (
+    <section className="border-b border-line bg-inset/35 px-5 py-4 sm:px-7" aria-label="Latest scan funnel">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="mr-1 text-[10px] font-semibold uppercase text-ink-3">Latest scan</span>
+        {stages.map(([label, value], index) => (
+          <span key={label} className="inline-flex items-center gap-2 text-[12px] text-ink-2">
+            {index > 0 && <span aria-hidden="true" className="text-ink-3">→</span>}
+            <span>{label}</span>
+            <strong className="font-mono text-ink">{value}</strong>
+          </span>
+        ))}
+      </div>
+      {funnel.details_attempted > 0 && (
+        <p className="mt-2 text-[11px] text-ink-3">
+          Full details hydrated {funnel.details_hydrated}/{funnel.details_attempted}
+          {funnel.details_failed > 0 ? ` · ${funnel.details_failed} failed` : ''}
+          {funnel.details_truncated > 0 ? ` · ${funnel.details_truncated} not attempted` : ''}
+        </p>
+      )}
+      {reasons.length > 0 && (
+        <p className="mt-1 text-[11px] text-ink-3">
+          Excluded: {reasons.map(([reason, count]) => `${SKIP_LABELS[reason] || reason} ${count}`).join(' · ')}
+        </p>
+      )}
+    </section>
+  )
+}
 function JobSection({ title, jobs, onOpen }: { title: string; jobs: CompanyItem['pendingJobs']; onOpen: (id: string) => void }) { return <section><header className="flex items-center justify-between border-b border-line bg-inset px-5 py-2 sm:px-7"><h4 className="text-[10px] font-semibold uppercase text-ink-3">{title}</h4><span className="font-mono text-[11px] text-ink-3">{jobs.length}</span></header>{jobs.length ? <ul>{jobs.map((job) => <li key={job.id} className="border-b border-line"><button type="button" onClick={() => onOpen(job.id)} className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left hover:bg-inset/60 sm:px-7"><span className="min-w-0"><span className="block truncate text-[13px] font-medium text-ink">{job.title}</span><span className="text-[11px] text-ink-3">{job.location || 'Location unavailable'}</span></span><strong className="font-mono text-[13px] text-ink">{Math.round(job.score)}</strong></button></li>)}</ul> : <p className="px-5 py-6 text-[12px] text-ink-3 sm:px-7">No {title.toLowerCase()}.</p>}</section> }
 function Empty() { return <div className="flex h-full flex-col items-center justify-center px-6 text-center"><Building2 size={28} className="text-ink-3" /><p className="mt-3 text-[14px] font-medium text-ink">No companies in this view</p></div> }
 function NoSelection() { return <div className="flex h-full flex-col items-center justify-center px-6 text-center"><Building2 size={28} className="text-ink-3" /><p className="mt-3 text-[14px] font-medium text-ink">Select a company</p><p className="mt-1 text-[12px] text-ink-3">Review history or inspect a watched career portal.</p></div> }

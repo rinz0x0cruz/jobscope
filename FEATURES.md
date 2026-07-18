@@ -31,8 +31,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | Command | Behaviour |
 | --- | --- |
 | `init` | Scaffolds `config.yaml` + `data/` dir. |
-| `resume import <path> --name <n>` | Parses `.md/.json/.pdf/.txt` into a structured resume and stores it under a name. Up to three named profiles are supported; local Settings can upload, build, replace, and switch them. |
-| `profile [build\|show] [--resume N] [--force]` | Builds/shows the editable, résumé-derived **search profile** (`data/profile.yaml`): target roles from your titles + a skills→role map, your locations, remote. `scan` fetches from it (config.search is the fallback); `--force` regenerates, never clobbering edits otherwise. |
+| `resume import <path> --name <n>` | Parses `.md/.json/.pdf/.txt` into a structured resume and stores it under a name. Up to three named profiles are supported; local Settings can upload, replace, edit, reset, and switch them. |
+| `profile [build\|show] [--resume N] [--force]` | Builds/shows a named résumé-derived **search profile** (`data/profiles/<name>.yaml`): target roles, locations, and remote intent drive `scan`; résumé facts remain derived. `--force` explicitly regenerates intent. |
 | `companies [seed\|list\|scan\|apply]` | Persistent explicit watchlist and official-portal scans. `seed` imports configured monitors and softly archives legacy application-only monitors; application/collected companies remain visible as **Known** until explicitly promoted. `apply` consumes the validated workflow action file. |
 | `scout <company>` | Ephemeral ATS resolution/ranked preview. The durable workflow is to monitor the company. |
 | `scan [--mode all\|monitored\|discovery]` | Monitored portals are primary; broad JobSpy discovery is secondary and cadence-gated (24h by default). |
@@ -46,7 +46,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `outreach <job_id> [--to E] [--send] [--force]` | Drafts a tailored recruiter email + attaches your résumé and **previews it by default**. Resolves a contact deterministically: a real recruiter who emailed you (no-reply/ATS relays filtered out), a published HR/careers email **discovered on the employer's own site** (domain verified by fetching it + matching the company name), or a `careers@` role inbox on that verified domain — or `--to`. Sending is opt-in (`apply.outreach.enabled` + `email.*` + `--send`), **deduped per company** with a cooldown, and honors a do-not-contact list. |
 | `campaign [create\|list\|show\|discover\|draft\|approve\|start\|pause\|skip\|send-approved\|replies\|tick\|ready]` | Local ranked recruiter campaigns. Selects N unique India-relevant cybersecurity companies, excludes all application history, records India/compensation/growth evidence, discovers one recruiter, and requires per-message approval. `tick` checks replies, then sends at most one due approved draft after rechecking every guard. |
 | `dashboard [--public] [--emit-web]` | Emits the private dashboard payload; `--public` writes an **empty schema-valid shell**. `--emit-web` mirrors private data for local development. Publish scripts ship only the empty shell plus encrypted `site.enc.json`. |
-| `serve [--port 8799] [--open]` | Builds (if needed) + serves the **web SPA** on 127.0.0.1 with a localhost-only **Refresh & Publish** button (syncs Gmail -> rescore -> publish -> rebuild). |
+| `serve [--port 8799] [--open]` | Serves the **live local workspace** on 127.0.0.1. The guarded API reads current SQLite data, edits profiles, applies mutations, and refreshes Gmail/matches without rebuilding or publishing. |
+| `refresh [--local-only] [--force]` | Runs the refresh pipeline. `--local-only` stops after SQLite sync/rescore; the compatibility default also publishes the encrypted Pages snapshot. |
 | `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E] [--include-spam] [--reclassify]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox; `--include-spam` also sweeps the `[Gmail]/Spam` folder this run (overrides `inbox.include_spam`), catching a real application email Gmail misfiled as spam; `--reclassify` is an **offline** repair — re-check stored mail with the current rules + rebuild the funnel (instance-split), with no Gmail sync. |
 | `new` | Lists new Strong/Good jobs since your last review, then advances the review marker. |
@@ -153,15 +154,16 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 
 ## Search profile (résumé-driven fetch)
 
-- `resume import` seeds `data/profile.yaml` from your parsed résumé; you edit it, and `scan` fetches from it —
+- `resume import` seeds `data/profiles/<name>.yaml` from your parsed résumé; `scan` fetches from it —
   so the search follows your résumé instead of a hand-typed keyword in `config.yaml`.
 - **Derivation (deterministic).** `search_terms` come from your résumé titles (seniority-stripped, so
   "Security Researcher Intern" → "Security Researcher") plus a skills→role map (appsec → Application Security
   Engineer; detection/SIEM → Detection Engineer; cloud-security/k8s/terraform → Cloud Security Engineer; …),
   capped at six; `locations` = Remote + your résumé location; `remote` from config. `seniority`/`top_skills`
   mirror the résumé for reference (matching still reads the résumé itself, not this file).
-- **Editable + safe.** Plain YAML with an explanatory header at `<db-dir>/profile.yaml` (gitignored). Seeded on
-  the **first** import only — it never clobbers your edits; `profile build --force` regenerates.
+- **Editable + safe.** Local Settings edits only target roles, locations, and remote intent. Résumé replacement
+  preserves those edits; **Reset from résumé** or `profile build --force` regenerates explicitly. Skills,
+  seniority, and experience remain résumé-derived facts. Named YAML files are gitignored.
 - **Drives `scan`.** The profile's `search_terms` become the scan terms and each `location` a per-location
   search; `config.search` stays the fallback when no profile exists.
 
@@ -194,7 +196,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   the top results, so their roles are missed. `scan` also pulls named companies' **public** job boards
   directly — no login, no API key — surfacing India/remote roles keyword search never sees.
 - **Providers:** Greenhouse (`boards-api.greenhouse.io`), Lever (`api.lever.co`), Ashby
-  (`api.ashbyhq.com`). All are logged-out public JSON endpoints (consistent with the no-auth-automation rule).
+  (`api.ashbyhq.com`), and curated Phenom tenants (`content-ir.phenompeople.com`). NTT DATA is mapped to
+  its bounded `Information Security` category feed. All are logged-out public JSON endpoints.
 - **Persistent watchlist:** SQLite `company_monitors` is authoritative for explicit user/configured watches
   after `companies seed`. Existing `search.companies` entries remain migration/fallback input. Application-only
   companies are derived into the encrypted payload as **Known** and never scanned or counted as Needs setup;
@@ -206,6 +209,15 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   `country_indeed`, plus any remote role when `is_remote` is set) **and** role keywords derived from
   `search.terms` (+ a small security/SWE lexicon), then normalized to the `Job` schema and de-duped by URL
   like any other source (`source = "ats"`).
+- **Decision evidence:** targeted scans return an observable funnel (board → geo → title → experience →
+  matched), bounded detail-hydration counts, and canonical skip reasons. The local Companies view displays
+  the latest funnel so a suspicious collapse such as `76 → 0` is diagnosable immediately.
+- **Golden regression gate:** `tests/fixtures/match_decision_eval.jsonl` covers verified NTT matches,
+  seniority exclusions, foreign roles, and contextual-security collisions. CI requires zero false positives
+  and zero false negatives on this deterministic set; optional AI/Quorum is not needed for the gate.
+- **Scout counts:** `scout --limit N` limits only displayed rows. The full board remains part of the
+  evaluation, but rows outside active-profile geography/title scope are forced to `Skip`; only eligible
+  non-Skip rows count as `matched` or can be saved, so display limits never under-report or broaden matches.
 - **Best-effort and fail-closed:** errors/partial/empty boards update source health but never close stored
   roles. Only a complete, non-empty `OK` board reconciles missing postings. ATS monitoring runs without
   JobSpy. Workday/iCIMS/custom HTML portals are explicit unsupported/Needs-setup states in the MVP.
@@ -363,6 +375,10 @@ application emails into funnel updates, so the pipeline reflects reality without
   lifecycle keyword colliding in their subject never reaches the funnel. Account plumbing — email-verification
   codes, one-time passcodes, and password resets — is likewise dropped even from a careers/ATS domain, so an
   OTP whose footer mentions "assessment" never lands in the funnel.
+- **Generic recruiter subjects:** when a direct employer domain matches a company already present in jobs or
+  applications, an inconclusive subject such as “Next steps” is allowed a bounded body fetch before the final
+  deterministic decision. Unknown domains remain header-only and are dropped, so this repairs recruiter-mail
+  false negatives without broadening inbox reads or requiring Quorum.
 - **Employer, not the ATS platform.** When mail arrives *through* an applicant-tracking or relay platform
   (SuccessFactors, Workday, Greenhouse, Oracle, iCIMS…), the company is recovered from the real employer —
   the sender display name (including an embedded `HR@employer.com`), a subject pattern (`…applying to
@@ -443,8 +459,8 @@ The React SPA in `web/` is served privately on localhost or unlocked from the en
 - **Pipeline:** application Sankey plus outcome and response metrics.
 - **Applications:** operational list, compact/table/grouped views, board, and offer register.
 - **Activity:** overdue action queue plus application-event history.
-- **Settings:** up to three résumé-derived profiles, local upload/build/switch, explicit Gmail scan, data
-  freshness, GitHub sync token, privacy, display, and lock controls.
+- **Settings:** up to three résumé-derived profiles, local upload/replace/edit/reset/switch, explicit Gmail
+  scan, local-versus-snapshot status, data freshness, GitHub sync token, privacy, display, and lock controls.
 - Desktop uses a persistent Review reader and company list/detail split. Mobile uses five primary slots with
   Activity/Settings in More and opens readers/details full-screen.
 
@@ -459,6 +475,8 @@ The React SPA in `web/` is served privately on localhost or unlocked from the en
 
 ## Public dashboard & hosting (mobile viewing)
 
+- The local dashboard is the canonical writable workspace. GitHub Pages is an encrypted read-only snapshot;
+  workflows provide scheduled refresh/backup/publication rather than interactive request handling.
 - `dashboard --emit-json --public` emits an **empty schema-valid shell** to `data/dashboard.public.json`.
   It contains no jobs, companies, reviews, profile, applications, contacts, or search targets.
 - **Hosting:** the code repo is **public**; the published dashboard is the **Vite/React app** (`web/`),

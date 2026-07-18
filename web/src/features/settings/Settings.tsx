@@ -1,15 +1,14 @@
-// The Settings lens: appearance preferences (theme, score format), a read-only
-// résumé-profile summary, and a session lock. Client-only — theme + score format
-// persist to localStorage; nothing here mutates the dashboard data.
+// Settings for local search profiles, display preferences, data freshness, and
+// snapshot privacy. Profile mutations are available only through local serve.
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Download, FileText, GitBranch, Lock, Palette, RefreshCw, Shield, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge, Button, Chip, Segmented } from '@/ui'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
 import { connectToken, disconnectToken, hasGitHubToken, pullLatestData, scanNewMail } from '@/lib/refresh'
-import { localServeToken, profileUpload, profileUse } from '@/lib/outreach'
+import { profileReset, profileUpdate, profileUpload, profileUse } from '@/lib/outreach'
 import { fmtGenerated } from '@/lib/format'
 import type { Profile } from '@/lib/schema'
 
@@ -17,7 +16,9 @@ export interface SettingsProps {
   profile: Profile | null
   generated: string
   total: number
-  onLock: () => void
+  serveToken: string | null | undefined
+  onLock?: () => void
+  onRefresh?: () => void
   onProfileChange?: (profile: Profile) => void
 }
 
@@ -37,25 +38,16 @@ function applyTheme(theme: 'light' | 'dark') {
   }
 }
 
-export function Settings({ profile, generated, total, onLock, onProfileChange }: SettingsProps) {
+export function Settings({ profile, generated, total, serveToken, onLock, onRefresh, onProfileChange }: SettingsProps) {
   const [theme, setTheme] = useState<'light' | 'dark'>(currentTheme)
   const { format, setFormat } = useScoreFormat()
   const [tokenConnected, setTokenConnected] = useState(hasGitHubToken)
-  const [prof, setProf] = useState<Profile | null>(profile)
-  const [serveToken, setServeToken] = useState<string | null>(null)
+  const prof = profile
   const [switching, setSwitching] = useState(false)
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [profileName, setProfileName] = useState('')
   const [uploading, setUploading] = useState(false)
   const locations = prof ? [...new Set([...prof.locations, ...(prof.remote ? ['Remote'] : [])])] : []
-
-  useEffect(() => {
-    let live = true
-    localServeToken(true).then((t) => live && setServeToken(t))
-    return () => {
-      live = false
-    }
-  }, [])
 
   const switchProfile = async (name: string) => {
     if (!serveToken || !prof || name === prof.name) return
@@ -63,7 +55,6 @@ export function Settings({ profile, generated, total, onLock, onProfileChange }:
     try {
       const res = await profileUse(name, serveToken)
       if (res.ok && res.profile) {
-        setProf(res.profile)
         onProfileChange?.(res.profile)
         toast.success(`Active profile: ${name}`)
       } else {
@@ -82,7 +73,6 @@ export function Settings({ profile, generated, total, onLock, onProfileChange }:
     try {
       const res = await profileUpload(resumeFile, profileName.trim(), serveToken)
       if (res.ok && res.profile) {
-        setProf(res.profile)
         onProfileChange?.(res.profile)
         setResumeFile(null)
         setProfileName('')
@@ -116,7 +106,12 @@ export function Settings({ profile, generated, total, onLock, onProfileChange }:
             <h2 className="text-xl font-semibold text-ink">Workspace preferences</h2>
             <p className="mt-1 text-[13px] text-ink-3">Search profile, local display preferences, sync, and session privacy.</p>
           </div>
-          <p className="text-[12px] text-ink-3">{total} {total === 1 ? 'role' : 'roles'} · updated {fmtGenerated(generated)}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {serveToken !== undefined && (
+              <Badge tone={serveToken ? 'good' : 'neutral'}>{serveToken ? 'Local workspace' : 'Published snapshot'}</Badge>
+            )}
+            <p className="text-[12px] text-ink-3">{total} {total === 1 ? 'role' : 'roles'} · updated {fmtGenerated(generated)}</p>
+          </div>
         </div>
       </header>
 
@@ -126,7 +121,7 @@ export function Settings({ profile, generated, total, onLock, onProfileChange }:
             <SettingsLink target="appearance" icon={<Palette size={14} aria-hidden="true" />}>Appearance</SettingsLink>
             <SettingsLink target="profile" icon={<FileText size={14} aria-hidden="true" />}>Search profiles</SettingsLink>
             <SettingsLink target="sync" icon={<RefreshCw size={14} aria-hidden="true" />}>Data sync</SettingsLink>
-            <SettingsLink target="privacy" icon={<Shield size={14} aria-hidden="true" />}>Privacy</SettingsLink>
+            {onLock && <SettingsLink target="privacy" icon={<Shield size={14} aria-hidden="true" />}>Privacy</SettingsLink>}
           </nav>
         </aside>
 
@@ -219,6 +214,16 @@ export function Settings({ profile, generated, total, onLock, onProfileChange }:
                 ))}
                 </TagField>
             )}
+            {serveToken && (
+              <ProfileIntentEditor
+                key={`${prof.name}:${prof.search_terms.join('|')}:${prof.locations.join('|')}:${prof.remote}`}
+                profile={prof}
+                token={serveToken}
+                onChange={(next) => {
+                  onProfileChange?.(next)
+                }}
+              />
+            )}
                 </>
               ) : (
                 <p className="pb-5 text-[13px] text-ink-3">No search profile loaded.</p>
@@ -275,14 +280,19 @@ export function Settings({ profile, generated, total, onLock, onProfileChange }:
             id="sync"
             icon={<RefreshCw size={16} aria-hidden="true" />}
             title="Data sync"
-            description="Run the GitHub refresh workflow or pull its latest encrypted result."
+            description={serveToken
+              ? 'Refresh the local SQLite workspace immediately. Publishing remains a separate operation.'
+              : 'Run the GitHub refresh workflow or pull its latest encrypted snapshot.'}
           >
             <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={() => void scanNewMail()}>
+            <Button variant="secondary" onClick={() => {
+              if (onRefresh) onRefresh()
+              else void scanNewMail()
+            }}>
               <RefreshCw size={15} aria-hidden="true" />
               Scan Gmail
             </Button>
-            {tokenConnected ? (
+            {!serveToken && (tokenConnected ? (
               <>
                 <Badge tone="good">Token connected</Badge>
                 <Button
@@ -307,18 +317,20 @@ export function Settings({ profile, generated, total, onLock, onProfileChange }:
                 <GitBranch size={15} aria-hidden="true" />
                 Connect GitHub token
               </Button>
-            )}
-            <Button variant="ghost" onClick={() => void pullLatestData()}>
+            ))}
+            {!serveToken && <Button variant="ghost" onClick={() => void pullLatestData()}>
               <Download size={15} aria-hidden="true" />
               Pull latest
-            </Button>
+            </Button>}
             </div>
             <p className="mt-3 text-[12px] text-ink-3">
-              The optional token is stored only in this browser and requires GitHub Actions write access.
+              {serveToken
+                ? 'Local edits and scans update this workspace without rebuilding or publishing the site.'
+                : 'The optional token is stored only in this browser and requires GitHub Actions write access.'}
             </p>
           </SettingsSection>
 
-          <SettingsSection
+          {onLock && <SettingsSection
             id="privacy"
             icon={<Shield size={16} aria-hidden="true" />}
             title="Privacy"
@@ -334,7 +346,7 @@ export function Settings({ profile, generated, total, onLock, onProfileChange }:
                 Lock
               </Button>
             </div>
-          </SettingsSection>
+          </SettingsSection>}
         </div>
       </div>
     </section>
@@ -388,5 +400,106 @@ function TagField({ label, children }: { label: string; children: ReactNode }) {
       </div>
       <div className="flex flex-wrap gap-1.5">{children}</div>
     </div>
+  )
+}
+
+function ProfileIntentEditor({
+  profile,
+  token,
+  onChange,
+}: {
+  profile: Profile
+  token: string
+  onChange: (profile: Profile) => void
+}) {
+  const [roles, setRoles] = useState(profile.search_terms.join('\n'))
+  const [locations, setLocations] = useState(profile.locations.join('\n'))
+  const [remote, setRemote] = useState(profile.remote)
+  const [saving, setSaving] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const splitLines = (value: string) => value
+    .split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const result = await profileUpdate(profile.name, token, {
+        search_terms: splitLines(roles),
+        locations: splitLines(locations),
+        remote,
+      })
+      if (!result.ok || !result.profile) throw new Error(result.error || 'Could not save profile')
+      onChange(result.profile)
+      toast.success('Search profile saved')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save profile')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const reset = async () => {
+    setResetting(true)
+    try {
+      const result = await profileReset(profile.name, token)
+      if (!result.ok || !result.profile) throw new Error(result.error || 'Could not reset profile')
+      onChange(result.profile)
+      toast.success('Search intent reset from résumé')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not reset profile')
+    } finally {
+      setResetting(false)
+    }
+  }
+
+  return (
+    <section className="border-t border-line py-5" aria-label="Edit search intent">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h4 className="text-[13px] font-semibold text-ink">Search intent</h4>
+          <p className="mt-0.5 text-[11px] text-ink-3">These fields drive scanning; résumé facts above remain derived.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="ghost" disabled={saving || resetting} onClick={() => void reset()}>
+            <RefreshCw size={14} aria-hidden="true" /> Reset from résumé
+          </Button>
+          <Button variant="secondary" disabled={saving || resetting || !splitLines(roles).length || !splitLines(locations).length} onClick={() => void save()}>
+            {saving ? <RefreshCw size={14} className="animate-spin" aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
+            Save profile
+          </Button>
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="text-[10px] font-semibold uppercase text-ink-3">
+          Target roles
+          <textarea
+            aria-label="Target roles"
+            value={roles}
+            onChange={(event) => setRoles(event.target.value)}
+            rows={6}
+            className="mt-1 w-full resize-y rounded-md border border-line bg-inset px-3 py-2 text-[13px] font-normal leading-5 normal-case text-ink outline-none focus:border-line-strong"
+          />
+        </label>
+        <label className="text-[10px] font-semibold uppercase text-ink-3">
+          Locations
+          <textarea
+            aria-label="Profile locations"
+            value={locations}
+            onChange={(event) => setLocations(event.target.value)}
+            rows={6}
+            className="mt-1 w-full resize-y rounded-md border border-line bg-inset px-3 py-2 text-[13px] font-normal leading-5 normal-case text-ink outline-none focus:border-line-strong"
+          />
+        </label>
+      </div>
+      <label className="mt-3 inline-flex items-center gap-2 text-[12px] text-ink-2">
+        <input
+          type="checkbox"
+          checked={remote}
+          onChange={(event) => setRemote(event.target.checked)}
+          className="h-4 w-4 accent-[var(--brand-coral)]"
+        />
+        Include remote roles
+      </label>
+    </section>
   )
 }

@@ -93,6 +93,7 @@ NEWSLETTER_DOMAINS: frozenset[str] = frozenset({
     "thinkific.com",   # online-course platform: "Training & Assessment" enrollments read as an assessment
     "leetcode.com",    # coding-practice platform: contests / daily challenges / interview-prep promos read as assessment/interview
     "educative.io",    # interactive-course platform: "Grokking the ... Interview" course promos read as interview/confirmation
+    "coursera.org",    # online-course mail: IBM-branded training copy can read as a live interview
     "eatclub.in",      # food delivery: "order confirmation" receipts read as lifecycle events
     "github.com",      # code-host notifications: PR/CI/issue mail ("run failed", "review requested") read as interview/assessment
     "gitlab.com",      # code-host notifications: pipeline / merge-request mail collides with lifecycle keywords
@@ -272,7 +273,7 @@ _STATUS_RANK = {"new": 0, "prepared": 1, "applied": 2, "interview": 3, "offer": 
 _COMPANY_SUFFIXES = re.compile(
     r"\b(?:inc|inc\.|llc|ltd|ltd\.|limited|corp|corp\.|corporation|co|co\.|"
     r"gmbh|plc|sa|ag|bv|pvt|private|technologies|technology|labs|software|"
-    r"solutions|systems|group|holdings|team|talent|acquisitions?|recruiting|"
+    r"solutions|systems|group|holdings|team|talent|acquisitions?|recruiters?|recruiting|"
     r"recruitment|careers|hr|people|hiring)\b", re.I)
 
 # ATS/HR platform names that get appended to a sender display ("NCR Voyix Workday",
@@ -408,6 +409,26 @@ _INTERVIEW_DIRECT: list[re.Pattern[str]] = [re.compile(p, re.I) for p in (
     r"(?:share|provide|send (?:us )?|let us know|confirm)\s+your availability",
 )]
 
+_OFFER_DIRECT: list[re.Pattern[str]] = [re.compile(p, re.I) for p in (
+    r"(?:pleased|excited|thrilled|happy|delighted) to (?:offer|extend)",
+    r"offer of employment",
+    r"your (?:job|employment|formal|written|verbal) offer",
+    r"your offer letter",
+    r"(?:your|attached|enclosed) (?:job|employment|formal|written|verbal) offer",
+    r"(?:attached|enclosed|review|sign) (?:the |your )?offer letter",
+    r"extend(?:ing)? (?:you )?an offer",
+    r"we would like to offer you",
+    r"we (?:are |'re )?offering you",
+    r"you(?:'ve| have) (?:received|been extended) (?:a |an )?(?:job |employment )?offer",
+    r"congratulations[!,. ].{0,60}offer",
+)]
+
+_NON_EMPLOYMENT_OFFER = re.compile(
+    r"(?i)\boffer(?:ed|ing)?\s+by\b|\b(?:summer|learning|course|training|diploma|"
+    r"certification|subscription|premium|tuition|discount|sale|limited[- ]time)\b"
+    r"[^.!?\n]{0,50}\boffer\b|\boffer\b[^.!?\n]{0,50}"
+    r"\b(?:off|discount|course|training|subscription|premium|tuition)\b")
+
 
 def _interview_is_direct(subject: str, body: str) -> bool:
     """True when an interview is positively invited / scheduled / named / advanced
@@ -416,6 +437,20 @@ def _interview_is_direct(subject: str, body: str) -> bool:
     s = _norm(subject)
     b = _norm(body)
     return any(p.search(s) or (bool(b) and p.search(b)) for p in _INTERVIEW_DIRECT)
+
+
+def _offer_is_direct(subject: str, body: str) -> bool:
+    """True only for an explicitly asserted employment offer."""
+    s = _norm(subject)
+    b = _norm(body)
+    if _NON_EMPLOYMENT_OFFER.search(f"{s}\n{b}"):
+        return False
+    return any(p.search(s) or (bool(b) and p.search(b)) for p in _OFFER_DIRECT)
+
+
+def is_non_employment_offer(subject: str, body: str = "") -> bool:
+    """True for explicit product/course/promotional offer language."""
+    return bool(_NON_EMPLOYMENT_OFFER.search(f"{_norm(subject)}\n{_norm(body)}"))
 
 
 def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool, list[str]]:
@@ -444,6 +479,7 @@ def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool,
     # invite, so the signal is re-scored with those clauses removed.
     stripped_body = _strip_conditional(body)
     scores["rejection"] = score_signals(subject, stripped_body)["rejection"]
+    scores["offer"] = score_signals(subject, stripped_body)["offer"]
     scores["interview"] = score_signals(subject, stripped_body)["interview"]
     # Security-role JDs literally describe the job as "gap / security / risk
     # assessments", so re-score the assessment signal with those JD phrases removed
@@ -452,11 +488,13 @@ def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool,
     scores["assessment"] = score_signals(
         _strip_jd_assessment(subject), _strip_jd_assessment(stripped_body))["assessment"]
     direct_interview = _interview_is_direct(subject, stripped_body)
+    direct_offer = _offer_is_direct(subject, stripped_body)
     # 1. Terminal signals are decisive from anywhere (rarely boilerplate); the
     #    rejection must survive de-conditionalization to count here.
-    for sig in ("rejection", "offer"):
-        if scores[sig] >= _DECISIVE:
-            return sig, scores, False, [sig]
+    if scores["rejection"] >= _DECISIVE:
+        return "rejection", scores, False, ["rejection"]
+    if direct_offer and scores["offer"] >= _DECISIVE:
+        return "offer", scores, False, ["offer"]
     # 1b. A DIRECTLY invited/scheduled interview outranks an application
     #     acknowledgment: being invited to interview is strictly later in the
     #     funnel than "we received your application", so a generic "Your
@@ -471,6 +509,8 @@ def classify_scored(subject: str, body: str) -> tuple[str, dict[str, int], bool,
         return "confirmation", scores, False, ["confirmation"]
     # 3. Highest weighted score wins; >=2 within the margin is an ambiguous tie.
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1], _PRECEDENCE.index(kv[0])))
+    if not direct_offer:
+        ranked = [kv for kv in ranked if kv[0] != "offer"]
     top, top_score = ranked[0]
     if top_score < _SCORE_FLOOR:
         return "other", scores, False, []
@@ -612,6 +652,17 @@ _JOB_APPLICATION = re.compile(
     r"(?:your|the)\s+(?P<company>[A-Za-z0-9 &.'-]{2,40}?)\s+job\s+application\b", re.I)
 _ROLE_DASH = re.compile(
     r"^(?P<company>[A-Za-z0-9 &.,'-]{2,50}?)\s*[-\u2013\u2014|:]\s*(?P<role>[A-Za-z0-9 ,+/&().-]{2,60})$")
+_REQ_ROLE_SUBJECT = re.compile(
+    r"\b\d{5,}\s*(?:[-\u2013\u2014:]\s*)?"
+    r"(?P<role>[A-Za-z][A-Za-z0-9 ,+/&().-]{1,100})\s*$", re.I)
+_REQ_ROLE_BODY = re.compile(
+    r"\bref\s*:\s*\d{5,}\s*[-\u2013\u2014:]\s*"
+    r"(?P<role>[A-Za-z][A-Za-z0-9 ,+/&().-]{1,100}?)"
+    r"(?=\s+(?:dear|hi|hello)\b|[\r\n]|$)", re.I)
+_ROLE_STOP = frozenset({
+    "application status", "application update", "next step", "next steps",
+    "status", "update",
+})
 # "thank you for your interest in <Company>" (rejection/confirmation phrasing).
 _INTEREST_IN = re.compile(
     r"interest(?:ed)?\s+in\s+(?:working\s+(?:at|with)\s+|joining\s+)?"
@@ -639,12 +690,12 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
     be "" -- callers must tolerate missing values.
     """
     subject = subject or ""
-    role = ""
+    role = _requisition_role(subject, body)
     company = ""
 
     m = _ROLE_AT_COMPANY.search(subject)
     if m:
-        role = _clean(m.group("role"))
+        role = role or _clean_role(m.group("role"))
         company = _pick(_strip_company_noise(m.group("company")))
 
     for pattern in (_APPLICATION_TO, _INTEREST_IN, _JOB_APPLICATION, _AT_COMPANY):
@@ -654,17 +705,17 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
         if m:
             company = _pick(_strip_company_noise(m.group("company")))
 
-    if not company:                      # body as a last resort (subject wins)
+    sender_company = _pick(_company_from_sender(from_name, from_domain))
+    if not company and company_from_domain(from_domain):
+        company = sender_company
+
+    if not company:                      # body as a last resort (subject/sender win)
         m = _APPLICATION_TO.search(body or "")
         if m:
             company = _pick(_strip_company_noise(m.group("company")))
 
-    # Sender display name is usually the real company ("Databricks Recruiting" ->
-    # Databricks). Its own fallback derives a direct employer domain when the
-    # display is noise/empty (zscaler.com -> Zscaler), so a real display name is
-    # preferred over a bare domain acronym (mlp.com).
     if not company:
-        company = _pick(_company_from_sender(from_name, from_domain))
+        company = sender_company
 
     if not company:                      # Workday careers URL tenant (last resort)
         m = _WORKDAY_TENANT.search(body or "")
@@ -674,13 +725,30 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
     if not role:
         m = _ROLE_DASH.match(subject.strip())
         if m:
-            role = _clean(m.group("role"))
+            role = _clean_role(m.group("role"))
             if not company:
                 cand = _strip_company_noise(m.group("company"))
                 if len(cand.split()) <= 3:
                     company = _pick(cand)
 
     return company, role
+
+
+def _requisition_role(subject: str, body: str) -> str:
+    for text, pattern in ((subject or "", _REQ_ROLE_SUBJECT),
+                          (body or "", _REQ_ROLE_BODY)):
+        match = pattern.search(text)
+        if match:
+            role = _clean_role(match.group("role"))
+            if role:
+                return role
+    return ""
+
+
+def _clean_role(value: str) -> str:
+    role = re.sub(r"\s+", " ", value or "").strip(" \t\r\n-\u2013\u2014|:,.")
+    key = re.sub(r"[^a-z0-9]+", " ", role.lower()).strip()
+    return "" if key in _ROLE_STOP else role
 
 
 def _company_from_sender(from_name: str, from_domain: str) -> str:

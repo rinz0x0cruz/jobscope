@@ -34,9 +34,16 @@ def _job(company: str, location: str, *, salary: float = 0, remote: bool = False
     ("Audit and Vulnerability Management Analyst II", "Stretch", True),
     ("Staff Backend Engineer, Software Supply Chain Security", "Good", True),
     ("Application Security Intern", "Good", True),
+    ("Information-Security Analyst", "Good", True),
+    ("Cloud\u2013Security Engineer", "Good", True),
+    ("SOC Engineer - L2", "Stretch", True),
+    ("SIEM Engineer", "Stretch", True),
+    ("Detection Engineer", "Stretch", True),
     ("Security Guard", "Stretch", False),
+    ("Security-Guard", "Stretch", False),
     ("International Consultant on Minerals Crime and Security of Supply Chains", "Stretch", False),
     ("Intermediate Backend Engineer", "Good", False),
+    ("Social Media Manager", "Good", False),
     ("Security Analyst", "Skip", False),
 ])
 def test_security_role_requires_cyber_title_and_profile_fit(title, tier, expected):

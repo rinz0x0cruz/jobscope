@@ -63,6 +63,9 @@ DROP_CASES = [
      "Ace your next interview with LeetCode's Interview Crash Course", ""),
     ("educative-course-promo", "Educative", "email.educative.io",
      "Grokking the API Design Interview", ""),
+    ("coursera-ibm-course-promo", "IBM", "m.learn.coursera.org",
+     "Build the AI Behind the AI... Don't Just Use It",
+     "Designed for professionals preparing for technical interviews."),
     ("github-ci-run-notification", "Rinzler", "github.com",
      "[rinz0x0cruz/jobscope] PR run failed: ci", ""),
 ]
@@ -126,6 +129,20 @@ SIGNAL_CASES = [
      "", "assessment"),
     ("offer-clear", "Your offer from Acme",
      "We are pleased to offer you the position of Security Engineer.", "offer"),
+    ("offer-of-employment-clear", "Offer of employment",
+     "Please review the attached terms for your Security Engineer role.", "offer"),
+    ("offer-promotional-is-not-employment", "Your summer offer is here",
+     "Get 30% off Premium Annual and invest in your interview skills.", "other"),
+    ("offered-course-is-not-employment", "Management diploma offered by Great Lakes",
+     "Explore this limited-time learning opportunity.", "other"),
+    ("employment-offer-mentioned-is-not-asserted", "Your application update",
+     "Explore this employment offer and interview preparation assessment.",
+     "assessment"),
+    ("welcome-community-is-not-employment-offer", "Welcome to the team",
+     "Thanks for joining our learning community.", "other"),
+    ("conditional-offer-is-not-an-offer", "Your application update",
+     "Thank you for applying. If selected, we would like to offer you the role.",
+     "confirmation"),
     ("rejection-clear", "Update on your application",
      "Unfortunately, we have decided not to move forward with your application at this time.",
      "rejection"),
@@ -158,6 +175,26 @@ SIGNAL_CASES = [
      "Regarding your interest in Security Consultant - SOC / SecOps maturity gap assessments role with NTT DATA",
      "Thanks for sharing your CV with us and for showing interest in this role. Kindly share your CV.",
      "other"),
+]
+
+# Failure mode 5 -- REQUISITION IDENTITY loss: IBM uses a generic status subject
+# for later events and puts ``Ref: <req> - <role>`` in the body. Every subject form
+# must recover the same role so concurrent applications do not collapse together.
+#   id, subject, body, expected_role
+ROLE_CASES = [
+    ("ibm-submission-role-after-req",
+     "You have successfully submitted your IBM job application - 124720 -\r\n"
+     " Security Analyst Level 2 - SIEM & SOAR", "",
+     "Security Analyst Level 2 - SIEM & SOAR"),
+    ("ibm-generic-status-role-from-ref",
+     "Your IBM Application Status",
+     "IBM Careers Ref: 125033 - Security Analyst Dear Mohit, we regret to inform you.",
+     "Security Analyst"),
+    ("ibm-next-steps-role-from-ref",
+     "Your IBM Application: Next Steps",
+     "IBM Careers Ref: 124835 - Security Consultant-SOC(XSIAM) Dear Mohit, "
+     "please complete the assessment.",
+     "Security Consultant-SOC(XSIAM)"),
 ]
 
 _PLATFORM_NAMES = {"successfactors", "workday", "myworkday", "greenhouse", "lever",
@@ -202,3 +239,24 @@ def test_fp_signal_is_classified_correctly(cid, subject, body, expected):
     # invited/scheduled/named -- a mention, promise, hypothetical, or soft chat is
     # the confirmation / recruiter note / rejection it really is.
     assert mailrules.classify_scored(subject, body)[0] == expected
+
+
+def test_ineligible_offer_never_reaches_ai_candidates():
+    signal, _scores, _ambiguous, tied = mailrules.classify_scored(
+        "Your application update",
+        "Thanks for applying. Explore this employment offer and interview "
+        "preparation assessment.",
+    )
+    assert signal == "assessment"
+    assert "offer" not in tied
+
+
+@pytest.mark.parametrize(
+    "cid,subject,body,expected", ROLE_CASES, ids=[c[0] for c in ROLE_CASES]
+)
+def test_fp_requisition_role_is_preserved(cid, subject, body, expected):
+    company, role = mailrules.parse_company_role(
+        "IBM Talent Acquisition", "ibm.com", subject, body,
+    )
+    assert company == "IBM"
+    assert role == expected

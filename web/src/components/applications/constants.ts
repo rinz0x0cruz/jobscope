@@ -44,6 +44,7 @@ export const SIGNAL_COLOR: Record<string, string> = {
   interview: 'var(--stretch)',
   offer: 'var(--strong)',
   rejection: '#ef4444',
+  manual: 'var(--accent)',
   other: 'var(--mute)',
 }
 

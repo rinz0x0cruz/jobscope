@@ -1,7 +1,7 @@
-// Client for the local `jobscope serve` outreach endpoint. On the public static
-// site these calls 404 (no backend), so the drawer panel simply never appears.
+// Client for the local `jobscope serve` outreach endpoint. Public/static origins
+// never probe these routes, so local-only controls simply remain unavailable.
 
-import type { Profile } from '@/lib/schema'
+import { normalizeDashboardData, type DashboardData, type Profile } from '@/lib/schema'
 
 export interface OutreachPreview {
   ok: boolean
@@ -50,12 +50,21 @@ export interface CompanyOutreach {
 }
 
 const api = (path: string) => `${location.origin}/${path}`
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
 
-// Probe the local serve API once; resolves to the CSRF token, or null on the
-// public site (where /api/token does not exist).
+// Probe the local serve API once; resolve directly to null on public/static hosts.
 let tokenProbe: Promise<string | null> | null = null
-export function localServeToken(refresh = false): Promise<string | null> {
-  if (refresh) tokenProbe = null
+let dashboardProbe: Promise<DashboardData> | null = null
+
+export function resetLocalServeToken(): void {
+  tokenProbe = null
+  dashboardProbe = null
+}
+
+export function localServeToken(): Promise<string | null> {
+  if (!LOOPBACK_HOSTS.has(location.hostname.toLowerCase())) {
+    return Promise.resolve(null)
+  }
   if (!tokenProbe) {
     tokenProbe = fetch(api('api/token'), { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
@@ -127,6 +136,32 @@ export interface ProfileUploadResult extends ProfileUseResult {
   profile_limit?: number
 }
 
+export function localDashboard(token: string, refresh = false): Promise<DashboardData> {
+  if (refresh) dashboardProbe = null
+  if (!dashboardProbe) {
+    dashboardProbe = fetch(api('api/dashboard'), {
+      headers: { 'X-Refresh-Token': token },
+      cache: 'no-store',
+    }).then(async (response) => {
+      const result = await response.json() as { ok?: boolean; error?: string; data?: DashboardData }
+      if (!response.ok || !result.ok || !result.data) {
+        throw new Error(result.error || 'Could not load local dashboard')
+      }
+      return normalizeDashboardData(result.data)
+    }).catch((error) => {
+      dashboardProbe = null
+      throw error
+    })
+  }
+  return dashboardProbe
+}
+
+export interface ProfileIntentUpdate {
+  search_terms: string[]
+  locations: string[]
+  remote: boolean
+}
+
 function fileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -141,6 +176,28 @@ function fileAsBase64(file: File): Promise<string> {
 
 export async function profileUse(name: string, token: string): Promise<ProfileUseResult> {
   const r = await fetch(api('api/profile/use'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    body: JSON.stringify({ name }),
+  })
+  return (await r.json()) as ProfileUseResult
+}
+
+export async function profileUpdate(
+  name: string,
+  token: string,
+  intent: ProfileIntentUpdate,
+): Promise<ProfileUseResult> {
+  const r = await fetch(api('api/profile'), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    body: JSON.stringify({ name, ...intent }),
+  })
+  return (await r.json()) as ProfileUseResult
+}
+
+export async function profileReset(name: string, token: string): Promise<ProfileUseResult> {
+  const r = await fetch(api('api/profile/reset'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
     body: JSON.stringify({ name }),

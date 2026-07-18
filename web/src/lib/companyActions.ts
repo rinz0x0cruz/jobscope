@@ -22,6 +22,19 @@ export type MonitoringAction =
   | { type: 'review.set'; job_id: string; state: ReviewState }
   | { type: 'application.restore'; job_id: string }
 
+export interface ScanDecisionFunnel {
+  board: number
+  geo_eligible: number
+  title_eligible: number
+  details_attempted: number
+  details_hydrated: number
+  details_failed: number
+  details_truncated: number
+  experience_eligible: number
+  matched: number
+  skip_reasons: Record<string, number>
+}
+
 export interface MonitoringActionResult {
   ok: boolean
   mode: 'local' | 'queued'
@@ -33,8 +46,10 @@ export interface MonitoringActionResult {
   activity_audit?: ActivityAudit
   scans?: Array<{
     ok: boolean
+    monitor_id?: string
     company: string
     matched?: number
+    funnel?: ScanDecisionFunnel
     error?: string
     contact_status?: string
     recruiter_count?: number

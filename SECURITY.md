@@ -142,5 +142,6 @@ Intentionally out of scope for now, to stay portable and dependency-light:
 
 ## Reporting a vulnerability
 
-This is a personal, local-first tool with no server component. If you find a security issue, please
+This is a personal, local-first tool with no Internet-facing backend. Its optional HTTP control plane binds
+only to loopback and requires a per-process token plus same-origin checks. If you find a security issue, please
 open a GitHub issue (omit any secret values) or contact the maintainer privately.

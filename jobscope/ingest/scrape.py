@@ -55,7 +55,7 @@ def run(cfg: dict, store, *, mode: str = "all", force_discovery: bool = False) -
         return 0
 
     base = cfg["search"]
-    # An editable, résumé-derived search profile (data/profile.yaml) drives the
+    # An editable, résumé-derived named profile (data/profiles/) drives the
     # fetch when present; config.search is the fallback. See analyze/profile.py.
     from jobscope.analyze import profile as _profile
     prof = _profile.load(cfg)

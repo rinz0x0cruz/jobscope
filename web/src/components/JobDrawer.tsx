@@ -157,6 +157,7 @@ const SIGNAL_LABEL: Record<string, string> = {
   interview: 'Interview',
   offer: 'Offer',
   rejection: 'Rejection',
+  manual: 'Manual update',
   other: 'Update',
 }
 
@@ -170,12 +171,12 @@ function fmtEventDate(iso: string): string {
 
 /**
  * The application's email thread — the "mail summary" surfaced from the board:
- * one entry per scanned email (signal, date, subject, sender, and a one-line
- * body preview present when inbox.store_snippets is enabled).
+ * one entry per scanned email or date-stamped user update. Email entries include
+ * a one-line body preview when inbox.store_snippets is enabled.
  */
-function EmailTimeline({ events }: { events: ApplicationEvent[] }) {
+function ApplicationTimeline({ events }: { events: ApplicationEvent[] }) {
   return (
-    <Section title={`Emails (${events.length})`}>
+    <Section title={`Activity (${events.length})`}>
       <ol className="space-y-3">
         {events.map((ev, i) => {
           const color = signalColor(ev.signal)
@@ -236,10 +237,10 @@ export function ApplicationReader({ app, onClose }: { app: Application; onClose:
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {app.timeline.length > 0 ? (
-          <EmailTimeline events={app.timeline} />
+          <ApplicationTimeline events={app.timeline} />
         ) : (
-          <Section title="Emails">
-            <p className="text-[13px] text-mute">No emails linked to this application yet.</p>
+          <Section title="Activity">
+            <p className="text-[13px] text-mute">No activity linked to this application yet.</p>
           </Section>
         )}
         <OfferEditor
@@ -384,7 +385,7 @@ export function RoleReader({
       {/* scrollable sections */}
       <div className="min-h-0 flex-1 overflow-auto">
         {application && application.timeline.length > 0 && (
-          <EmailTimeline events={application.timeline} />
+          <ApplicationTimeline events={application.timeline} />
         )}
         <RecruiterOutreach key={job.id} jobId={job.id} />
         {job.description && <JobDescription text={job.description} />}

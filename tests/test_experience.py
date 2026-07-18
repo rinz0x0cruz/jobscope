@@ -38,6 +38,19 @@ def test_broader_experience_phrases():
     assert required_experience_years(_job("Security Engineer", "8 plus years")) == 8.0
 
 
+def test_explicit_seasoned_experience_implies_senior_bar():
+    assert required_experience_years(_job(
+        "Information Security Analyst",
+        "A seasoned subject matter expert with seasoned experience in SOC operations.",
+    )) == 4.0
+    assert required_experience_years(_job(
+        "Security Analyst", "A seasoned knowledge of SIEM investigations is required.",
+    )) == 4.0
+    assert required_experience_years(_job(
+        "Security Analyst", "Join a seasoned and supportive team.",
+    )) is None
+
+
 def test_takes_highest_bar_across_title_and_text():
     # Senior title (~4y) + "8+ years" text -> 8; conservative so it doesn't leak through a cap.
     assert required_experience_years(_job("Senior Engineer", "8+ years in security")) == 8.0

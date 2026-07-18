@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from statistics import median
@@ -25,11 +26,11 @@ INDIA_CYBERSECURITY_POOL = (
 
 _EXPLICIT_SECURITY_TITLE_TERMS = (
     "application security", "appsec", "blue team", "cloud security", "computer forensic",
-    "cyber", "cybersecurity", "data security", "devsecops", "dfir", "digital forensic",
+    "cyber", "cybersecurity", "data security", "detection engineer", "devsecops", "dfir", "digital forensic",
     "endpoint security", "grc", "iam", "identity and access", "incident response",
     "information security", "infosec", "malware", "network security",
     "offensive security", "penetration", "product security", "red team", "secops",
-    "security operations", "security program", "soc analyst", "soc manager",
+    "security operations", "security program", "siem", "soc", "soc analyst", "soc manager",
     "software supply chain security", "threat", "vulnerabilities", "vulnerability",
 )
 _SECURITY_ROLE_NOUNS = frozenset({
@@ -100,7 +101,9 @@ def is_security_role(job) -> bool:
     """
     if str(job.tier or "").strip().casefold() == "skip":
         return False
-    title = " ".join(str(job.title or "").casefold().replace("/", " ").split())
+    title = " ".join(re.sub(
+        r"[-\u2013\u2014/]+", " ", str(job.title or "").casefold(),
+    ).split())
     padded = f" {title} "
     if any(term in title for term in _PHYSICAL_SECURITY_TITLE_TERMS):
         return False

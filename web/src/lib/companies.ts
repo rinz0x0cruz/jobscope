@@ -71,8 +71,12 @@ export function buildCompanies(data: DashboardData, query = ''): CompaniesModel 
       const companyKey = companyNameKey(company.company)
       return {
         ...company,
-        pending_count: reviews.filter((review) => review.state === 'pending').length,
-        saved_count: reviews.filter((review) => review.state === 'saved').length,
+        pending_count: company.pending_count || reviews.filter(
+          (review) => review.state === 'pending',
+        ).length,
+        saved_count: company.saved_count || reviews.filter(
+          (review) => review.state === 'saved',
+        ).length,
         pendingJobs,
         savedJobs,
         collectedJobs: [...(collectedJobsByCompany.get(companyKey) ?? [])]

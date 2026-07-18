@@ -83,6 +83,59 @@ def test_write_load_roundtrip():
         assert loaded["resume"] == "research" and loaded["remote"] is True
 
 
+def test_update_profile_changes_search_intent_and_preserves_resume_facts():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        original = profile.build_profile(_resume(), cfg, "research")
+        profile.write_profile(profile._profile_file(cfg, "research"), original)
+        profile._write_active(cfg, "research")
+
+        updated = profile.update_profile(
+            cfg, "research",
+            search_terms=["Threat Researcher", "threat researcher", "Detection Engineer"],
+            locations=["India", "Remote"],
+            remote=False,
+        )
+
+        assert updated["search_terms"] == ["Threat Researcher", "Detection Engineer"]
+        assert updated["locations"] == ["India", "Remote"] and updated["remote"] is False
+        assert updated["seniority"] == original["seniority"]
+        assert updated["top_skills"] == original["top_skills"]
+        assert profile.load(cfg) == updated
+
+
+def test_update_profile_rejects_invalid_or_empty_intent():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        profile.write_profile(
+            profile._profile_file(cfg, "research"),
+            profile.build_profile(_resume(), cfg, "research"),
+        )
+        try:
+            profile.update_profile(
+                cfg, "research", search_terms=[], locations=["India"], remote=True,
+            )
+        except ValueError as error:
+            assert "at least one" in str(error)
+        else:
+            raise AssertionError("empty profile search terms were accepted")
+
+
+def test_reset_profile_rebuilds_search_intent_from_stored_resume():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with Store(cfg["output"]["db_path"]) as store:
+            store.save_resume(_resume(), name="research")
+            profile.write_profile(
+                profile._profile_file(cfg, "research"),
+                {**profile.build_profile(_resume(), cfg, "research"),
+                 "search_terms": ["Custom Role"], "locations": ["Mars"], "remote": False},
+            )
+            reset = profile.reset_profile(cfg, store, "research")
+        assert "Security Researcher" in reset["search_terms"]
+        assert reset["locations"][0] == "Remote" and reset["remote"] is True
+
+
 def test_load_missing_returns_none():
     with tempfile.TemporaryDirectory() as tmp:
         assert profile.load(_cfg(tmp)) is None

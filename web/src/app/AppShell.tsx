@@ -115,7 +115,7 @@ function DesktopSidebar({
       </nav>
 
       <div className="shrink-0 border-t border-line p-3">
-        <div className="grid grid-cols-2 gap-1">
+        <div className={`grid gap-1 ${onLock ? 'grid-cols-2' : 'grid-cols-1'}`}>
           <button
             type="button"
             onClick={onToggleTheme}
@@ -123,13 +123,13 @@ function DesktopSidebar({
           >
             <SunMedium size={15} aria-hidden="true" /> Theme
           </button>
-          <button
+          {onLock && <button
             type="button"
             onClick={onLock}
             className="flex h-10 items-center justify-center gap-2 rounded-md text-[11px] font-medium text-ink-2 hover:bg-inset hover:text-ink"
           >
             <Lock size={15} aria-hidden="true" /> Lock
-          </button>
+          </button>}
         </div>
       </div>
     </aside>
@@ -285,9 +285,9 @@ export function AppShell({
             <IconButton label="Toggle theme" onClick={onToggleTheme} className="hidden sm:inline-flex lg:hidden">
               <SunMedium size={17} aria-hidden="true" />
             </IconButton>
-            <IconButton label="Lock" onClick={onLock} className="lg:hidden">
+            {onLock && <IconButton label="Lock" onClick={onLock} className="lg:hidden">
               <Lock size={17} aria-hidden="true" />
-            </IconButton>
+            </IconButton>}
           </div>
         </div>
       </header>

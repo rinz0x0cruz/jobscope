@@ -22,7 +22,7 @@ TIER_COLORS = {"Strong": "#16a34a", "Good": "#2563eb", "Stretch": "#d97706", "Sk
 
 def _profile_data(cfg: dict, store) -> dict | None:
     """The résumé-derived search profile for the dashboard (shown behind the site
-    unlock, stripped from the public build): the editable ``profile.yaml`` when it
+    unlock, stripped from the public build): the active named YAML profile when it
     exists, else built on the fly from the stored résumé. ``None`` with no résumé.
     """
     from jobscope.analyze import profile as _profile
@@ -321,6 +321,26 @@ def _summarize(text: str, limit: int = 220) -> str:
     return s[:limit].rsplit(" ", 1)[0].rstrip(",.;:") + "..."
 
 
+_DATED_NOTE = re.compile(r"^\[(\d{4}-\d{2}-\d{2})\]\s+(.+)$")
+
+
+def _manual_events(notes: str) -> list[dict[str, str]]:
+    """Project date-stamped application notes into private dashboard activity."""
+    events = []
+    for line in (notes or "").splitlines():
+        match = _DATED_NOTE.match(line.strip())
+        if not match:
+            continue
+        events.append({
+            "date": match.group(1),
+            "signal": "manual",
+            "subject": match.group(2),
+            "from": "User record",
+            "summary": "",
+        })
+    return events
+
+
 def _application_records(store) -> list[dict[str, Any]]:
     """Per-application records (company/title/status + email timeline) for the
     dashboard's Applications board. Best-effort: never breaks the dashboard."""
@@ -337,8 +357,18 @@ def _application_records(store) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for a in apps:
         jid = a.get("job_id") or ""
-        evs = sorted(events.get(jid, []),
-                     key=lambda e: (e.get("date") or "", e.get("first_seen") or ""))
+        timeline = [
+            {
+                "date": (e.get("date") or "")[:10],
+                "signal": e.get("signal") or "",
+                "subject": e.get("subject") or "",
+                "from": e.get("from_domain") or "",
+                "summary": _summarize(e.get("snippet") or ""),
+            }
+            for e in events.get(jid, [])
+        ]
+        timeline.extend(_manual_events(a.get("notes") or ""))
+        timeline.sort(key=lambda e: (e.get("date") or "", e.get("signal") or ""))
         out.append({
             "job_id": jid,
             "company": a.get("company") or "",
@@ -350,13 +380,7 @@ def _application_records(store) -> list[dict[str, Any]]:
             "interview_at": a.get("interview_at") or "",
             "salary_offered": a.get("salary_offered") or "",
             "offer_accepted": a.get("offer_accepted") or "",
-            "timeline": [{
-                "date": (e.get("date") or "")[:10],
-                "signal": e.get("signal") or "",
-                "subject": e.get("subject") or "",
-                "from": e.get("from_domain") or "",
-                "summary": _summarize(e.get("snippet") or ""),
-            } for e in evs],
+            "timeline": timeline,
         })
     return out
 

@@ -1,10 +1,9 @@
 """Search profile: an editable, résumé-derived statement of what to look for.
 
-`resume import` seeds ``data/profile.yaml`` from your parsed résumé (target roles
-from your titles + a skills→role map, your locations, remote preference). You edit
-that file, and ``jobscope scan`` fetches jobs from it -- so the search follows your
-résumé instead of a hand-typed keyword in config.yaml. config.search stays the
-fallback when no profile exists.
+`resume import` seeds ``data/profiles/<name>.yaml`` from your parsed résumé
+(target roles from titles + a skills-to-role map, locations, remote preference).
+Local Settings or direct YAML edits can change search intent, and ``jobscope scan``
+fetches from the active profile. config.search stays the fallback when none exists.
 
 Deterministic + offline: it reads the parsed :class:`Resume` and writes plain YAML.
 """
@@ -12,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 
 from jobscope.core.model import Resume
 
@@ -42,6 +42,8 @@ _ROLE_HINTS: list[tuple[tuple[str, ...], str]] = [
 ]
 
 _MAX_TERMS = 7
+_MAX_EDITED_TERMS = 20
+_MAX_LOCATIONS = 10
 
 
 def _data_dir(cfg: dict) -> str:
@@ -143,9 +145,76 @@ def write_profile(path: str, prof: dict) -> str:
         "# résumé for reference -- matching reads the résumé itself, not this file.\n\n")
     body = yaml.safe_dump(prof, sort_keys=False, allow_unicode=True, default_flow_style=False)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(header + body)
+    directory = os.path.dirname(os.path.abspath(path))
+    temporary = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=directory, delete=False,
+        ) as handle:
+            temporary = handle.name
+            handle.write(header + body)
+        os.replace(temporary, path)
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
     return path
+
+
+def update_profile(cfg: dict, name: str, *, search_terms, locations, remote) -> dict:
+    """Update editable search intent while preserving résumé-derived facts."""
+    normalized = _slug(name)
+    current = _load_named(cfg, normalized)
+    if current is None:
+        raise ValueError(f"no profile named '{normalized}'")
+
+    def clean_list(value, label: str, *, limit: int, max_length: int) -> list[str]:
+        if not isinstance(value, list):
+            raise ValueError(f"{label} must be a list")
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in value:
+            if not isinstance(raw, str):
+                raise ValueError(f"{label} must contain only text")
+            item = " ".join(raw.split()).strip()
+            if not item:
+                continue
+            if len(item) > max_length:
+                raise ValueError(f"{label} entries must be at most {max_length} characters")
+            key = item.casefold()
+            if key not in seen:
+                seen.add(key)
+                cleaned.append(item)
+        if not cleaned:
+            raise ValueError(f"{label} must contain at least one entry")
+        if len(cleaned) > limit:
+            raise ValueError(f"{label} supports at most {limit} entries")
+        return cleaned
+
+    if not isinstance(remote, bool):
+        raise ValueError("remote must be true or false")
+    updated = {
+        **current,
+        "search_terms": clean_list(
+            search_terms, "search_terms", limit=_MAX_EDITED_TERMS, max_length=80,
+        ),
+        "locations": clean_list(
+            locations, "locations", limit=_MAX_LOCATIONS, max_length=100,
+        ),
+        "remote": remote,
+    }
+    write_profile(_profile_file(cfg, normalized), updated)
+    return updated
+
+
+def reset_profile(cfg: dict, store, name: str) -> dict:
+    """Regenerate one profile from its stored résumé after explicit confirmation."""
+    normalized = _slug(name)
+    resume = store.get_named_resume(normalized)
+    if resume is None:
+        raise ValueError(f"no résumé named '{normalized}'")
+    rebuilt = build_profile(resume, cfg, normalized)
+    write_profile(_profile_file(cfg, normalized), rebuilt)
+    return rebuilt
 
 
 def _load_named(cfg: dict, name: str) -> dict | None:

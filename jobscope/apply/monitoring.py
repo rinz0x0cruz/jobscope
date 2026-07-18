@@ -1,6 +1,7 @@
 """Validated company-monitor and review actions shared by CLI, serve, and CI."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 from typing import Any
 from urllib.parse import urlparse
@@ -18,6 +19,7 @@ _ALLOWED_FIELDS = {
     "monitor.contacts": {"type", "monitor_id"},
     "review.set": {"type", "job_id", "state"},
     "application.restore": {"type", "job_id"},
+    "application.note": {"type", "job_id", "text", "when"},
 }
 
 
@@ -106,11 +108,25 @@ def _prepare_actions(cfg: dict, store, actions: Any) -> list[dict[str, Any]]:
             if store.get_company_monitor(monitor_id) is None:
                 raise ValueError(f"unknown monitor: {monitor_id}")
             prepared.append({"type": action_type, "monitor_id": monitor_id})
-        elif action_type == "application.restore":
+        elif action_type in {"application.restore", "application.note"}:
             job_id = _clean_string(raw.get("job_id"), "job_id", limit=240, required=True)
-            if store.get_application(job_id, include_tombstoned=True) is None:
+            include_tombstoned = action_type == "application.restore"
+            if store.get_application(job_id, include_tombstoned=include_tombstoned) is None:
                 raise ValueError(f"unknown application: {job_id}")
-            prepared.append({"type": action_type, "job_id": job_id})
+            if action_type == "application.restore":
+                prepared.append({"type": action_type, "job_id": job_id})
+            else:
+                when = _clean_string(raw.get("when"), "when", limit=10, required=True)
+                try:
+                    dt.date.fromisoformat(when)
+                except ValueError as exc:
+                    raise ValueError("when must be an ISO date (YYYY-MM-DD)") from exc
+                prepared.append({
+                    "type": action_type,
+                    "job_id": job_id,
+                    "text": _clean_string(raw.get("text"), "text", limit=500, required=True),
+                    "when": when,
+                })
         else:
             prepared.append({
                 "type": action_type,
@@ -175,6 +191,14 @@ def apply_actions(cfg: dict, store, actions: Any, *, initiator: str = "user") ->
                         )
                     results.append(result)
                     restored_count += int(result["restored"])
+                elif action_type == "application.note":
+                    results.append({
+                        "ok": True,
+                        "job_id": action["job_id"],
+                        "added": store._append_note(
+                            action["job_id"], action["text"], when=action["when"],
+                        ),
+                    })
                 elif action_type == "monitor.contacts":
                     contact_ids.append(action["monitor_id"])
                 else:
@@ -254,7 +278,9 @@ def resolve_company(cfg: dict, store, *, company: str, careers_url: str = "",
     if not fetch.successful:
         response["ok"] = False
         return response
-    scored = score_jobs(cfg, store, ats.filter_board_jobs(cfg, fetch.jobs))
+    candidates = ats.filter_profile_jobs(cfg, store, fetch.jobs)
+    candidates = ats.hydrate_company_jobs(resolution.provider, candidates)
+    scored = score_jobs(cfg, store, candidates)
     matches = [item for item in scored if item.tier != "Skip"][:max(1, min(int(limit), 50))]
     response["matched"] = len(matches)
     response["results"] = [{

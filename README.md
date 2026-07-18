@@ -58,16 +58,16 @@ python -m playwright install chromium
 python -m jobscope init                          # scaffold config.yaml + data/ + .env
 # add your resume at data/resume.md
 python -m jobscope resume import data/resume.md   # parse it + seed a résumé-derived search profile
-python -m jobscope profile show                   # review/edit data/profile.yaml (terms/locations drive scan)
+python -m jobscope profile show                   # review terms/locations that drive scan
 python -m jobscope companies seed                 # import configured watchlist; application companies stay known
-python -m jobscope companies scan                 # check monitored Greenhouse/Lever/Ashby portals
+python -m jobscope companies scan                 # check monitored supported career portals
 python -m jobscope scan --mode discovery          # optional broad LinkedIn/Indeed/Google discovery (daily cadence)
 python -m jobscope match                          # rank by fit score
 python -m jobscope reviews sync                   # monitored/discovery roles enter the review queue
 python -m jobscope enrich                         # comp / stock / reddit / news / contacts (top N)
 python -m jobscope tailor <job_id>                # tailored resume + cover letter (PDF)
 python -m jobscope prep   <job_id>                # full review-ready application package
-python -m jobscope dashboard --open               # browse everything
+python -m jobscope serve --open                   # live local workspace + profile editor
 ```
 
 Or run the whole loop in one shot:
@@ -82,13 +82,15 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 |---|---|
 | `init` | Scaffold `config.yaml`, `data/`, `.env` |
 | `resume import <path> [--name N]` | Parse `.md`/`.json`/`.pdf`/`.txt` into a named base resume (maximum 3 profiles) |
-| `profile [build\|show] [--resume N] [--force]` | Editable résumé-derived search profile (terms/locations/remote) that drives `scan`; local Settings can upload/build/switch profiles |
+| `profile [build\|show] [--resume N] [--force]` | Editable résumé-derived search profile (terms/locations/remote) that drives `scan`; local Settings can upload, replace, edit, reset, and switch profiles |
 | `companies [seed\|list\|scan\|apply]` | Persistent company watchlist. A targeted scan fetches supported official-portal jobs; **Find recruiter** is a separate explicit action. |
 | `scout <company> [--provider P --slug S]` | Preview one company's public ATS board and profile-ranked openings without monitoring it. |
 | `scan [--mode all\|monitored\|discovery] [--force-discovery]` | `all` checks monitored portals and runs broad JobSpy discovery only when its cadence is due; explicit modes isolate either source. |
 | `reviews [sync\|list] [--state S]` | Build/inspect the durable `pending` / `saved` / `dismissed` review queue without resetting prior decisions. |
 | `match` | Fit scoring + tiers, **multi-resume selection**, and **filters** (clearance/sponsorship/block-list) |
 | `pipeline` | scan -> match -> enrich -> prep top picks -> digest (one shot) |
+| `serve [--open]` | Run the loopback control plane: live SQLite dashboard, immediate mutations, profile upload/edit, campaigns, and local refresh |
+| `refresh [--local-only] [--force]` | Sync Gmail + rescore. Existing default also publishes the encrypted snapshot; `--local-only` never builds or publishes |
 | `enrich [--job ID]` | Comp, stock/IPO, Reddit, news, Glassdoor, referral contacts, **company brief** |
 | `tailor <job_id>` | Keyword-aligned resume + cover letter (using the best base resume), rendered to PDF |
 | `prep <job_id>` | Application package (docs + pre-filled answers + link + contacts + brief) |
@@ -139,6 +141,9 @@ the latter returns the message to Draft and requires a fresh approval before any
 
 Campaign addresses, drafts, approvals, schedules, and logs stay in local SQLite. GitHub Pages and GitHub
 Actions do not expose or send campaign mail.
+Campaign auto-drafting selects only valid, non-automated recipients on the confirmed company domain and never
+auto-selects a role inbox. Off-domain recruiter or agency contacts may remain visible as evidence, but cannot
+block a lower-ranked eligible Hunter, Apollo, or employer-published contact.
 
 Quorum is useful here, but bounded. When `ai.enabled` and `quorum.enabled` are both true, draft generation
 uses `quorum.strategy_generative` (normally `council`), and ambiguous ordinary inbox labels may use
@@ -262,15 +267,30 @@ Clicking one opens the Source Serif reader with the description, company brief, 
 stock/IPO, public reputation, referral leads, and score rationale. The toolbar and Settings both
 provide **Scan Gmail**; local serve uses its CSRF-guarded refresh API and Pages dispatches the existing workflow.
 
-Company-specific scans support Greenhouse, Lever, and Ashby. An unresolved Workday, iCIMS,
-SmartRecruiters, or custom portal does **not** silently fall back to LinkedIn/Indeed/Google; broad discovery
-is a separate workflow and may independently collect roles from that employer.
+Company-specific scans support Greenhouse, Lever, Ashby, and curated Phenom tenants. NTT DATA uses a
+bounded Phenom `Information Security` feed (76 roles at validation time) that is still filtered by your
+profile and locations. An unresolved Workday, iCIMS, SmartRecruiters, or custom portal does **not** silently
+fall back to LinkedIn/Indeed/Google; broad discovery is a separate workflow and may independently collect roles.
 
 Remote roles carry a **remote scope**: the dashboard's *remote scope* facet splits
 global remote ("Remote (anywhere)") from geo-restricted remote ("Remote in Ireland"),
 and geo-restricted cards show a `Remote · <region>` badge. Set `match.remote_scope_strict:
 true` to down-rank geo-restricted remote whose region isn't in your `prefer_locations`
 or search country (off by default; global remote is never penalized).
+
+## Local workspace and published snapshot
+
+`python -m jobscope serve --open` is the canonical control plane. It reads current
+SQLite data through a loopback-only, token-guarded API, so profile edits, company
+actions, campaigns, and refreshed matches appear without rebuilding Vite. Settings
+can upload or replace up to three résumés, edit target roles/locations/remote intent,
+or explicitly reset intent from the stored résumé; résumé-derived skills, seniority,
+and experience remain read-only facts.
+
+GitHub Pages is an encrypted **read-only snapshot**, not the interactive backend.
+Actions remain useful for scheduled PC-off inbox scans, encrypted database backup,
+queued Pages mutations, and publication. Local Scan Gmail updates SQLite only;
+publication is an explicit script or `jobscope refresh` operation.
 
 ## Publish to GitHub Pages (view on mobile)
 
