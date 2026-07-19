@@ -6,9 +6,9 @@ import tempfile
 import pytest
 
 from jobscope.core.config import load_config
-from jobscope.core.model import Application, MailEvent
+from jobscope.core.model import Application, Job, MailEvent
 from jobscope.core.store import Store
-from jobscope.ingest import reconcile
+from jobscope.ingest import inbox, reconcile
 
 
 def _ev(store, uid, subject, signal, company, date, *, role="", job_id, snippet=""):
@@ -259,6 +259,130 @@ def test_recompute_keeps_non_mail_app_without_events():
         reconcile.recompute(store)
         assert any(a["job_id"] == "gh:acme:123" for a in store.applications())
         store.close()
+
+
+def test_recompute_merges_same_company_role_into_unambiguous_scraped_job():
+    with tempfile.TemporaryDirectory() as tmp:
+        _, store = _store(tmp)
+        try:
+            scraped = Job(
+                source="ats", title="Security Analyst Level 2 - SIEM & SOAR",
+                company="IBM", url="https://ibm.example/jobs/124720",
+            ).ensure_id()
+            store.upsert_job(scraped)
+            legacy = "mail:legacy-ibm"
+            store.set_application(Application(
+                job_id=legacy, status="interview", company="IBM",
+                title=scraped.title, source="inbox",
+            ))
+            _ev(store, 1, "IBM application submitted", "confirmation", "IBM",
+                "2026-07-08", role=scraped.title, job_id=legacy)
+            _ev(store, 2, "IBM assessment", "assessment", "IBM",
+                "2026-07-09", role=scraped.title, job_id=legacy)
+            _ev(store, 3, "IBM application status", "rejection", "IBM",
+                "2026-07-14", role=scraped.title, job_id=scraped.id)
+
+            reconcile.recompute(store)
+
+            active = [app for app in store.applications() if app["company"] == "IBM"]
+            assert [(app["job_id"], app["status"]) for app in active] == [
+                (scraped.id, "rejected"),
+            ]
+            assert {event["job_id"] for event in store.mail_events()} == {scraped.id}
+            hidden = store.get_application(legacy, include_tombstoned=True)
+            assert hidden["tombstone_reason"] == "orphan_mail_application"
+        finally:
+            store.close()
+
+
+def test_recompute_merges_single_requisition_into_stable_mail_application():
+    with tempfile.TemporaryDirectory() as tmp:
+        _, store = _store(tmp)
+        try:
+            role = "Security Consultant-SOC(XSIAM)"
+            legacy = "mail:legacy-ibm"
+            canonical = inbox._link_job("IBM", role, {})
+            store.set_application(Application(
+                job_id=legacy, status="interview", company="IBM",
+                title=role, source="inbox",
+            ))
+            store.set_application(Application(
+                job_id=canonical, status="rejected", company="IBM",
+                title=role, source="inbox",
+            ))
+            _ev(store, 1, f"IBM application submitted - 124835 - {role}",
+                "confirmation", "IBM", "2026-07-08", role=role, job_id=legacy)
+            _ev(store, 2, f"IBM assessment - 124835 - {role}", "assessment", "IBM",
+                "2026-07-10", role=role, job_id=legacy,
+                snippet="Support: 18001234567")
+            _ev(store, 3, "IBM application status", "rejection", "IBM",
+                "2026-07-16", role=role, job_id=canonical)
+
+            reconcile.recompute(store)
+
+            active = [app for app in store.applications() if app["company"] == "IBM"]
+            assert [(app["job_id"], app["status"]) for app in active] == [
+                (canonical, "rejected"),
+            ]
+            assert {event["job_id"] for event in store.mail_events()} == {canonical}
+            hidden = store.get_application(legacy, include_tombstoned=True)
+            assert hidden["tombstone_reason"] == "orphan_mail_application"
+        finally:
+            store.close()
+
+
+def test_recompute_keeps_conflicting_requisitions_separate():
+    with tempfile.TemporaryDirectory() as tmp:
+        _, store = _store(tmp)
+        try:
+            role = "Security Analyst"
+            legacy = "mail:legacy-ibm"
+            scraped = Job(
+                source="ats", title=role, company="IBM",
+                url="https://ibm.example/jobs/222222",
+            ).ensure_id()
+            store.upsert_job(scraped)
+            canonical = scraped.id
+            _ev(store, 1, f"IBM application submitted - 111111 - {role}",
+                "confirmation", "IBM", "2026-07-08", role=role, job_id=legacy)
+            _ev(store, 2, f"IBM application submitted - 222222 - {role}",
+                "confirmation", "IBM", "2026-07-09", role=role, job_id=canonical)
+
+            reconcile.recompute(store)
+
+            assert {event["job_id"] for event in store.mail_events()} == {
+                legacy, canonical,
+            }
+        finally:
+            store.close()
+
+
+def test_recompute_does_not_merge_duplicate_with_user_notes():
+    with tempfile.TemporaryDirectory() as tmp:
+        _, store = _store(tmp)
+        try:
+            role = "Security Consultant-SOC(XSIAM)"
+            legacy = "mail:legacy-note"
+            canonical = inbox._link_job("IBM", role, {})
+            store.set_application(Application(
+                job_id=legacy, status="interview", company="IBM", title=role,
+                source="inbox", notes="[2026-07-17] user-confirmed submission",
+            ))
+            _ev(store, 1, f"IBM assessment - 124835 - {role}", "assessment", "IBM",
+                "2026-07-10", role=role, job_id=legacy)
+            _ev(store, 2, f"IBM application status - 124835 - {role}", "rejection",
+                "IBM", "2026-07-16", role=role, job_id=canonical)
+
+            reconcile.recompute(store)
+
+            assert {event["job_id"] for event in store.mail_events()} == {
+                legacy, canonical,
+            }
+            assert store.get_application(legacy)["notes"] == (
+                "[2026-07-17] user-confirmed submission"
+            )
+        finally:
+            store.close()
 
 
 def test_reclassify_reparses_stale_company():

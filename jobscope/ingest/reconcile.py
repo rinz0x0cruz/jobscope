@@ -19,11 +19,20 @@ Two deterministic, offline repairs:
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 from typing import Any
 
 from jobscope.core.model import Application
 from jobscope.core.store.base import now_iso
 from jobscope.ingest import mailrules
+
+
+_REQUISITION_SUBJECT = re.compile(
+    r"\b(?P<id>\d{5,})\s*(?:[-\u2013\u2014:]\s*)?"
+    r"[A-Za-z][A-Za-z0-9 ,+/&().-]{1,100}\s*$",
+    re.I,
+)
+_REQUISITION_BODY = re.compile(r"\bref\s*:\s*(?P<id>\d{5,})\b", re.I)
 
 
 def _norm_role(role: str) -> str:
@@ -78,6 +87,77 @@ def _first(events: list[dict], key: str) -> str:
     return ""
 
 
+def _event_identity(event: dict) -> tuple[str, str]:
+    return (
+        mailrules.normalize_company(event.get("company") or ""),
+        _norm_role(event.get("role") or ""),
+    )
+
+
+def _event_requisition_ids(event: dict) -> set[str]:
+    requisitions: set[str] = set()
+    for text, pattern in (
+        (event.get("subject") or "", _REQUISITION_SUBJECT),
+        (event.get("snippet") or "", _REQUISITION_BODY),
+    ):
+        requisitions.update(match.group("id") for match in pattern.finditer(text))
+    return requisitions
+
+
+def _canonical_event_ids(store, events: list[dict]) -> dict[tuple[str, str], str]:
+    canonical_jobs: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for job in store.jobs(order_by_score=False):
+        key = (mailrules.normalize_company(job.company), _norm_role(job.title))
+        if all(key):
+            canonical_jobs[key].add(job.id)
+
+    event_groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for event in events:
+        key = _event_identity(event)
+        if all(key):
+            event_groups[key].append(event)
+
+    canonical: dict[tuple[str, str], str] = {}
+    for key, group in event_groups.items():
+        job_candidates = canonical_jobs.get(key, set())
+        if len(job_candidates) > 1:
+            continue
+
+        event_ids = {event.get("job_id") or "" for event in group}
+        base_ids = {job_id.split("#", 1)[0] for job_id in event_ids if job_id}
+        note_ids = event_ids | base_ids | job_candidates
+        if any(
+            (store.get_application(job_id, include_tombstoned=True) or {}).get("notes")
+            for job_id in note_ids
+        ):
+            continue
+
+        requisitions = {
+            requisition
+            for event in group
+            for requisition in _event_requisition_ids(event)
+        }
+        if len(requisitions) > 1:
+            continue
+
+        if len(job_candidates) == 1:
+            canonical[key] = next(iter(job_candidates))
+            continue
+
+        if len(requisitions) != 1:
+            continue
+
+        from .inbox import _synthetic_job_id
+        stable_ids = {
+            _synthetic_job_id(event.get("company") or "", event.get("role") or "")
+            for event in group
+        }
+        existing_stable_ids = stable_ids & base_ids
+        if len(existing_stable_ids) == 1:
+            canonical[key] = next(iter(existing_stable_ids))
+    return canonical
+
+
 def recompute(store, *, initiator: str = "cli") -> dict:
     """Rebuild application status rows from the mail timeline, instance-split.
 
@@ -100,10 +180,12 @@ def recompute(store, *, initiator: str = "cli") -> dict:
 
 def _recompute(store, run_id: str) -> dict[str, int]:
     events = store.mail_events()
+    canonical_ids = _canonical_event_ids(store, events)
     groups: dict[str, list[dict]] = defaultdict(list)
     for e in events:
         base = (e.get("job_id") or "").split("#", 1)[0]
         if base:
+            base = canonical_ids.get(_event_identity(e), base)
             groups[base].append(e)
 
     planned: list[tuple[str, str, str, list[dict]]] = []

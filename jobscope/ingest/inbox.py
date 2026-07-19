@@ -506,6 +506,10 @@ def _link_job(company: str, role: str, job_index: dict) -> str:
             ids = list(dict.fromkeys(job_id for _known_role, job_id in candidates))
             if len(ids) == 1:
                 return ids[0]
+    return _synthetic_job_id(company, role)
+
+
+def _synthetic_job_id(company: str, role: str) -> str:
     basis = f"{mailrules.normalize_company(company)}|{(role or '').lower().strip()}"
     return "mail:" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:12]
 
