@@ -119,4 +119,32 @@ describe('CampaignsView', () => {
       action: 'check_replies', fetch: true,
     }))
   })
+
+  it('confirms and permanently deletes a draft campaign', async () => {
+    api.listCampaigns.mockResolvedValueOnce([summary]).mockResolvedValueOnce([])
+    api.getCampaign.mockResolvedValue({ ...detail, history: [] })
+    api.campaignAction.mockResolvedValue({
+      ok: true, deleted_campaign_id: campaign.id, deleted_campaign_name: campaign.name,
+    })
+    const onSelect = vi.fn()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<CampaignsView
+      token="csrf"
+      selectedId={campaign.id}
+      onSelect={onSelect}
+      onOpenApplications={vi.fn()}
+    />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete draft' }))
+
+    await waitFor(() => expect(api.campaignAction).toHaveBeenCalledWith('csrf', {
+      action: 'delete', campaign_id: campaign.id,
+    }))
+    expect(confirm).toHaveBeenCalledWith(
+      'Permanently delete the draft campaign “India security”?',
+    )
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith(undefined))
+    confirm.mockRestore()
+  })
 })

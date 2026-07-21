@@ -71,3 +71,60 @@ def test_delivery_unknown_requires_explicit_resolution():
     assert draft["state"] == "draft" and draft["approval_hash"] == ""
     assert draft["error_code"] == "" and draft["outbound_message_id"] == "message@example.com"
     store.close()
+
+
+def test_draft_campaign_delete_removes_unsent_targets_and_runs():
+    store = _store()
+    campaign = store.create_outreach_campaign("Disposable draft", 1)
+    target = store.upsert_outreach_campaign_target(
+        campaign["id"], "Acme", "acme", rank_score=80,
+    )
+    store.conn.execute(
+        "INSERT INTO outreach_campaign_runs (id, campaign_id, status, started_at) "
+        "VALUES (?, ?, 'completed', ?)",
+        ("run:empty", campaign["id"], campaign["created_at"]),
+    )
+    store.conn.commit()
+
+    deleted = store.delete_draft_outreach_campaign(campaign["id"])
+
+    assert deleted["id"] == campaign["id"]
+    assert store.get_outreach_campaign(campaign["id"]) is None
+    assert store.get_outreach_campaign_target(target["id"]) is None
+    assert store.conn.execute(
+        "SELECT COUNT(*) FROM outreach_campaign_runs WHERE campaign_id = ?",
+        (campaign["id"],),
+    ).fetchone()[0] == 0
+    store.close()
+
+
+@pytest.mark.parametrize("unsafe", ["active", "sent", "delivery_unknown"])
+def test_draft_campaign_delete_refuses_status_or_delivery_history(unsafe):
+    store = _store()
+    campaign = store.create_outreach_campaign("Retained history", 1)
+    target = store.upsert_outreach_campaign_target(
+        campaign["id"], "Acme", "acme", rank_score=80,
+    )
+    if unsafe == "active":
+        store.set_outreach_campaign_status(campaign["id"], "active")
+    elif unsafe == "sent":
+        store.conn.execute(
+            "UPDATE outreach_campaign_targets SET state = 'sent', sent_at = ? WHERE id = ?",
+            (campaign["created_at"], target["id"]),
+        )
+        store.conn.commit()
+    else:
+        store.conn.execute(
+            "UPDATE outreach_campaign_targets SET error_code = 'delivery_unknown' WHERE id = ?",
+            (target["id"],),
+        )
+        store.conn.commit()
+
+    with pytest.raises(ValueError, match=(
+        "only draft" if unsafe == "active" else "delivery history"
+    )):
+        store.delete_draft_outreach_campaign(campaign["id"])
+
+    assert store.get_outreach_campaign(campaign["id"]) is not None
+    assert store.get_outreach_campaign_target(target["id"]) is not None
+    store.close()

@@ -38,9 +38,12 @@ def test_web_v2_cockpit_is_wired() -> None:
     for token in ("--paper", "--panel", "--ink", "--brand-coral"):
         assert token in css
 
-    # The primary workspace lenses are present.
-    for lens in ("feed", "companies", "pipeline", "board", "timeline"):
+    # The primary workspace lenses are present. Activity is consolidated into
+    # Applications, so a clean checkout must not retain the retired Timeline lens.
+    for lens in ("feed", "companies", "campaigns", "pipeline", "board", "settings"):
         assert (ROOT / "web" / "src" / "features" / lens).is_dir()
+    assert not (ROOT / "web" / "src" / "features" / "timeline").exists()
+    assert "@/features/timeline" not in _read("web/src/app/ShellV2.tsx")
 
 
 def test_web_v2_board_card_and_auth_gate() -> None:

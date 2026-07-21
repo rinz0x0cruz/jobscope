@@ -113,6 +113,16 @@ def cmd_reviews(args, cfg):
                 f"{result['pending_discovery']} discovery ({result['created']} new)"
             )
             return 0
+        if args.action == "clear":
+            if not args.yes:
+                print("  refusing to clear Discovery and Saved without --yes", file=sys.stderr)
+                return 1
+            result = review.clear_discovery_and_saved(store)
+            print(
+                f"  cleared {result['discovery']} discovery and "
+                f"{result['saved']} saved review(s)"
+            )
+            return 0
         rows = store.list_job_reviews(state=getattr(args, "state", None))
         for row in rows:
             origins = "+".join(row["origins"]) or "unknown"
@@ -234,6 +244,14 @@ def cmd_campaign(args, cfg):
                 status = {"start": "active", "pause": "paused", "cancel": "cancelled"}[action]
                 detail = campaigns.set_campaign_status(store, args.campaign_id, status)
                 print(f"  {detail['campaign']['id']} -> {detail['campaign']['status']}")
+                return 0
+            if action == "delete":
+                if not args.yes:
+                    print("  refusing to delete without --yes", file=sys.stderr)
+                    return 1
+                result = campaigns.delete_draft_campaign(store, args.campaign_id)
+                print(f"  deleted {result['deleted_campaign_id']} — "
+                      f"{result['deleted_campaign_name']}")
                 return 0
             if action == "skip":
                 target = store.set_outreach_campaign_target_state(
@@ -637,8 +655,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_scan)
 
     sp = sub.add_parser("reviews", help="Synchronize or inspect the curated review queue")
-    sp.add_argument("action", nargs="?", choices=["sync", "list"], default="list")
+    sp.add_argument("action", nargs="?", choices=["sync", "list", "clear"], default="list")
     sp.add_argument("--state", choices=["pending", "saved", "dismissed"], default=None)
+    sp.add_argument("--yes", action="store_true",
+                    help="Confirm clearing Discovery and Saved review queues")
     sp.set_defaults(func=cmd_reviews)
     sub.add_parser("match", help="Score jobs against your resume").set_defaults(func=cmd_match)
 
@@ -685,10 +705,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "action", nargs="?",
         choices=["create", "list", "show", "discover", "draft", "approve", "start",
-                 "pause", "cancel", "skip", "send-approved", "ready", "replies", "tick"],
+                 "pause", "cancel", "delete", "skip", "send-approved", "ready", "replies", "tick"],
         default="list",
     )
-    sp.add_argument("--campaign-id", default="", help="Campaign id for show/start/pause/send")
+    sp.add_argument("--campaign-id", default="", help="Campaign id for show/start/pause/delete/send")
     sp.add_argument("--target-id", default="", help="Target id for discover/draft/approve/skip")
     sp.add_argument("--name", default="India cybersecurity outreach", help="New campaign name")
     sp.add_argument("--count", type=int, default=10, help="Unique companies to rank for a new campaign")
@@ -698,6 +718,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--body", default=None, help="Edited draft body")
     sp.add_argument("--force", action="store_true", help="Refresh cached contact discovery only")
     sp.add_argument("--no-fetch", action="store_true", help="Do not fetch company/contact sources")
+    sp.add_argument("--yes", action="store_true", help="Confirm permanent deletion of a draft campaign")
     sp.set_defaults(func=cmd_campaign)
 
     sp = sub.add_parser("dashboard", help="Emit the dashboard JSON payload the web app consumes")

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { AppShell } from '@/app/AppShell'
 
-const NAV_LABELS = ['Review', 'Companies', 'Pipeline', 'Applications', 'Activity', 'Settings']
+const NAV_LABELS = ['Review', 'Companies', 'Pipeline', 'Applications', 'Settings']
 
 describe('AppShell', () => {
   it('omits snapshot locking when no lock handler is available', () => {
@@ -14,7 +14,7 @@ describe('AppShell', () => {
     expect(screen.queryByRole('button', { name: 'Lock' })).not.toBeInTheDocument()
   })
 
-  it('renders the six primary sections and marks the active one', () => {
+  it('renders the five primary sections and marks the active one', () => {
     render(
       <AppShell active="applications" onNavigate={() => {}} search="" onSearch={() => {}}>
         <div>Routed content</div>
@@ -26,6 +26,7 @@ describe('AppShell', () => {
     }
     expect(nav.getByRole('button', { name: 'Applications' })).toHaveAttribute('aria-current', 'page')
     expect(nav.getByRole('button', { name: 'Review' })).not.toHaveAttribute('aria-current')
+    expect(nav.queryByRole('button', { name: 'Activity' })).not.toBeInTheDocument()
   })
 
   it('fires onNavigate with the chosen section', () => {
@@ -50,14 +51,15 @@ describe('AppShell', () => {
     expect(screen.getByText('Routed content')).toBeInTheDocument()
   })
 
-  it('keeps Activity and Settings reachable from mobile More', () => {
+  it('keeps Settings reachable from mobile More without a duplicate Activity view', () => {
     const onNavigate = vi.fn()
     render(
-      <AppShell active="activity" onNavigate={onNavigate} search="" onSearch={() => {}}>
+      <AppShell active="settings" onNavigate={onNavigate} search="" onSearch={() => {}}>
         <div>Routed content</div>
       </AppShell>,
     )
     fireEvent.click(within(screen.getByRole('navigation', { name: 'Mobile primary' })).getByRole('button', { name: 'More' }))
+    expect(screen.queryByRole('button', { name: 'Activity' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
     expect(onNavigate).toHaveBeenCalledWith('settings')
   })

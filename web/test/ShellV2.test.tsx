@@ -37,7 +37,7 @@ describe('ShellV2', () => {
     expect(onStateChange).toHaveBeenCalledWith({ view: 'pipeline', job: undefined })
   })
 
-  it('maps shortcut six to Settings', () => {
+  it('maps shortcut five to Settings', () => {
     const onStateChange = vi.fn()
     render(
       <ShellV2
@@ -47,7 +47,9 @@ describe('ShellV2', () => {
         onLock={vi.fn()}
       />,
     )
-    fireEvent.keyDown(window, { key: '6' })
-    expect(onStateChange).toHaveBeenCalledWith({ view: 'settings', job: undefined, company: undefined })
+    fireEvent.keyDown(window, { key: '5' })
+    expect(onStateChange).toHaveBeenCalledWith({
+      view: 'settings', job: undefined, company: undefined, campaign: undefined,
+    })
   })
 })

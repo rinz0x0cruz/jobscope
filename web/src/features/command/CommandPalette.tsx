@@ -9,7 +9,6 @@ import Fuse from 'fuse.js'
 import {
   Briefcase,
   Building2,
-  CalendarClock,
   Columns3,
   Home,
   Inbox,
@@ -39,7 +38,6 @@ const LENSES: { section: ViewValue; label: string; Icon: LucideIcon }[] = [
   { section: 'companies', label: 'Companies', Icon: Building2 },
   { section: 'pipeline', label: 'Pipeline', Icon: Inbox },
   { section: 'applications', label: 'Applications', Icon: Columns3 },
-  { section: 'activity', label: 'Activity', Icon: CalendarClock },
   { section: 'settings', label: 'Settings', Icon: SettingsIcon },
 ]
 

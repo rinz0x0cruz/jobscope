@@ -4,6 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from jobscope.core.model import Job
+from jobscope.core.store.base import now_iso
+
+
+REVIEW_CLEAR_MARKER = "reviews:cleared_before"
 
 
 @dataclass(slots=True)
@@ -71,6 +75,7 @@ def sync_reviews(store) -> dict[str, int]:
         if application.get("job_id")
     }
     monitored = store.monitored_job_ids()
+    cleared_before = store.meta_get(REVIEW_CLEAR_MARKER, "") or ""
     created = 0
     monitored_count = 0
     discovery_count = 0
@@ -79,7 +84,11 @@ def sync_reviews(store) -> dict[str, int]:
                 (job.tier or "Skip") == "Skip"):
             continue
         origin = "monitored" if job.id in monitored else "discovery"
-        if store.get_job_review(job.id) is None:
+        existing = store.get_job_review(job.id)
+        if (existing is None and origin == "discovery" and cleared_before
+                and (not job.first_seen or job.first_seen <= cleared_before)):
+            continue
+        if existing is None:
             created += 1
         review = store.ensure_job_review(job.id, origins=[origin])
         if review["state"] != "pending":
@@ -92,4 +101,34 @@ def sync_reviews(store) -> dict[str, int]:
         "created": created,
         "pending_monitored": monitored_count,
         "pending_discovery": discovery_count,
+    }
+
+
+def clear_discovery_and_saved(store) -> dict[str, int | str]:
+    """Clear current Discovery and Saved queues without deleting job records.
+
+    A cutoff keeps pre-existing discovery jobs from being recreated by the next
+    review sync. Newly discovered jobs and explicitly monitored jobs still enter
+    review normally; dismissed decisions remain untouched.
+    """
+    rows = store.list_job_reviews()
+    discovery_ids = [
+        row["job_id"] for row in rows
+        if row["state"] == "pending" and "monitored" not in row["origins"]
+    ]
+    saved_ids = [row["job_id"] for row in rows if row["state"] == "saved"]
+    cutoff = now_iso()
+    with store.conn:
+        store.conn.executemany(
+            "DELETE FROM job_reviews WHERE job_id = ?",
+            [(job_id,) for job_id in [*discovery_ids, *saved_ids]],
+        )
+        store.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            (REVIEW_CLEAR_MARKER, cutoff),
+        )
+    return {
+        "discovery": len(discovery_ids),
+        "saved": len(saved_ids),
+        "cleared_before": cutoff,
     }

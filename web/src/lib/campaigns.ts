@@ -136,6 +136,8 @@ export interface CampaignActionResult {
   pending?: number
   replied?: number
   opted_out?: number
+  deleted_campaign_id?: string
+  deleted_campaign_name?: string
 }
 
 const endpoint = (path: string) => `${location.origin}/${path}`

@@ -101,6 +101,15 @@ def list_campaigns(store) -> list[dict]:
     return result
 
 
+def delete_draft_campaign(store, campaign_id: str) -> dict:
+    campaign = store.delete_draft_outreach_campaign(campaign_id)
+    return {
+        "ok": True,
+        "deleted_campaign_id": campaign["id"],
+        "deleted_campaign_name": campaign["name"],
+    }
+
+
 def sending_readiness(cfg: dict) -> dict:
     """Check unattended SMTP prerequisites without exposing secret values."""
     from jobscope.core.config import smtp_password

@@ -3,7 +3,7 @@
 // `@/lib/board`) and reports card opens upward. No data fetching, no mutation.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlarmClock, ArrowRight, Clock, Mail, MapPin } from 'lucide-react'
+import { AlarmClock, ArrowRight, Clock, Mail, MapPin, RotateCcw } from 'lucide-react'
 import { Segmented, animate, prefersReducedMotion } from '@/ui'
 import type { BoardCard, BoardColumn, BoardStage } from '@/lib/board'
 import type { ActivityAudit, Tier } from '@/lib/schema'
@@ -12,6 +12,7 @@ export interface BoardProps {
   columns: BoardColumn[]
   onOpen: (jobId: string) => void
   audit?: ActivityAudit
+  onRecover?: (jobId: string) => void
 }
 
 function cx(...classes: Array<string | false | null | undefined>): string {
@@ -34,7 +35,7 @@ type ApplicationFilter = 'all' | BoardStage | 'attention'
  * The Board surface: the applied pipeline as either a scannable table (default,
  * best for volume) or the stage-columned Kanban, toggled in the toolbar.
  */
-export function Board({ columns, onOpen, audit }: BoardProps) {
+export function Board({ columns, onOpen, audit, onRecover }: BoardProps) {
   const [view, setView] = useState<BoardView>('list')
   const [filter, setFilter] = useState<ApplicationFilter>('all')
   const allCards = columns.flatMap((column) => column.cards)
@@ -76,6 +77,29 @@ export function Board({ columns, onOpen, audit }: BoardProps) {
           <strong className="font-mono text-2xl font-semibold text-ink">{total}</strong>
         </div>
       </header>
+
+      {recoverableCount > 0 && onRecover && (
+        <section className="shrink-0 border-b border-line bg-inset/35 px-5 py-3 sm:px-7" aria-label="Recoverable applications">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="mr-auto text-[12px] text-ink-2">
+              {recoverableCount} application{recoverableCount === 1 ? '' : 's'} available to restore
+            </span>
+            {audit?.recoverable_applications.map((application) => (
+              <button
+                key={application.job_id}
+                type="button"
+                onClick={() => {
+                  const identity = application.title || application.company || application.job_id
+                  if (window.confirm(`Restore ${identity}?`)) onRecover(application.job_id)
+                }}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-2.5 text-[11px] font-semibold text-ink hover:bg-panel"
+              >
+                <RotateCcw size={13} aria-hidden="true" /> Restore {application.title || application.company || 'application'}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="flex shrink-0 overflow-x-auto border-b border-line [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Application filters">
         <SummaryFilter label="All" value={total} active={filter === 'all'} onClick={() => setFilter('all')} />

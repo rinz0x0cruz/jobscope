@@ -2,6 +2,7 @@ import datetime as dt
 import os
 import tempfile
 
+from jobscope.analyze import review
 from jobscope.analyze.review import sync_reviews
 from jobscope.core.config import load_config
 from jobscope.core.model import Application, Job
@@ -62,6 +63,49 @@ def test_review_sync_never_resets_saved_or_dismissed_and_merges_origin():
     assert store.get_job_review(saved.id)["state"] == "saved"
     assert store.get_job_review(saved.id)["origins"] == ["discovery", "monitored"]
     assert store.get_job_review(dismissed.id)["state"] == "dismissed"
+    store.close()
+
+
+def test_clear_discovery_and_saved_is_durable_for_old_jobs(monkeypatch):
+    _cfg, store = _setup()
+    discovery = _scored(store, "Discovery", "https://x/discovery")
+    saved = _scored(store, "Saved", "https://x/saved")
+    dismissed = _scored(store, "Dismissed", "https://x/dismissed")
+    store.set_job_review(discovery.id, "pending", origins=["discovery"])
+    store.set_job_review(saved.id, "saved", origins=["discovery"])
+    store.set_job_review(dismissed.id, "dismissed", origins=["discovery"])
+    store.conn.executemany(
+        "UPDATE jobs SET first_seen = ? WHERE id = ?",
+        [
+            ("2026-07-21T09:00:00Z", discovery.id),
+            ("2026-07-21T09:00:00Z", saved.id),
+            ("2026-07-21T09:00:00Z", dismissed.id),
+        ],
+    )
+    store.conn.commit()
+    monkeypatch.setattr(review, "now_iso", lambda: "2026-07-21T10:00:00Z")
+
+    result = review.clear_discovery_and_saved(store)
+    synced = sync_reviews(store)
+
+    assert result == {
+        "discovery": 1, "saved": 1,
+        "cleared_before": "2026-07-21T10:00:00Z",
+    }
+    assert synced == {"created": 0, "pending_monitored": 0, "pending_discovery": 0}
+    assert store.get_job_review(discovery.id) is None
+    assert store.get_job_review(saved.id) is None
+    assert store.get_job_review(dismissed.id)["state"] == "dismissed"
+
+    new_job = _scored(store, "New Discovery", "https://x/new")
+    store.conn.execute(
+        "UPDATE jobs SET first_seen = ? WHERE id = ?",
+        ("2026-07-21T10:00:01Z", new_job.id),
+    )
+    store.conn.commit()
+    synced = sync_reviews(store)
+    assert synced == {"created": 1, "pending_monitored": 0, "pending_discovery": 1}
+    assert store.get_job_review(new_job.id)["origins"] == ["discovery"]
     store.close()
 
 

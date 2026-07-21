@@ -211,7 +211,7 @@ artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboar
 
 > **Note:** `render.py` is the JSON emitter. The **React app in `web/`** is the single dashboard — served
 > privately by `jobscope serve`, or as an empty Pages shell plus encrypted whole-site payload — and owns
-> Review, Companies, Pipeline, Applications, Activity, and Settings. The data-contract
+> Review, Companies, Pipeline, Applications, and Settings. The data-contract
 > logic (`build_data`/`_job_record`/`_application_records`/`_enrich_summary`/`_overview_data`/`emit_json`)
 > is pinned by a JSON-Schema artifact + a contract test (§9); the legacy inline HTML `_TEMPLATE` has been
 > removed.
@@ -248,12 +248,13 @@ actions into `refresh.yml`'s bounded `mutations_json` input; the workflow restor
 the batch, scans, matches, saves the DB, verifies the artifact, and republishes.
 
 - **Data flow:** `data/index.ts` normalizes current or cached payloads → `App.tsx`/`AuthGate` unlocks →
-  `ShellV2` derives Review, Companies, Pipeline, Applications, and Activity models. `urlState.ts` owns
+  `ShellV2` derives Review, Companies, Pipeline, and Applications models. `urlState.ts` owns
   shareable view/bucket/filter state; `schema.ts` mirrors the Python contract (§10).
 - **Surfaces:** **Review** (monitored/discovery/saved/dismissed queue + persistent role reader), **Companies**
   (portal health/list/detail), **Pipeline** (Sankey + outcome register), **Applications** (inbox/list/board/offers),
-  **Activity** (action queue + event stream), and **Settings**. Desktop has six destinations; mobile keeps
-  Review/Companies/Pipeline/Apps plus a More sheet for Activity/Settings.
+  and **Settings** (first-class résumé replacement plus profile/sync/privacy controls). Applications owns
+  follow-up attention, recovery, and per-application activity. Desktop has five public destinations; mobile
+  keeps Review/Companies/Pipeline/Apps plus a More sheet for Settings.
 - **Whole-site unlock:** `lib/unlock.ts` fetches + AES-GCM-decrypts `site.enc.json`; `AuthGate` caches the
   normalized payload in sessionStorage and can clear it on lock.
 - **Chrome:** `AppShell` owns search, command palette, Refresh, theme, lock, queued-change Sync, responsive
@@ -375,7 +376,7 @@ startup fallback. Published builds bake an empty schema-valid shell and a pointe
 | **Review** | `features/feed/FeedView.tsx`, [lib/feed.ts](web/src/lib/feed.ts) | Durable monitored/discovery/saved/dismissed queues and role actions |
 | **Companies** | `features/companies/CompaniesView.tsx`, [lib/companies.ts](web/src/lib/companies.ts) | Monitor list/detail, resolution, source health, per-company jobs |
 | **Actions/refresh** | [lib/companyActions.ts](web/src/lib/companyActions.ts), [lib/refresh.ts](web/src/lib/refresh.ts) | Local CSRF API or collapsed Pages queue; correlated workflow dispatch/poll |
-| **Applications** | `features/board/*`, `features/pipeline/*`, `features/timeline/*` | Operational applications, Sankey, action queue, event stream |
+| **Applications** | `features/board/*`, `features/pipeline/*`, `components/JobDrawer.tsx` | Operational applications, Sankey, follow-up/recovery actions, per-application activity |
 
 ```mermaid
 flowchart LR
@@ -387,14 +388,13 @@ flowchart LR
   Shell --> Companies
   Shell --> Pipeline
   Shell --> Applications
-  Shell --> Activity
   Action[Save / dismiss / monitor] --> Local[Local CSRF API]
   Action --> Queue[Pages localStorage queue]
   Queue --> Workflow[refresh.yml mutation batch]
 ```
 
 Desktop Review uses a persistent feed/reader split; Companies uses list/detail at `lg`. Mobile opens role and
-company details full-screen and exposes Activity/Settings through the More sheet. Responsive browser checks
+company details full-screen and exposes Settings through the More sheet. Responsive browser checks
 must cover 390, 768, and wide desktop widths with zero horizontal overflow.
 
 The cloud workflow restores the encrypted DB, seeds monitors, validates/applies an optional bounded mutation

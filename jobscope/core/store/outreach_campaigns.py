@@ -132,6 +132,36 @@ class OutreachCampaignsMixin:
             raise KeyError(campaign_id)
         return campaign
 
+    def delete_draft_outreach_campaign(self, campaign_id: str) -> dict:
+        campaign = self.get_outreach_campaign(campaign_id)
+        if campaign is None:
+            raise KeyError(campaign_id)
+        if campaign["status"] != "draft":
+            raise ValueError("only draft campaigns can be deleted")
+        delivery = self.conn.execute(
+            "SELECT 1 FROM outreach_campaign_targets WHERE campaign_id = ? AND ("
+            "state IN ('sent', 'replied', 'opted_out') OR "
+            "COALESCE(sent_at, '') <> '' OR COALESCE(replied_at, '') <> '' OR "
+            "error_code IN ('sending', 'delivery_unknown')) LIMIT 1",
+            (campaign_id,),
+        ).fetchone()
+        sent_run = self.conn.execute(
+            "SELECT 1 FROM outreach_campaign_runs "
+            "WHERE campaign_id = ? AND sent_count > 0 LIMIT 1",
+            (campaign_id,),
+        ).fetchone()
+        if delivery is not None or sent_run is not None:
+            raise ValueError("campaign has delivery history and cannot be deleted")
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM outreach_campaign_runs WHERE campaign_id = ?", (campaign_id,),
+            )
+            self.conn.execute(
+                "DELETE FROM outreach_campaign_targets WHERE campaign_id = ?", (campaign_id,),
+            )
+            self.conn.execute("DELETE FROM outreach_campaigns WHERE id = ?", (campaign_id,))
+        return campaign
+
     def upsert_outreach_campaign_target(
         self,
         campaign_id: str,

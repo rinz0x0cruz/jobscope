@@ -24,3 +24,20 @@ def test_campaign_cli_creates_and_lists_ranked_targets(tmp_path, capsys):
 
     assert main(["--db", str(path), "campaign", "replies"]) == 0
     assert "0 replied, 0 opted out" in capsys.readouterr().out
+
+
+def test_campaign_cli_requires_confirmation_to_delete_draft(tmp_path, capsys):
+    path = tmp_path / "campaign-delete.db"
+    with Store(str(path)) as store:
+        campaign = store.create_outreach_campaign("Disposable", 1)
+        store.upsert_outreach_campaign_target(campaign["id"], "Acme", "acme")
+
+    command = [
+        "--db", str(path), "campaign", "delete", "--campaign-id", campaign["id"],
+    ]
+    assert main(command) == 1
+    assert "without --yes" in capsys.readouterr().err
+    assert main([*command, "--yes"]) == 0
+    assert f"deleted {campaign['id']}" in capsys.readouterr().out
+    with Store(str(path)) as store:
+        assert store.get_outreach_campaign(campaign["id"]) is None

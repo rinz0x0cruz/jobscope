@@ -73,6 +73,14 @@ def test_campaign_api_is_local_token_guarded_and_rejects_unknown_fields(tmp_path
             body={"action": "approve", "target_id": "missing", "force": True},
         )
         assert code == 400 and "unknown action field" in rejected["error"]
+
+        code, deleted = _request(
+            "POST", base + "/api/campaigns/action", token=token,
+            body={"action": "delete", "campaign_id": campaign_id},
+        )
+        assert code == 200 and deleted["deleted_campaign_id"] == campaign_id
+        code, listing = _request("GET", base + "/api/campaigns", token=token)
+        assert code == 200 and listing["campaigns"] == []
     finally:
         httpd.shutdown()
         httpd.server_close()

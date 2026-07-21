@@ -260,12 +260,23 @@ def _merge_skills(primary: list[str], extra: list[str]) -> list[str]:
 
 def _experience_section(text: str) -> str:
     """Isolate the work-experience block so education dates don't inflate tenure."""
-    m = re.search(
-        r"(?is)\n#{1,6}\s*(?:professional\s+|work\s+|relevant\s+)?experience\b(.*?)"
-        r"(?:\n#{1,3}\s*(?:projects?|education|certification|awards|publications)\b|\Z)",
+    start = re.search(
+        r"(?im)^[ \t]*(?:#{1,6}[ \t]*)?"
+        r"(?:professional[ \t]+|work[ \t]+|relevant[ \t]+)?"
+        r"experience[ \t]*:?[ \t]*$",
         text,
     )
-    return m.group(1) if m else text
+    if start is None:
+        return text
+    remainder = text[start.end():]
+    end = re.search(
+        r"(?im)^[ \t]*(?:#{1,6}[ \t]*)?"
+        r"(?:projects?(?:[ \t]*&[ \t]*research)?|education|certifications?|"
+        r"awards?|publications?|(?:technical[ \t]+)?skills?|languages?)"
+        r"[ \t]*:?[ \t]*$",
+        remainder,
+    )
+    return remainder[:end.start()] if end is not None else remainder
 
 
 ROLE_WORDS = ("engineer", "developer", "manager", "analyst", "architect", "consultant",
@@ -301,7 +312,9 @@ def _guess_titles(text: str) -> list[str]:
             continue
         is_heading = line.startswith("#") or (line.startswith("**") and line.endswith("**"))
         cleaned = line.lstrip("#").strip().strip("*").strip()
-        if not (is_heading or _SEP_RE.search(cleaned)):
+        has_date_range = YEAR_RANGE_RE.search(cleaned) is not None
+        cleaned = YEAR_RANGE_RE.sub("", cleaned).strip(" \t-\u2013\u2014|,")
+        if not (is_heading or has_date_range or _SEP_RE.search(cleaned)):
             continue
         for seg in _SEP_RE.split(cleaned):
             seg = seg.strip().strip("*_").strip()
@@ -316,12 +329,49 @@ def _guess_titles(text: str) -> list[str]:
 
 
 def _years_from_work(work: list[dict]) -> float:
-    spans = []
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.UTC)
+    now_frac = now.year + (now.month - 1) / 12.0
+    spans: list[tuple[float, float]] = []
     for w in work:
-        start = str(w.get("startDate", ""))[:4]
-        end = str(w.get("endDate", "") or "present")[:4]
-        spans.append(f"{start} - {end}")
-    return _years_from_text("\n".join(spans))
+        start = _structured_date_fraction(w.get("startDate"), default_month=1)
+        end_raw = w.get("endDate") or "present"
+        end = _structured_date_fraction(
+            end_raw, default_month=12, now_frac=now_frac,
+        )
+        if start is not None and end is not None:
+            spans.append((start, end))
+    return _merged_years(spans, now_frac)
+
+
+def _structured_date_fraction(value, *, default_month: int,
+                              now_frac: float | None = None) -> float | None:
+    raw = str(value or "").strip().lower()
+    if raw in {"present", "current", "now"}:
+        return now_frac
+    match = re.match(r"^((?:19|20)\d{2})(?:-(0?[1-9]|1[0-2]))?", raw)
+    if match is None:
+        return None
+    month = int(match.group(2) or default_month)
+    return int(match.group(1)) + (month - 1) / 12.0
+
+
+def _merged_years(spans: list[tuple[float, float]], now_frac: float) -> float:
+    bounded = [
+        (start, min(end, now_frac))
+        for start, end in spans
+        if start >= 1970 and min(end, now_frac) >= start
+    ]
+    if not bounded:
+        return 0.0
+    bounded.sort()
+    merged: list[list[float]] = []
+    for start, end in bounded:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return round(sum(end - start for start, end in merged), 1)
 
 
 def _years_from_text(text: str) -> float:
@@ -339,18 +389,9 @@ def _years_from_text(text: str) -> float:
             end_mon = MONTH_NUM.get((em or "dec")[:3].lower(), 12)
             end = int(ey) + (end_mon - 1) / 12.0
         if end >= start and int(sy) >= 1970:
-            spans.append((start, min(end, now_frac)))
-    if not spans:
-        return 0.0
-    # union of merged intervals so overlapping/parallel roles don't double-count
-    spans.sort()
-    merged: list[list[float]] = []
-    for s, e in spans:
-        if merged and s <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], e)
-        else:
-            merged.append([s, e])
-    return round(sum(e - s for s, e in merged), 1)
+            spans.append((start, end))
+    # Union merged intervals so overlapping/parallel roles don't double-count.
+    return _merged_years(spans, now_frac)
 
 
 def _infer_seniority(titles: list[str], years: float) -> str:

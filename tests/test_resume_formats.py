@@ -1,5 +1,6 @@
 """Regression tests for real-world resume formats (categorized skills, acronyms,
 'Company — Title' headings, 'Mon YYYY – Present' dates)."""
+import json
 import os
 import tempfile
 
@@ -45,6 +46,16 @@ def _parse(text):
         os.unlink(path)
 
 
+def _parse_json(data):
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as fh:
+        json.dump(data, fh)
+        path = fh.name
+    try:
+        return parse_resume(path)
+    finally:
+        os.unlink(path)
+
+
 def test_location_ignores_acronyms():
     r = _parse(CATEGORIZED)
     assert r.location == "Punjab, India"  # not "CVSS, EP"
@@ -68,6 +79,43 @@ def test_company_dash_title_and_years():
     # experience-scoped: intern (2024) + FT (2025->present) ~= 1-2y, not 4 (education excluded)
     assert 0.5 <= r.years_experience <= 3
     assert r.seniority in ("junior", "mid")
+
+
+PDF_EXTRACTED = """Alex Roe
+Punjab, India
+Professional Experience
+Acme Bengaluru, India
+Security Researcher June 2025 - June 2026
+Acme Bengaluru, India
+Security Researcher Intern May 2024 - July 2024
+Projects & Research
+Long-running Research Project 2010 - 2020
+Technical Skills
+Python, KQL, YARA
+Education
+Example University 2021 - 2025
+Certifications
+ISC2 Certified in Cybersecurity
+"""
+
+
+def test_plain_pdf_headings_exclude_project_and_education_dates():
+    r = _parse(PDF_EXTRACTED)
+    assert r.years_experience == 1.2
+    assert r.seniority == "junior"
+    assert r.titles == ["Security Researcher", "Security Researcher Intern"]
+
+
+def test_json_resume_preserves_work_date_months():
+    r = _parse_json({
+        "basics": {"name": "Alex Roe"},
+        "work": [{
+            "name": "Acme", "position": "Security Researcher Intern",
+            "startDate": "2024-05-01", "endDate": "2024-07-31",
+        }],
+    })
+    assert r.years_experience == 0.2
+    assert r.seniority == "intern"
 
 
 BULLET_NOISE = """# Sam Poe

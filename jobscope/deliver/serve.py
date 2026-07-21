@@ -234,6 +234,7 @@ def _build_server(cfg: dict, port: int):
                             "draft": {"action", "target_id", "selected_email", "subject", "body"},
                             "approve": {"action", "target_id"},
                             "status": {"action", "campaign_id", "status"},
+                            "delete": {"action", "campaign_id"},
                             "skip": {"action", "target_id"},
                             "discover_pending": {"action", "campaign_id", "limit", "fetch"},
                             "check_replies": {"action", "fetch"},
@@ -271,6 +272,10 @@ def _build_server(cfg: dict, port: int):
                                 str(data.get("status") or ""),
                             )
                             response = {"ok": True, **detail}
+                        elif action == "delete":
+                            response = campaigns.delete_draft_campaign(
+                                store, str(data.get("campaign_id") or ""),
+                            )
                         elif action == "skip":
                             target = store.set_outreach_campaign_target_state(
                                 str(data.get("target_id") or ""), "skipped",

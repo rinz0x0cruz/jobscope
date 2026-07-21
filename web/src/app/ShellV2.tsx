@@ -6,14 +6,12 @@ import { FeedView } from '@/features/feed'
 import { CompaniesView } from '@/features/companies'
 import { CampaignsUnavailable, CampaignsView } from '@/features/campaigns'
 import { PipelinePreview, PipelineView } from '@/features/pipeline'
-import { Timeline } from '@/features/timeline'
 import { Settings } from '@/features/settings'
 import { CommandPalette } from '@/features/command'
 import { ApplicationReader, JobDrawer, RoleReader } from '@/components/JobDrawer'
 import { buildBoard } from '@/lib/board'
 import { buildFeed } from '@/lib/feed'
 import { buildCompanies } from '@/lib/companies'
-import { buildTimeline } from '@/lib/timeline'
 import { filterData } from '@/lib/viewFilter'
 import { activeView, type SearchState, type ViewValue } from '@/lib/urlState'
 import { scanNewMail, syncMonitoringQueue } from '@/lib/refresh'
@@ -38,8 +36,8 @@ export interface ShellV2Props {
   onLock: () => void
 }
 
-const PUBLIC_VIEW_ORDER: ViewValue[] = ['review', 'companies', 'pipeline', 'applications', 'activity', 'settings']
-const LOCAL_VIEW_ORDER: ViewValue[] = ['review', 'companies', 'campaigns', 'pipeline', 'applications', 'activity', 'settings']
+const PUBLIC_VIEW_ORDER: ViewValue[] = ['review', 'companies', 'pipeline', 'applications', 'settings']
+const LOCAL_VIEW_ORDER: ViewValue[] = ['review', 'companies', 'campaigns', 'pipeline', 'applications', 'settings']
 
 function toggleTheme() {
   viewTransition(() => {
@@ -80,7 +78,6 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
   const feed = useMemo(() => buildFeed(workingData, state), [workingData, state])
   const companies = useMemo(() => buildCompanies(workingData, state.q), [workingData, state.q])
   const board = useMemo(() => buildBoard(searchedData), [searchedData])
-  const timeline = useMemo(() => buildTimeline(searchedData), [searchedData])
   const navigate = (next: ViewValue) => onStateChange({ view: next, job: undefined, company: undefined, campaign: undefined })
   const open = (jobId: string) => onStateChange({ job: jobId })
   const close = () => onStateChange({ job: undefined }, { replace: true })
@@ -264,12 +261,8 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
           </div>
         ) : view === 'applications' ? (
           <div className="h-full min-h-0 pb-16 lg:pb-0">
-            <Board columns={board} onOpen={open} audit={workingData.activity_audit} />
-          </div>
-        ) : view === 'activity' ? (
-          <div className="h-full min-h-0 pb-16 lg:pb-0">
-            <Timeline
-              timeline={timeline}
+            <Board
+              columns={board}
               onOpen={open}
               audit={workingData.activity_audit}
               onRecover={(jobId) => void runMonitoringActions([

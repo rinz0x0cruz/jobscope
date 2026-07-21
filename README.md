@@ -134,6 +134,11 @@ python -m jobscope campaign ready
 python -m jobscope campaign replies          # check now; --no-fetch reconciles stored mail only
 ```
 
+Draft campaigns can be permanently deleted from their Campaigns detail view. The CLI equivalent requires
+explicit confirmation: `python -m jobscope campaign delete --campaign-id ID --yes`. Only campaigns still in
+`draft` with no sent, replied, opted-out, in-progress, or delivery-unknown target can be deleted; use cancel
+when delivery history must be retained.
+
 SMTP cannot make delivery and the local SQLite update atomic. If the connection fails after delivery begins,
 Jobscope records **delivery unknown**, locks the target out of automatic retries, and keeps its Message-ID.
 Check the provider's Sent folder, then choose **Confirmed in Sent** or **Confirmed not sent** in Campaigns;

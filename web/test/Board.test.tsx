@@ -108,4 +108,15 @@ describe('Board', () => {
     expect(screen.getByLabelText('Last reconciliation')).toHaveTextContent('121 → 99')
     expect(screen.getByLabelText('Last reconciliation')).toHaveTextContent('1 recoverable')
   })
+
+  it('keeps recoverable application restore inside Applications', () => {
+    const onRecover = vi.fn()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<Board columns={makeColumns()} onOpen={() => {}} audit={audit} onRecover={onRecover} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Security Engineer' }))
+
+    expect(onRecover).toHaveBeenCalledWith('mail:recover')
+    vi.restoreAllMocks()
+  })
 })

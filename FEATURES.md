@@ -44,7 +44,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `prep <job_id>` | Builds a review-ready application package folder (tailored resume/cover PDF, filled-answers, index, contacts) and marks status `prepared`. |
 | `apply <job_id> [--assist]` | Opens the posting URL for you to submit. `--assist` = headed Playwright autofill of a **public** ATS form that **stops before submit**. |
 | `outreach <job_id> [--to E] [--send] [--force]` | Drafts a tailored recruiter email + attaches your résumé and **previews it by default**. Resolves a contact deterministically: a real recruiter who emailed you (no-reply/ATS relays filtered out), a published HR/careers email **discovered on the employer's own site** (domain verified by fetching it + matching the company name), or a `careers@` role inbox on that verified domain — or `--to`. Sending is opt-in (`apply.outreach.enabled` + `email.*` + `--send`), **deduped per company** with a cooldown, and honors a do-not-contact list. |
-| `campaign [create\|list\|show\|discover\|draft\|approve\|start\|pause\|skip\|send-approved\|replies\|tick\|ready]` | Local ranked recruiter campaigns. Selects N unique India-relevant cybersecurity companies, excludes all application history, records India/compensation/growth evidence, discovers one recruiter, and requires per-message approval. `tick` checks replies, then sends at most one due approved draft after rechecking every guard. |
+| `campaign [create\|list\|show\|discover\|draft\|approve\|start\|pause\|cancel\|delete\|skip\|send-approved\|replies\|tick\|ready]` | Local ranked recruiter campaigns. Selects N unique India-relevant cybersecurity companies, excludes all application history, records India/compensation/growth evidence, discovers one recruiter, and requires per-message approval. `tick` checks replies, then sends at most one due approved draft after rechecking every guard. `delete --campaign-id ID --yes` permanently removes only an unsent draft; delivery history is retained. |
 | `dashboard [--public] [--emit-web]` | Emits the private dashboard payload; `--public` writes an **empty schema-valid shell**. `--emit-web` mirrors private data for local development. Publish scripts ship only the empty shell plus encrypted `site.enc.json`. |
 | `serve [--port 8799] [--open]` | Serves the **live local workspace** on 127.0.0.1. The guarded API reads current SQLite data, edits profiles, applies mutations, and refreshes Gmail/matches without rebuilding or publishing. |
 | `refresh [--local-only] [--force]` | Runs the refresh pipeline. `--local-only` stops after SQLite sync/rescore; the compatibility default also publishes the encrypted Pages snapshot. |
@@ -65,7 +65,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 
 ## Dashboard UX
 
-- **Company-first IA:** Review, Companies, local-only Campaigns, Pipeline, Applications, Activity, Settings. Review defaults
+- **Company-first IA:** Review, Companies, local-only Campaigns, Pipeline, Applications, Settings. Review defaults
   to pending monitored matches; broad Discovery, Saved, and Dismissed never mix implicitly. Companies
   owns portal resolution, source health, scan/pause/remove, and per-company pending/saved roles.
 - **Local + encrypted Pages actions:** localhost uses loopback/CSRF APIs immediately. Static Pages stores
@@ -76,7 +76,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   fetched from `site.enc.json` and decrypted in-browser before any application surface mounts.
 - **Operational visual system:** warm coral commands, green/amber/red status signals, IBM Plex Sans UI,
   Source Serif role prose, compact controls, stable split panes, and light/dark themes.
-- **Command palette (⌘K):** jumps between all six views, fuzzy-searches roles, toggles theme, and runs refresh actions.
+- **Command palette (⌘K):** jumps between workspace views, fuzzy-searches roles, toggles theme, and runs refresh actions.
 - **Header Refresh button:** rescans Gmail on demand — with a stored fine-grained token it POSTs `workflow_dispatch`
   directly, otherwise it opens GitHub's Run-workflow page. Throttle-safe: a client cooldown plus a check for an
   already-running scan means rapid taps never stack workflow runs; it then polls the run and offers to pull the fresh build.
@@ -101,6 +101,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   **Monitor company**. Only watched companies count toward Needs setup and expose source health,
   scan/pause/resume/remove, and editable portal controls. Job scans and recruiter lookup are separate explicit
   actions; scheduled contact refresh is opt-in to bound domain probes.
+- **Fast Phenom scans:** detail pages are hydrated only after geo/title filtering and in a four-request bounded
+  pool. The decision funnel and input order remain deterministic while large-company scans avoid serial waits.
 - **Recruiter preference:** verified inbound recruiters remain highest confidence; within comparable sources,
   cybersecurity/security recruiter titles rank ahead of technical/engineering, then general recruiting/HR.
   Employer domains must come from the company site, verified name/domain match, or inbox evidence—never
@@ -118,8 +120,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Quorum boundary:** optional Quorum can improve generated drafts and arbitrate ordinary deterministic
   inbox-label ties. It cannot rank companies, select recipients, approve/send mail, match replies, or override
   deterministic `campaign_reply` / `campaign_optout` labels.
-- **Applications + Activity:** operational inbox/board/offers views, preserved Sankey, action queue, and a
-  chronological event stream with unique event identity.
+- **Applications:** operational inbox/board/offers views, follow-up attention filter, reconciliation summary,
+  recoverable-application restore, and per-application chronological activity in the drawer.
 - **Whole-site unlock:** the private payload includes jobs, descriptions, rationale, contacts, profile,
   monitors, reviews, and applications. Only its AES-256-GCM ciphertext and a tiny pointer are published.
 - **UX tests:** Vitest + Testing Library cover routing, Review/Companies actions, queue synchronization,
@@ -458,11 +460,11 @@ The React SPA in `web/` is served privately on localhost or unlocked from the en
   remove monitors; open pending/saved roles without leaving the company context.
 - **Pipeline:** application Sankey plus outcome and response metrics.
 - **Applications:** operational list, compact/table/grouped views, board, and offer register.
-- **Activity:** overdue action queue plus application-event history.
-- **Settings:** up to three résumé-derived profiles, local upload/replace/edit/reset/switch, explicit Gmail
+- **Settings:** starts with an explicit résumé add/replace control, then supports up to three résumé-derived
+  profiles, local edit/reset/switch, explicit Gmail
   scan, local-versus-snapshot status, data freshness, GitHub sync token, privacy, display, and lock controls.
-- Desktop uses a persistent Review reader and company list/detail split. Mobile uses five primary slots with
-  Activity/Settings in More and opens readers/details full-screen.
+- Desktop uses a persistent Review reader and company list/detail split. Mobile keeps Settings in More and
+  opens readers/details full-screen.
 
 ---
 

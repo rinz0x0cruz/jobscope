@@ -2,6 +2,8 @@
 import json
 import os
 import tempfile
+import threading
+import time
 
 from jobscope.ingest import ats
 from jobscope.core.config import load_config
@@ -232,6 +234,37 @@ def test_phenom_hydrates_full_description_after_filtering(monkeypatch):
     hydrated = ats.hydrate_company_jobs("phenom", [job])
 
     assert hydrated[0].description == "Monitor SIEM alerts & support incident response."
+
+
+def test_phenom_hydration_is_bounded_parallel_and_preserves_order(monkeypatch):
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def fetch(url, **_kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.04)
+        with lock:
+            active -= 1
+        detail = {"jobDetail": {"data": {"job": {"description": f"<p>{url}</p>"}}}}
+        return ats.httpx.HttpResult(
+            True, 200, 1, f"<script>phApp.ddo = {json.dumps(detail)};</script>", "",
+        )
+
+    monkeypatch.setattr(ats.httpx, "get_text_result", fetch)
+    jobs = [Job(title=f"Role {index}", url=f"https://example.test/{index}") for index in range(8)]
+    stats = {}
+
+    hydrated = ats.hydrate_company_jobs("phenom", jobs, stats=stats)
+
+    assert peak == 4
+    assert hydrated is jobs
+    assert [job.title for job in hydrated] == [f"Role {index}" for index in range(8)]
+    assert [job.description for job in hydrated] == [f"https://example.test/{index}" for index in range(8)]
+    assert stats == {"attempted": 8, "hydrated": 8, "failed": 0}
 
 
 def test_board_fetch_result_distinguishes_empty_error_and_invalid(monkeypatch):

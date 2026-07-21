@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { buildBriefing } from '@/lib/briefing'
-import { buildTimeline } from '@/lib/timeline'
 import type { Application, DashboardData, JobRow } from '@/lib/schema'
 
 const NOW = Date.parse('2026-07-01T00:00:00Z')
@@ -78,44 +77,6 @@ describe('buildBriefing', () => {
       })],
     })
     const ids = buildBriefing(repeated, NOW).moved.map((item) => item.id)
-    expect(new Set(ids).size).toBe(ids.length)
-  })
-})
-
-describe('buildTimeline', () => {
-  const data = makeData({
-    applications: [
-      app({
-        job_id: 'a', company: 'Acme', status: 'interview', applied_at: ago(5),
-        timeline: [{ date: ago(1), signal: 'interview', subject: '', from: '', summary: '' }],
-      }),
-      app({ job_id: 'g', company: 'Initech', status: 'applied', applied_at: ago(10) }),
-    ],
-  })
-  const t = buildTimeline(data, NOW)
-
-  it('buckets history newest-first and labels signals', () => {
-    expect(t.groups.some((g) => g.label === 'This week')).toBe(true)
-    const texts = t.groups.flatMap((g) => g.events.map((e) => e.text))
-    expect(texts).toContain('Interview step with Acme')
-    expect(texts).toContain('Applied to Acme')
-  })
-  it('builds an agenda of follow-ups that need action', () => {
-    expect(t.agenda.some((x) => x.text.startsWith('Follow up with Initech'))).toBe(true)
-  })
-  it('keeps same-day signals uniquely addressable', () => {
-    const repeated = makeData({
-      applications: [
-        app({
-          job_id: 'same-day', company: 'Acme', status: 'applied', applied_at: ago(5),
-          timeline: [
-            { date: ago(1), signal: 'confirmation', subject: 'First', from: '', summary: '' },
-            { date: ago(1), signal: 'confirmation', subject: 'Second', from: '', summary: '' },
-          ],
-        }),
-      ],
-    })
-    const ids = buildTimeline(repeated, NOW).groups.flatMap((group) => group.events.map((event) => event.id))
     expect(new Set(ids).size).toBe(ids.length)
   })
 })

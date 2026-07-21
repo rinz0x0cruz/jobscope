@@ -15,6 +15,7 @@ import datetime as _dt
 import html as _html
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -732,35 +733,38 @@ def hydrate_company_jobs(
         stats.update(attempted=0, hydrated=0, failed=0)
     if (provider or "").lower() != "phenom":
         return jobs
-    marker = "phApp.ddo = "
-    for job in jobs[:_PHENOM_MAX_DETAILS]:
-        if stats is not None:
-            stats["attempted"] += 1
-        result = httpx.get_text_result(job.url)
-        if not result.ok or not isinstance(result.data, str):
-            if stats is not None:
-                stats["failed"] += 1
-            continue
-        start = result.data.find(marker)
-        if start < 0:
-            if stats is not None:
-                stats["failed"] += 1
-            continue
-        try:
-            payload, _ = json.JSONDecoder().raw_decode(result.data[start + len(marker):])
-            detail = payload["jobDetail"]["data"]["job"]
-            description = _strip_html(detail.get("description") or "")
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            if stats is not None:
-                stats["failed"] += 1
-            continue
-        if description:
-            job.description = description
-            if stats is not None:
-                stats["hydrated"] += 1
-        elif stats is not None:
-            stats["failed"] += 1
+    selected = jobs[:_PHENOM_MAX_DETAILS]
+    if not selected:
+        return jobs
+    with ThreadPoolExecutor(max_workers=min(4, len(selected))) as pool:
+        outcomes = list(pool.map(_hydrate_phenom_job, selected))
+    if stats is not None:
+        stats.update(
+            attempted=len(selected),
+            hydrated=sum(outcomes),
+            failed=len(selected) - sum(outcomes),
+        )
     return jobs
+
+
+def _hydrate_phenom_job(job: Job) -> bool:
+    marker = "phApp.ddo = "
+    result = httpx.get_text_result(job.url)
+    if not result.ok or not isinstance(result.data, str):
+        return False
+    start = result.data.find(marker)
+    if start < 0:
+        return False
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(result.data[start + len(marker):])
+        detail = payload["jobDetail"]["data"]["job"]
+        description = _strip_html(detail.get("description") or "")
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if not description:
+        return False
+    job.description = description
+    return True
 
 
 def run(cfg: dict, store) -> int:

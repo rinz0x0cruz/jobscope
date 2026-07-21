@@ -66,6 +66,7 @@ export const SEARCH_DEFAULTS: Partial<SearchState> = {
 
 export function activeView(state: SearchState): ViewValue {
   if (state.view === 'feed') return 'review'
+  if (state.view === 'activity') return 'applications'
   if (state.view) return state.view
   if (state.tab === 'applications' || state.tab === 'outreach') return 'applications'
   if (state.tab === 'overview') return 'pipeline'

@@ -26,7 +26,12 @@ def required_experience_years(job: Job) -> Optional[float]:
     doesn't leak clearly-too-senior roles through.
     """
     title = job.title or ""
-    text = f"{title}\n{job.description or ''}".lower().replace("\u2013", "-").replace("\u2014", "-")
+    text = (
+        f"{title}\n{job.description or ''}".lower()
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+        .replace(r"\+", "+")
+    )
     nums: list[int] = []
     for m in re.finditer(r"(?<![\d-])(\d{1,2})\s*\+\s*(?:years?|yrs?)", text):            # "5+ years"
         nums.append(int(m.group(1)))

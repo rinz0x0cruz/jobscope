@@ -217,6 +217,54 @@ def test_recompute_tombstones_orphaned_mail_app():
         store.close()
 
 
+def test_recompute_tombstones_inbox_offer_on_scraped_job_without_funnel_evidence():
+    with tempfile.TemporaryDirectory() as tmp:
+        _, store = _store(tmp)
+        job = Job(
+            source="linkedin", title="Information Security Analyst",
+            company="Cyberr", url="https://example.test/cyberr-role",
+        ).ensure_id()
+        store.upsert_job(job)
+        store.set_application(Application(
+            job_id=job.id, status="offer", company="CYBERR", source="inbox",
+        ))
+        _ev(
+            store, 1, "Welcome to Cyberr", "other", "Cyberr", "2026-07-13",
+            job_id=job.id, snippet="The professional network built for cybersecurity.",
+        )
+
+        reconcile.recompute(store)
+
+        assert store.get_application(job.id) is None
+        hidden = store.get_application(job.id, include_tombstoned=True)
+        assert hidden["tombstone_reason"] == "orphan_mail_application"
+        assert store.get_job(job.id) is not None
+        assert store.mail_events(job.id)[0]["signal"] == "other"
+        store.close()
+
+
+def test_recompute_keeps_non_offer_inbox_app_on_scraped_job_without_funnel_evidence():
+    with tempfile.TemporaryDirectory() as tmp:
+        _, store = _store(tmp)
+        job = Job(
+            source="linkedin", title="Information Security Analyst",
+            company="Cyberr", url="https://example.test/cyberr-applied",
+        ).ensure_id()
+        store.upsert_job(job)
+        store.set_application(Application(
+            job_id=job.id, status="applied", company="CYBERR", source="inbox",
+        ))
+        _ev(
+            store, 1, "Welcome to Cyberr", "other", "Cyberr", "2026-07-13",
+            job_id=job.id,
+        )
+
+        reconcile.recompute(store)
+
+        assert store.get_application(job.id)["status"] == "applied"
+        store.close()
+
+
 def test_recompute_failure_rolls_back_mutations_and_marks_run_failed(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         _, store = _store(tmp)

@@ -23,7 +23,7 @@ describe('urlState: schema + defaults', () => {
     expect(activeView(searchSchema.parse({ tab: 'Strong' }))).toBe('review')
     expect(activeView(searchSchema.parse({ view: 'feed' }))).toBe('review')
     expect(activeView(searchSchema.parse({ view: 'companies' }))).toBe('companies')
-    expect(activeView(searchSchema.parse({ view: 'activity', tab: 'applications' }))).toBe('activity')
+    expect(activeView(searchSchema.parse({ view: 'activity', tab: 'applications' }))).toBe('applications')
   })
 
   it('coerces an invalid tab to "all" instead of throwing', () => {

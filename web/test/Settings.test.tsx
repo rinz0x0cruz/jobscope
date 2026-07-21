@@ -51,7 +51,8 @@ describe('Settings lens', () => {
 
   it('shows the résumé profile summary', () => {
     renderSettings()
-    expect(screen.getByText('security-consulting')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Résumé' })).toBeInTheDocument()
+    expect(screen.getAllByText('security-consulting')).toHaveLength(2)
     expect(screen.getByText('Security Engineer')).toBeInTheDocument()
     expect(screen.getByText('Threat Modeling')).toBeInTheDocument()
   })
@@ -133,10 +134,11 @@ describe('Settings lens', () => {
     renderSettings({ onProfileChange, serveToken: 'local-token' })
 
     const name = await screen.findByLabelText('Profile name')
+    expect(name).toHaveValue('security-consulting')
     fireEvent.change(name, { target: { value: 'product-security' } })
     const file = new File(['# Jane\n## Skills\nPython, AWS'], 'product-security.md', { type: 'text/markdown' })
     fireEvent.change(screen.getByLabelText('Resume file'), { target: { files: [file] } })
-    fireEvent.click(screen.getByRole('button', { name: 'Build profile' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add résumé' }))
 
     await waitFor(() => expect(onProfileChange).toHaveBeenCalledWith(nextProfile))
     const uploadCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/resume/upload'))
@@ -154,13 +156,13 @@ describe('Settings lens', () => {
     }
     renderSettings({ profile: fullProfile, serveToken: 'local-token' })
     const file = new File(['# Updated'], 'updated.md', { type: 'text/markdown' })
-    await screen.findByLabelText('Profile name')
+    expect(await screen.findByLabelText('Profile name')).toHaveValue('security-consulting')
     fireEvent.change(screen.getByLabelText('Resume file'), { target: { files: [file] } })
 
     fireEvent.change(screen.getByLabelText('Profile name'), { target: { value: 'fourth' } })
-    expect(screen.getByRole('button', { name: 'Build profile' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Add résumé' })).toBeDisabled()
     fireEvent.change(screen.getByLabelText('Profile name'), { target: { value: 'research' } })
-    expect(screen.getByRole('button', { name: 'Build profile' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Replace résumé' })).toBeEnabled()
     vi.unstubAllGlobals()
   })
 

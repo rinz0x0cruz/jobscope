@@ -45,31 +45,45 @@ def _stub_ats_http(ats, fetch):
 
 
 def _selftest_ingest(c):
-    _selftest_inbox(c)
-    from ..core.config import load_config
-    from ..core.store import Store
-    from ..ingest import ats
+     _selftest_inbox(c)
+     from ..core.config import load_config
+     from ..core.store import Store
+     from ..ingest import ats
 
-    with _stub_ats_http(ats, _ats_payload):
-        c.ok("ats resolves known slug",
-             ats._resolve("databricks") == ("databricks", "greenhouse", "databricks"))
-        c.ok("ats resolves explicit override", ats._resolve("A|lever|a") == ("A", "lever", "a"))
-        boards = ats.fetch_company("Databricks", "greenhouse", "databricks")
-        c.ok("ats parses greenhouse board", len(boards) == 2 and boards[0].source == "ats")
-        c.ok("ats strips + unescapes html", boards[0].description == "a & b")
-        with tempfile.TemporaryDirectory() as tmp:
-            store = Store(os.path.join(tmp, "a.db"))
-            cfg = load_config(None)
-            cfg["search"].update(terms=["security engineer"], country_indeed="India",
-                                 is_remote=True, companies=["databricks"])
-            c.ok("ats run filters role + upserts", ats.run(cfg, store) == 1)
-            job_id = store.jobs()[0].id
-            c.ok("reconcile ignores empty liveset",
-                 store.reconcile_open("ats", "databricks", set()) == 0)
-            c.ok("reconcile closes missing job",
-                 store.reconcile_open("ats", "databricks", {"https://other"}) == 1)
-            c.ok("closed status persists", store.get_job(job_id).status == "closed")
-            store.close()
+     with _stub_ats_http(ats, _ats_payload):
+          c.ok(
+               "ats resolves known slug",
+               ats._resolve("databricks") == ("databricks", "greenhouse", "databricks"),
+          )
+          c.ok(
+               "ats resolves explicit override",
+               ats._resolve("A|lever|a") == ("A", "lever", "a"),
+          )
+          boards = ats.fetch_company("Databricks", "greenhouse", "databricks")
+          c.ok("ats parses greenhouse board", len(boards) == 2 and boards[0].source == "ats")
+          c.ok("ats strips + unescapes html", boards[0].description == "a & b")
+          with tempfile.TemporaryDirectory() as tmp:
+               cfg = load_config(None)
+               cfg["output"]["db_path"] = os.path.join(tmp, "a.db")
+               store = Store(cfg["output"]["db_path"])
+               cfg["search"].update(
+                    terms=["security engineer"],
+                    country_indeed="India",
+                    is_remote=True,
+                    companies=["databricks"],
+               )
+               c.ok("ats run filters role + upserts", ats.run(cfg, store) == 1)
+               job_id = store.jobs()[0].id
+               c.ok(
+                    "reconcile ignores empty liveset",
+                    store.reconcile_open("ats", "databricks", set()) == 0,
+               )
+               c.ok(
+                    "reconcile closes missing job",
+                    store.reconcile_open("ats", "databricks", {"https://other"}) == 1,
+               )
+               c.ok("closed status persists", store.get_job(job_id).status == "closed")
+               store.close()
 
 
 class _Check:

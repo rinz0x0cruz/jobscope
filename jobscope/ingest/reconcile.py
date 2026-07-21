@@ -229,13 +229,17 @@ def _recompute(store, run_id: str) -> dict[str, int]:
                 )
         _write_status(store, jid, base, status, inst, run_id)
 
-    # Tombstone orphaned email-derived apps: a "mail:" row whose events were all dropped
-    # (newsletter/transactional) or now fold to no funnel status -- so a LeetCode /
-    # Educative course blast or a GitHub CI email never lingers as a ghost card.
+    # Tombstone orphaned synthetic mail apps whose events no longer carry funnel
+    # evidence. Also heal stale inbox-derived offers when older company-only
+    # linking reused a scraped job id; do not rewrite other scraped-id statuses.
     for a in store.applications():
         jid = a.get("job_id") or ""
         base = jid.split("#", 1)[0]
-        if (base.startswith("mail:") and base not in written and
+        stale_inbox_offer = (
+            a.get("source") in {"inbox", "email"} and a.get("status") == "offer"
+        )
+        email_derived = base.startswith("mail:") or stale_inbox_offer
+        if (email_derived and base not in written and
                 not bool(a.get("reconciliation_exempt"))):
             if store._tombstone_application(
                     jid, reason="orphan_mail_application", run_id=run_id):

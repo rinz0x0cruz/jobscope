@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
-  Activity,
   Building2,
   CloudUpload,
   BriefcaseBusiness,
@@ -40,7 +39,6 @@ const NAV_ITEMS: Array<{ value: ViewValue; label: string; Icon: typeof ListFilte
   { value: 'campaigns', label: 'Campaigns', Icon: Send },
   { value: 'pipeline', label: 'Pipeline', Icon: Workflow },
   { value: 'applications', label: 'Applications', Icon: BriefcaseBusiness },
-  { value: 'activity', label: 'Activity', Icon: Activity },
   { value: 'settings', label: 'Settings', Icon: Settings },
 ]
 
@@ -48,7 +46,7 @@ const MOBILE_VIEWS: ViewValue[] = ['review', 'companies', 'pipeline', 'applicati
 
 const NAV_SECTIONS: Array<{ label: string; views: ViewValue[] }> = [
   { label: 'Workspace', views: ['review', 'companies'] },
-  { label: 'Progress', views: ['campaigns', 'pipeline', 'applications', 'activity'] },
+  { label: 'Progress', views: ['campaigns', 'pipeline', 'applications'] },
   { label: 'System', views: ['settings'] },
 ]
 

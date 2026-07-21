@@ -38,6 +38,17 @@ def test_broader_experience_phrases():
     assert required_experience_years(_job("Security Engineer", "8 plus years")) == 8.0
 
 
+def test_markdown_escaped_plus_experience_is_detected_and_filtered():
+    job = _job(
+        "Cyber Security Analyst",
+        r"8\+ years of hands\-on experience in incident response and threat hunting.",
+    )
+    assert required_experience_years(job) == 8.0
+    assert apply_filters(job, {"max_years_experience": 2}).startswith(
+        "needs ~8y experience"
+    )
+
+
 def test_explicit_seasoned_experience_implies_senior_bar():
     assert required_experience_years(_job(
         "Information Security Analyst",

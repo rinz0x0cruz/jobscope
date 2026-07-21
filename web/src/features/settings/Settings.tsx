@@ -45,7 +45,7 @@ export function Settings({ profile, generated, total, serveToken, onLock, onRefr
   const prof = profile
   const [switching, setSwitching] = useState(false)
   const [resumeFile, setResumeFile] = useState<File | null>(null)
-  const [profileName, setProfileName] = useState('')
+  const [profileName, setProfileName] = useState(profile?.name ?? '')
   const [uploading, setUploading] = useState(false)
   const locations = prof ? [...new Set([...prof.locations, ...(prof.remote ? ['Remote'] : [])])] : []
 
@@ -56,6 +56,7 @@ export function Settings({ profile, generated, total, serveToken, onLock, onRefr
       const res = await profileUse(name, serveToken)
       if (res.ok && res.profile) {
         onProfileChange?.(res.profile)
+        setProfileName(res.profile.name)
         toast.success(`Active profile: ${name}`)
       } else {
         toast.error(res.error || 'Could not switch profile')
@@ -75,8 +76,8 @@ export function Settings({ profile, generated, total, serveToken, onLock, onRefr
       if (res.ok && res.profile) {
         onProfileChange?.(res.profile)
         setResumeFile(null)
-        setProfileName('')
-        toast.success(`Profile built: ${res.profile.name}`)
+        setProfileName(res.profile.name)
+        toast.success(`Résumé updated: ${res.profile.name}`)
       } else {
         toast.error(res.error || 'Could not build profile')
       }
@@ -118,14 +119,69 @@ export function Settings({ profile, generated, total, serveToken, onLock, onRefr
       <div className="grid lg:grid-cols-[14rem_minmax(0,1fr)]">
         <aside className="border-b border-line bg-inset/35 p-4 lg:border-b-0 lg:border-r lg:p-5">
           <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto [scrollbar-width:none] lg:sticky lg:top-4 lg:flex-col [&::-webkit-scrollbar]:hidden">
-            <SettingsLink target="appearance" icon={<Palette size={14} aria-hidden="true" />}>Appearance</SettingsLink>
+            <SettingsLink target="resume" icon={<Upload size={14} aria-hidden="true" />}>Résumé</SettingsLink>
             <SettingsLink target="profile" icon={<FileText size={14} aria-hidden="true" />}>Search profiles</SettingsLink>
+            <SettingsLink target="appearance" icon={<Palette size={14} aria-hidden="true" />}>Appearance</SettingsLink>
             <SettingsLink target="sync" icon={<RefreshCw size={14} aria-hidden="true" />}>Data sync</SettingsLink>
             {onLock && <SettingsLink target="privacy" icon={<Shield size={14} aria-hidden="true" />}>Privacy</SettingsLink>}
           </nav>
         </aside>
 
         <div className="min-w-0">
+          <SettingsSection
+            id="resume"
+            icon={<Upload size={16} aria-hidden="true" />}
+            title="Résumé"
+            description="Replace the active ranking résumé or add another search profile."
+          >
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[13px] font-semibold text-ink">{prof?.resume || 'No résumé loaded'}</p>
+                <p className="mt-0.5 text-[11px] text-ink-3">
+                  {serveToken ? 'Choose a PDF, Markdown, text, or JSON résumé.' : 'Résumé changes require the local workspace.'}
+                </p>
+              </div>
+              <Badge tone="neutral">{profileCount} of {profileLimit} profiles</Badge>
+            </div>
+            {serveToken && (
+              <div className="grid gap-2 sm:grid-cols-[minmax(10rem,.55fr)_minmax(12rem,1fr)_auto]">
+                <input
+                  value={profileName}
+                  onChange={(event) => setProfileName(event.target.value)}
+                  aria-label="Profile name"
+                  placeholder="Profile name"
+                  className="h-10 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong"
+                />
+                <label className="flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border border-brand bg-brand-weak px-3 text-[12px] font-medium text-brand hover:border-line-strong">
+                  <Upload size={15} className="shrink-0" aria-hidden="true" />
+                  <span className="truncate">{resumeFile?.name || 'Choose résumé file'}</span>
+                  <input
+                    type="file"
+                    accept=".md,.txt,.json,.pdf"
+                    aria-label="Resume file"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null
+                      setResumeFile(file)
+                      if (file && !profileName) setProfileName(file.name.replace(/\.[^.]+$/, ''))
+                    }}
+                    className="sr-only"
+                  />
+                </label>
+                <Button
+                  variant="primary"
+                  disabled={newProfileBlocked || uploading || !resumeFile || !profileName.trim()}
+                  onClick={() => void uploadResume()}
+                >
+                  {uploading ? <RefreshCw size={15} className="animate-spin" aria-hidden="true" /> : <Upload size={15} aria-hidden="true" />}
+                  {replacingProfile ? 'Replace résumé' : 'Add résumé'}
+                </Button>
+              </div>
+            )}
+            {profileCapReached && !replacingProfile && (
+              <p className="mt-2 text-[11px] text-ink-3">Reuse an existing profile name to replace its résumé.</p>
+            )}
+          </SettingsSection>
+
           <SettingsSection
             id="appearance"
             icon={<Palette size={16} aria-hidden="true" />}
@@ -229,51 +285,6 @@ export function Settings({ profile, generated, total, serveToken, onLock, onRefr
                 <p className="pb-5 text-[13px] text-ink-3">No search profile loaded.</p>
               )}
 
-              {serveToken && (
-                <div className="border-t border-line pt-5">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[13px] font-semibold text-ink">Upload résumé</p>
-                      <p className="text-[11px] text-ink-3">{profileCount} of {profileLimit} profiles</p>
-                    </div>
-                    {profileCapReached && <Badge tone="neutral">Reuse a profile name to replace</Badge>}
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-[minmax(10rem,.55fr)_minmax(12rem,1fr)_auto]">
-                    <input
-                      value={profileName}
-                      onChange={(event) => setProfileName(event.target.value)}
-                      aria-label="Profile name"
-                      placeholder="Profile name"
-                      className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong disabled:opacity-50"
-                    />
-                    <label className="flex h-9 min-w-0 cursor-pointer items-center gap-2 rounded-md border border-line bg-inset px-3 text-[12px] text-ink-2 hover:border-line-strong">
-                      <Upload size={14} className="shrink-0" aria-hidden="true" />
-                      <span className="truncate">{resumeFile?.name || 'Choose résumé'}</span>
-                      <input
-                        type="file"
-                        accept=".md,.txt,.json,.pdf"
-                        aria-label="Resume file"
-                        onChange={(event) => {
-                          const file = event.target.files?.[0] ?? null
-                          setResumeFile(file)
-                          if (file && !profileName) {
-                            setProfileName(file.name.replace(/\.[^.]+$/, ''))
-                          }
-                        }}
-                        className="sr-only"
-                      />
-                    </label>
-                    <Button
-                      variant="secondary"
-                      disabled={newProfileBlocked || uploading || !resumeFile || !profileName.trim()}
-                      onClick={() => void uploadResume()}
-                    >
-                      {uploading ? <RefreshCw size={15} className="animate-spin" aria-hidden="true" /> : <Upload size={15} aria-hidden="true" />}
-                      Build profile
-                    </Button>
-                  </div>
-                </div>
-              )}
             </SettingsSection>
 
           <SettingsSection

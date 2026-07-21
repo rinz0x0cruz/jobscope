@@ -14,6 +14,7 @@ import {
   Send,
   ShieldCheck,
   SkipForward,
+  Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -88,6 +89,14 @@ export function CampaignsView({ token, selectedId, onSelect, onOpenApplications 
     ])
     setCampaigns(values)
     setDetail(nextDetail)
+  }
+
+  async function acceptDeletedCampaign() {
+    const values = await listCampaigns(token)
+    setCampaigns(values)
+    setDetail(null)
+    setTargetId('')
+    onSelect(values[0]?.id)
   }
 
   async function submitCreate(event: React.FormEvent) {
@@ -199,6 +208,7 @@ export function CampaignsView({ token, selectedId, onSelect, onOpenApplications 
               onBack={() => onSelect(undefined)}
               onOpenApplications={onOpenApplications}
               onChanged={() => reload(visibleDetail.campaign.id)}
+              onDeleted={acceptDeletedCampaign}
             />
           ) : (
             <NoCampaign />
@@ -217,6 +227,7 @@ function CampaignDetail({
   onBack,
   onOpenApplications,
   onChanged,
+  onDeleted,
 }: {
   token: string
   detail: CampaignDetailResult
@@ -225,6 +236,7 @@ function CampaignDetail({
   onBack: () => void
   onOpenApplications: () => void
   onChanged: () => Promise<void>
+  onDeleted: () => Promise<void>
 }) {
   const [busy, setBusy] = useState('')
   const campaign = detail.campaign
@@ -261,6 +273,20 @@ function CampaignDetail({
       toast.success(next === 'active' ? 'Campaign active' : next === 'paused' ? 'Campaign paused' : 'Campaign cancelled')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update campaign')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function deleteDraft() {
+    if (!window.confirm(`Permanently delete the draft campaign “${campaign.name}”?`)) return
+    setBusy('delete')
+    try {
+      await checkedAction(token, { action: 'delete', campaign_id: campaign.id })
+      await onDeleted()
+      toast.success('Draft campaign deleted')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not delete draft campaign')
     } finally {
       setBusy('')
     }
@@ -324,6 +350,9 @@ function CampaignDetail({
             ) : null}
             {campaign.status === 'active' && (
               <ActionButton label="Send next due" onClick={sendNext} busy={busy === 'send_next'} Icon={Send} />
+            )}
+            {campaign.status === 'draft' && (
+              <ActionButton label="Delete draft" onClick={deleteDraft} busy={busy === 'delete'} Icon={Trash2} danger />
             )}
           </div>
         </div>
