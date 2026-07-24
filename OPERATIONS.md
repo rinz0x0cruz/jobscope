@@ -27,6 +27,52 @@ python -m piptools compile requirements.txt --output-file requirements.lock \
 
 Review both `requirements.txt` and `requirements.lock` in the same change.
 
+## Private Hosted Control Plane
+
+The repository contains an opt-in hosted server contract, an immutable multi-stage `Dockerfile`,
+`railway.json`, and a Linux CI container smoke test. No Railway/Cloudflare resources, schedules,
+secrets, or data are created by these files.
+
+Required topology:
+
+1. Let the green `container` CI job publish its already-smoke-tested image to GHCR. Configure exactly
+   one Jobscope service from the immutable `ghcr.io/<owner>/jobscope@sha256:<digest>` reported in the
+   job summary, with no Railway public domain, and mount one volume at `/data`. For an image-source
+   service, mirror `railway.json`'s `/healthz`, 30-second timeout, and bounded on-failure restart settings.
+2. Put sanitized configuration at `/data/config.yaml` with `output.db_path: /data/jobscope.db`.
+3. Set only secret values in Railway variables. Keep `ai.enabled`, `email.enabled`, and
+   `apply.outreach.enabled` false for the canary.
+4. Route a Cloudflare Tunnel hostname to the private service on port 8799. Enable **Protect with
+   Access** so `cloudflared` validates the Access JWT and forwards `Cf-Access-Jwt-Assertion`.
+5. Set `JOBSCOPE_PUBLIC_ORIGIN` to that exact HTTPS origin. Access must deny by default and allow
+   only the intended identity. `/healthz` is the only route that does not require the Access header.
+
+Do not migrate real data yet. Start the immutable image with an empty volume, verify unauthenticated
+requests are denied, sign in through Access, make a temporary profile change, restart the same image,
+and prove the change and `PRAGMA quick_check` survive. The CI `container` job performs the equivalent
+image/volume/header smoke on Linux.
+
+Cut over with one writer:
+
+1. Pause local refresh/outreach tasks and disable `.github/workflows/refresh.yml`; record the last
+   encrypted `data` and Pages commits.
+2. Stop the empty canary. Back up the local full database and profiles, run
+   `python -m jobscope.core.snapshot data/jobscope.db`, and record file hashes and table counts.
+3. Upload the validated database, `profiles/`, and sanitized config to `/data`; retain the local copy
+   untouched. Start the same tested image, then compare jobs, applications, mail events, reviews,
+   profiles, campaigns, and SQLite integrity.
+4. Add Gmail credentials only after those checks pass. Run one manual refresh with SMTP/outreach still
+   disabled and confirm the retained stage timings. Do not enable a hosted schedule while the old
+   workflow can still write its independent database.
+5. After the provider environment and Access service credentials exist, replace the old cloud writer
+   with a manual, approval-gated trigger that calls `/api/token`, POSTs `/api/refresh` with the exact
+   Origin, and polls `/api/status`. Add the three-hour schedule only after the manual trigger passes.
+
+Before declaring cutover complete, restore a Railway volume backup into a temporary service, run
+`PRAGMA quick_check`, and compare the recorded counts. Rollback disables hosted triggers, stops the
+hosted service, restores the untouched local backup, and re-enables the recorded previous workflow.
+Do not delete old snapshots or secrets until both scheduled refresh and restore evidence pass.
+
 ## Cloud Refresh Invariants
 
 The scheduled workflow in `.github/workflows/refresh.yml` requires an existing
@@ -44,8 +90,7 @@ is due (or `full_scan=true`) → inbox → match → review sync → save encryp
 errors are optional/degraded and fail closed: only a complete non-empty board may mark linked jobs closed.
 
 Pages mutations require the existing fine-grained Actions read/write token. Save/Dismiss/company changes are
-collapsed by entity in browser storage and dispatched together; application recovery uses the same validated
-queue and the backend owns its restore run ID. An active workflow or failed run keeps the
+collapsed by entity in browser storage and dispatched together. An active workflow or failed run keeps the
 queue intact; only a successful refresh clears it. The workflow receives JSON through an environment variable
 and file, then validates it in Python—never through shell evaluation.
 
@@ -67,7 +112,8 @@ Before encryption, `jobscope.core.snapshot --cloud-copy` creates a consistent SQ
 backup, empties the local-only campaign, target, run, and suppression tables, enables
 secure deletion, and vacuums free pages. The encrypted `data` branch therefore cannot
 expose or restore recruiter-campaign recipients, drafts, approvals, schedules, or
-opt-outs. The original local database is never modified by this redaction step.
+opt-outs, including follow-up source provenance and thread identifiers. The original
+local database is never modified by this redaction step.
 
 Seed the branch once from a validated local database:
 
@@ -157,10 +203,16 @@ reconciles replies/opt-outs, and sends at most one due approved email. The task 
 `MultipleInstances IgnoreNew`; it never force-sends or bypasses approval, quota, spacing, cooldown,
 application-history, recipient-domain, résumé-hash, or suppression guards.
 
-If Campaigns reports **delivery unknown**, do not retry until checking the SMTP provider's Sent
+Build a follow-up review queue with `campaign followups --count N` or **Build follow-up queue** in
+the local UI. This operation writes drafts only. Before approval and again before sending, Jobscope
+checks that the source is still pending, `apply.followup_days` has elapsed since the latest action,
+the application has not advanced or received a response, and any original recipient/thread is unchanged.
+
+If Outreach reports **delivery unknown**, do not retry until checking the SMTP provider's Sent
 folder for the stored Message-ID. Resolve it in the local UI as **Confirmed in Sent** or
 **Confirmed not sent**. The latter returns it to Draft and clears approval, so an intentional retry
-requires review and approval again. A generic same-domain reply is linked only when one unresolved
+requires review and approval again. If a scheduler process dies while a send is claimed, the claim remains
+locked for 15 minutes; the next tick then exposes it as delivery unknown for this same manual check. A generic same-domain reply is linked only when one unresolved
 target exists for that domain; exact `In-Reply-To` matching always takes precedence.
 
 ## Key Rotation
@@ -204,7 +256,9 @@ after the verifier confirms:
 - No private field/value serialization appears in text assets.
 - `deployment-manifest.json` records the source commit and SHA-256 of every artifact.
 
-The monitoring, audit, and local campaign migrations are additive. Rolling code back
+The monitoring, audit, and local campaign migrations are additive. Follow-up support adds campaign
+purpose plus target provenance, thread, sequence, and recipient-lock columns/indexes through
+`ALTER TABLE ADD COLUMN`; back up the local SQLite file before the first upgraded run. Rolling code back
 leaves their tables ignored but intact; it does not delete raw jobs, application
 history, dismiss tombstones, company provenance, or local campaign rows. The previous
 encrypted cloud DB generation remains the first recovery option for cloud-managed
@@ -230,7 +284,8 @@ keeps history. Meanings:
 
 - `ok`: complete successful result.
 - `empty`: successful source with zero jobs; valid and non-destructive.
-- `saturated`: JobSpy reached `results_wanted`; additional results may exist.
+- `paged`: a ten-result JobSpy page committed and its next offset is ready; rerun `scan` to resume.
+- `saturated`: JobSpy reached the configured per-cycle `results_wanted` cap; additional results may exist.
 - `partial`: some postings parsed; never authoritative for closing jobs.
 - `recovered`: Gmail or IMAP succeeded after bounded recovery/retry.
 - `invalid`, `error`, `unsupported`: unhealthy; never authoritative for closing jobs.

@@ -158,8 +158,8 @@ export interface Application {
   timeline: ApplicationEvent[]
 }
 
-// Résumé-derived search profile (render._profile_data). Present behind the site
-// unlock; null in the public build.
+// Editable search intent plus résumé-derived facts (render._profile_data).
+// Present behind the site unlock; null in the public build.
 export interface Profile {
   resume: string
   seniority: string

@@ -7,6 +7,7 @@ steps and publication are stubbed; the SPA is a one-line fixture.
 """
 import datetime as dt
 import base64
+import http.client
 import json
 import os
 import tempfile
@@ -21,6 +22,7 @@ from jobscope.analyze import review as review_mod
 from jobscope.core.config import load_config
 from jobscope.core.model import Application, Job, Resume
 from jobscope.core.store import Store
+from jobscope.cli import build_parser
 from jobscope.deliver import serve
 from jobscope.ingest import inbox as inbox_mod
 from jobscope.ingest import monitor as monitor_mod
@@ -45,7 +47,7 @@ def _cfg(tmp):
 @pytest.fixture(autouse=True)
 def _reset_state():
     serve._STATE.update(state="idle", step="", message="", started="",
-                        finished="", last_date="")
+                        finished="", last_date="", stages=[])
     yield
 
 
@@ -183,6 +185,26 @@ def test_full_scan_toggle(monkeypatch):
         assert calls["scrape"] == 1
 
 
+def test_refresh_stage_reports_duration(monkeypatch):
+    moments = iter((10.0, 10.125))
+    monkeypatch.setattr(serve.time, "perf_counter", lambda: next(moments))
+
+    stage = serve._run_stage("local", required=True, action=lambda: None)
+
+    assert stage.duration_ms == 125
+
+
+def test_refresh_worker_preserves_stage_timings(monkeypatch):
+    monkeypatch.setattr(serve, "perform_refresh", lambda *_args, **_kwargs: {
+        "state": "done", "message": "ok", "last_date": "2026-07-22",
+        "stages": [{"name": "inbox", "duration_ms": 125}],
+    })
+
+    serve._run_refresh({}, False, False)
+
+    assert serve._STATE["stages"] == [{"name": "inbox", "duration_ms": 125}]
+
+
 def test_publish_failure_keeps_data_success_separate(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
@@ -279,8 +301,8 @@ def test_digest_delivery_failure_completes_degraded(monkeypatch):
 
 # ---- endpoints / CSRF guard -------------------------------------------------
 
-def _serve_bg(cfg):
-    httpd, page, token, _on = serve._build_server(cfg, 0)
+def _serve_bg(cfg, *, hosted=False):
+    httpd, page, token, _on = serve._build_server(cfg, 0, hosted=hosted)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     return httpd, httpd.server_address[1], token, thread
@@ -293,7 +315,9 @@ def _req(method, url, headers=None, data=None):
         with urllib.request.urlopen(req, timeout=5) as resp:
             return resp.status, json.loads(resp.read() or b"{}")
     except urllib.error.HTTPError as exc:
-        return exc.code, None
+        with exc:
+            exc.read()
+            return exc.code, None
 
 
 def _get_text(url, headers=None):
@@ -351,7 +375,61 @@ def test_api_outreach_preview_and_csrf():
             thread.join(timeout=3)
 
 
-def test_api_application_restore_requires_csrf_and_returns_audit():
+def test_json_api_rejects_invalid_content_length_without_dropping_connection():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        httpd, port, token, thread = _serve_bg(cfg)
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            connection.putrequest("POST", "/api/outreach")
+            connection.putheader("X-Refresh-Token", token)
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", "not-a-number")
+            connection.endheaders()
+            response = connection.getresponse()
+            body = json.loads(response.read())
+
+            assert response.status == 400
+            assert body == {"ok": False, "error": "invalid content length"}
+        finally:
+            connection.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_json_api_rejects_oversized_ordinary_request():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        httpd, port, token, thread = _serve_bg(cfg)
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        body = json.dumps({
+            "job_id": "missing",
+            "padding": "x" * serve._MAX_API_REQUEST_BYTES,
+        })
+        try:
+            connection.request(
+                "POST", "/api/outreach", body=body,
+                headers={
+                    "X-Refresh-Token": token,
+                    "Content-Type": "application/json",
+                },
+            )
+            response = connection.getresponse()
+            result = json.loads(response.read())
+
+            assert response.status == 413
+            assert result == {"ok": False, "error": "request is too large"}
+        finally:
+            connection.close()
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_api_application_restore_is_not_exposed():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
         job_id = "mail:serve-recover"
@@ -372,7 +450,7 @@ def test_api_application_restore_requires_csrf_and_returns_audit():
             )
             assert code == 403
 
-            code, result = _req(
+            code, _ = _req(
                 "POST", base + "/api/monitoring/actions",
                 headers={
                     "Content-Type": "application/json",
@@ -381,14 +459,14 @@ def test_api_application_restore_requires_csrf_and_returns_audit():
                 },
                 data=payload,
             )
-            assert code == 200 and result["ok"] is True
-            assert result["applications"][0]["job_id"] == job_id
-            assert result["activity_audit"]["recent_runs"][0]["action"] == "restore"
-            assert result["activity_audit"]["recoverable_applications"] == []
+            assert code == 400
         finally:
             httpd.shutdown()
             httpd.server_close()
             thread.join(timeout=3)
+        with Store(cfg["output"]["db_path"]) as store:
+            assert store.get_application(job_id) is None
+            assert store.get_application(job_id, include_tombstoned=True)["tombstoned_at"]
 
 
 def test_endpoints_and_csrf_guard(monkeypatch):
@@ -417,9 +495,84 @@ def test_endpoints_and_csrf_guard(monkeypatch):
             assert status == 403
 
             # Valid token + loopback origin -> accepted.
+            serve._STATE["stages"] = [{"name": "previous", "duration_ms": 999}]
             status, body = _req("POST", base + "/api/refresh", data="{}",
                                 headers={"X-Refresh-Token": token, "Origin": base,
                                          "Content-Type": "application/json"})
+            assert status == 200 and body["state"] in ("started", "busy")
+            assert serve._STATE["stages"] == []
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_hosted_mode_fails_closed_without_required_environment(monkeypatch):
+    monkeypatch.delenv("JOBSCOPE_PUBLIC_ORIGIN", raising=False)
+
+    with pytest.raises(RuntimeError, match="JOBSCOPE_PUBLIC_ORIGIN"):
+        serve._build_server({}, 0, hosted=True)
+
+
+def test_serve_port_defaults_to_environment(monkeypatch):
+    monkeypatch.setenv("PORT", "4321")
+
+    assert build_parser().parse_args(["serve"]).port == 4321
+    assert build_parser().parse_args(["serve", "--port", "9876"]).port == 9876
+
+
+@pytest.mark.parametrize("origin", [
+    "http://jobs.example.com",
+    "https://jobs.example.com/path",
+    "https://jobs.example.com?debug=1",
+    "https://user@jobs.example.com",
+    "https://:password@jobs.example.com",
+])
+def test_hosted_mode_rejects_invalid_public_origin(monkeypatch, origin):
+    monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", origin)
+
+    with pytest.raises(RuntimeError, match="must be an HTTPS origin"):
+        serve._build_server({}, 0, hosted=True)
+
+
+def test_hosted_mode_requires_tunnel_token_and_exact_origin(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        public_origin = "https://jobs.example.com"
+        monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", public_origin)
+        monkeypatch.setattr(serve, "_run_refresh", lambda *a, **k: None)
+        httpd, port, token, thread = _serve_bg(cfg, hosted=True)
+        base = f"http://127.0.0.1:{port}"
+        tunnel = {"Cf-Access-Jwt-Assertion": "validated-test-access-jwt"}
+        try:
+            status, body = _req("GET", base + "/healthz")
+            assert status == 200 and body == {"ok": True}
+
+            status, _ = _req("HEAD", base + "/")
+            assert status == 403
+
+            status, _ = _req("GET", base + "/api/token")
+            assert status == 403
+
+            status, _ = _req("HEAD", base + "/", headers=tunnel)
+            assert status == 200
+
+            status, body = _req("GET", base + "/api/token", headers=tunnel)
+            assert status == 200 and body["token"] == token
+
+            status, _ = _req(
+                "POST", base + "/api/refresh", data="{}",
+                headers={**tunnel, "X-Refresh-Token": token,
+                         "Origin": "https://evil.example"},
+            )
+            assert status == 403
+
+            status, body = _req(
+                "POST", base + "/api/refresh", data="{}",
+                headers={**tunnel, "X-Refresh-Token": token,
+                         "Origin": public_origin, "Content-Type": "application/json"},
+            )
             assert status == 200 and body["state"] in ("started", "busy")
         finally:
             httpd.shutdown()
@@ -494,6 +647,40 @@ Python, AWS, threat modeling, application security
             thread.join(timeout=3)
 
 
+def test_corrupt_pdf_upload_leaves_no_profile_or_temp_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        headers = {
+            "Content-Type": "application/json",
+            "X-Refresh-Token": token,
+            "Origin": base,
+        }
+        try:
+            code, result = _req(
+                "POST", base + "/api/resume/upload", headers=headers,
+                data=json.dumps({
+                    "name": "broken",
+                    "filename": "broken.pdf",
+                    "content_base64": base64.b64encode(b"not a PDF").decode(),
+                }),
+            )
+
+            assert code == 400 and result is None
+            with Store(cfg["output"]["db_path"]) as store:
+                assert store.get_named_resume("broken") is None
+            from jobscope.analyze import profile
+            assert "broken" not in profile.list_profiles(cfg)
+            resume_dir = os.path.join(tmp, "resumes")
+            assert not os.path.exists(resume_dir) or os.listdir(resume_dir) == []
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
 def test_profile_api_edits_intent_and_resets_from_resume():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
@@ -513,18 +700,32 @@ def test_profile_api_edits_intent_and_resets_from_resume():
             code, current = _req("GET", base + "/api/profile", headers=headers)
             assert code == 200 and current["profile"]["name"] == "research"
 
+            code, rejected = _req(
+                "PUT", base + "/api/profile", headers=headers,
+                data=json.dumps({
+                    "name": "research",
+                    "search_terms": ["Detection Engineer"],
+                    "locations": ["Mars"],
+                    "remote": False,
+                }),
+            )
+            assert code == 400 and rejected is None
+            code, unchanged = _req("GET", base + "/api/profile", headers=headers)
+            assert code == 200 and unchanged["profile"]["locations"] == ["India"]
+
             code, edited = _req(
                 "PUT", base + "/api/profile", headers=headers,
                 data=json.dumps({
                     "name": "research",
                     "search_terms": ["Detection Engineer", "Threat Researcher"],
-                    "locations": ["India", "Remote"],
+                    "locations": ["India", "Germany"],
                     "remote": False,
                 }),
             )
             assert code == 200 and edited["profile"]["search_terms"] == [
                 "Detection Engineer", "Threat Researcher",
             ]
+            assert edited["profile"]["locations"] == ["India", "Germany"]
             assert edited["profile"]["remote"] is False
             assert edited["profile"]["top_skills"] == ["application security", "python"]
 

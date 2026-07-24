@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, Building2, ExternalLink, Loader2, Mail, Pause, P
 import { companyNameKey, monitorCheckAge, type CompaniesModel, type CompanyItem } from '@/lib/companies'
 import type { CompanyFilter } from '@/lib/urlState'
 import type { MonitoringAction, ScanDecisionFunnel } from '@/lib/companyActions'
+import { WorkspaceHeader } from '@/ui'
 
 export interface CompaniesViewProps {
   model: CompaniesModel
@@ -65,15 +66,15 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
   const selected = model.allItems.find((company) => company.id === selectedId) ?? null
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col border-x border-line bg-panel">
-      <header className="shrink-0 border-b border-line px-5 py-5 sm:px-7">
-        <p className="text-[10px] font-semibold uppercase text-ink-3">Companies</p>
-        <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
-          <div><h2 className="text-xl font-semibold text-ink">Companies and career portals</h2><p className="mt-1 text-[13px] text-ink-3">Keep application history; monitor only companies you want scanned.</p></div>
-          <div className="flex max-w-full flex-wrap gap-x-4 gap-y-2 text-right"><Metric label="Watching" value={model.watching} /><Metric label="Known" value={model.known} /><Metric label="Paused" value={model.paused} /><Metric label="Setup" value={model.needsSetup} /></div>
-        </div>
-      </header>
+      <WorkspaceHeader
+        eyebrow="Workspace"
+        title="Companies"
+        description="Keep application history while monitoring only the career portals you choose."
+        actions={<div className="flex max-w-full flex-wrap gap-x-4 gap-y-2 text-right"><Metric label="Watching" value={model.watching} /><Metric label="Known" value={model.known} /><Metric label="Paused" value={model.paused} /><Metric label="Setup" value={model.needsSetup} /></div>}
+        accent="signal"
+      />
       <form
-        className="grid shrink-0 gap-2 border-b border-line px-4 py-3 sm:grid-cols-[minmax(10rem,.7fr)_minmax(14rem,1fr)_auto] sm:px-7"
+        className="grid shrink-0 gap-2 border-b border-line bg-inset/35 px-4 py-3 sm:grid-cols-[minmax(10rem,.7fr)_minmax(14rem,1fr)_auto] sm:px-7"
         onSubmit={(event) => {
           event.preventDefault()
           if (!company.trim()) return
@@ -129,11 +130,11 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
       <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-line px-4 py-2 [scrollbar-width:none] sm:px-7 [&::-webkit-scrollbar]:hidden">
         {FILTERS.map((item) => <button key={item.value} type="button" aria-pressed={filter === item.value} onClick={() => onFilter(item.value)} className={`h-8 shrink-0 rounded-full border px-3 text-[11px] font-medium ${filter === item.value ? 'border-brand bg-brand-weak text-brand' : 'border-line text-ink-2'}`}>{item.label}</button>)}
       </div>
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(340px,.78fr)_minmax(0,1.22fr)]">
-        <div className={`${selected ? 'hidden lg:block' : 'block'} min-h-0 overflow-auto border-r border-line`}>
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(340px,.76fr)_minmax(0,1.24fr)]">
+        <div className={`${selected ? 'hidden lg:block' : 'block'} min-h-0 overflow-auto border-r border-line bg-panel`}>
           {visible.length ? <ul>{visible.map((company) => <CompanyRow key={company.id} company={company} selected={company.id === selectedId} onSelect={() => selectCompany(company)} />)}</ul> : <Empty />}
         </div>
-        <div className={`${selected ? 'block' : 'hidden lg:block'} min-h-0 overflow-auto`}>
+        <div className={`${selected ? 'block' : 'hidden lg:block'} min-h-0 overflow-auto bg-paper`}>
           {selected ? <CompanyDetail company={selected} funnel={scanFunnels[selected.id]} onBack={() => onSelect(undefined)} onEdit={() => editPortal(selected)} onOpenJob={onOpenJob} onActions={onActions} /> : <NoSelection />}
         </div>
       </div>
@@ -176,11 +177,11 @@ function CompanyDetail({ company, funnel, onBack, onEdit, onOpenJob, onActions }
   const queued = company.id.startsWith('queued:')
   const [pendingAction, setPendingAction] = useState<string>()
   const busy = queued || Boolean(pendingAction)
-  const runAction = async (name: string, action: MonitoringAction) => {
+  const runAction = async (name: string, action: MonitoringAction | MonitoringAction[]) => {
     if (busy) return
     setPendingAction(name)
     try {
-      await onActions([action])
+      await onActions(Array.isArray(action) ? action : [action])
     } finally {
       setPendingAction(undefined)
     }
@@ -275,7 +276,14 @@ function CompanyDetail({ company, funnel, onBack, onEdit, onOpenJob, onActions }
           <button
             type="button"
             disabled={busy}
-            onClick={() => void runAction('resolve', { type: 'monitor.scan', monitor_id: company.id })}
+            onClick={() => void runAction('resolve', [
+              ...(company.status === 'active' ? [] : [{
+                type: 'monitor.status' as const,
+                monitor_id: company.id,
+                status: 'active' as const,
+              }]),
+              { type: 'monitor.scan', monitor_id: company.id },
+            ])}
             className="inline-flex h-8 items-center gap-1.5 rounded-md border border-brand px-3 text-[11px] font-medium text-brand disabled:opacity-40"
           >
             {pendingAction === 'resolve' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Resolve & scan

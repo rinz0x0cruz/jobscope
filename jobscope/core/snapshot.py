@@ -75,6 +75,7 @@ def create_cloud_safe_snapshot(source: str | Path, destination: str | Path) -> N
         with sqlite3.connect(source_uri, uri=True) as source_connection:
             with sqlite3.connect(destination_path) as destination_connection:
                 source_connection.backup(destination_connection)
+                destination_connection.execute("PRAGMA journal_mode = DELETE")
                 destination_connection.execute("PRAGMA secure_delete = ON")
                 tables = {
                     row[0]

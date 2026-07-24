@@ -151,7 +151,7 @@ class ApplicationsMixin:
         # from email for applications that have no matching job row.
         rows = self.conn.execute(
             "SELECT a.job_id, a.status, a.package_dir, a.resume_path, a.cover_path, "
-            "a.applied_at, a.notes, a.updated, a.source, "
+            "a.applied_at, a.notes, a.updated, a.source, a.outreach_at, a.outreach_to, "
             "a.interview_at, a.salary_offered, a.offer_accepted, "
             "a.tombstoned_at, a.tombstone_reason, a.reconciliation_run_id, "
             "a.reconciliation_exempt, "

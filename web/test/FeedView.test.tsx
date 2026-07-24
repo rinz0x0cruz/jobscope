@@ -179,4 +179,99 @@ describe('FeedView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Monitor Beta' }))
     expect(onMonitorCompany).toHaveBeenCalledWith('discovery', 'Beta', 'https://jobs.lever.co/beta/1')
   })
+
+  it('offers Discovery when the monitored queue is empty', () => {
+    const discoveryData = dashboard({
+      rows: [jobRow({ id: 'discovery', company: 'Beta', title: 'Cloud Security Engineer' })],
+      reviews: [review({ job_id: 'discovery', origins: ['discovery'] })],
+    })
+    const state = searchSchema.parse({})
+    const onStateChange = vi.fn()
+    render(
+      <FeedView
+        model={buildFeed(discoveryData, state)} state={state}
+        onSelect={vi.fn()} onStateChange={onStateChange}
+        onReviewState={vi.fn()} onMonitorCompany={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Discovery (1)' }))
+    expect(onStateChange).toHaveBeenCalledWith({ reviewBucket: 'discovery', job: undefined })
+  })
+
+  it('reveals roles ten at a time and resets when the result set changes', () => {
+    const makeData = (count: number, prefix: string) => dashboard({
+      rows: Array.from({ length: count }, (_, index) => jobRow({
+        id: `${prefix}-${index}`,
+        company: `${prefix} Company ${index}`,
+        title: `Role ${index}`,
+        score: count - index,
+      })),
+      reviews: Array.from({ length: count }, (_, index) => review({ job_id: `${prefix}-${index}` })),
+    })
+    const state = searchSchema.parse({})
+    const props = {
+      state,
+      onSelect: vi.fn(),
+      onStateChange: vi.fn(),
+      onReviewState: vi.fn(),
+      onMonitorCompany: vi.fn(),
+    }
+    const firstModel = buildFeed(makeData(25, 'First'), state)
+    const { container, rerender } = render(<FeedView {...props} model={firstModel} />)
+
+    expect(container.querySelectorAll('[data-feed-id]')).toHaveLength(10)
+    expect(screen.queryByRole('button', { name: 'First Company 10 — Role 10' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Load 10 more roles' }))
+    expect(container.querySelectorAll('[data-feed-id]')).toHaveLength(20)
+    expect(screen.getByText('20 of 25 shown')).toBeInTheDocument()
+
+    const equivalentModel = buildFeed(makeData(25, 'First'), state)
+    rerender(<FeedView {...props} model={equivalentModel} selectedId="First-15" />)
+    expect(container.querySelectorAll('[data-feed-id]')).toHaveLength(20)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load 5 more roles' }))
+    expect(container.querySelectorAll('[data-feed-id]')).toHaveLength(25)
+    expect(screen.queryByRole('button', { name: /Load \d+ more roles/ })).not.toBeInTheDocument()
+
+    const nextModel = buildFeed(makeData(12, 'Next'), state)
+    rerender(<FeedView {...props} model={nextModel} />)
+    expect(container.querySelectorAll('[data-feed-id]')).toHaveLength(10)
+    expect(screen.queryByRole('button', { name: 'Next Company 10 — Role 10' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Load 2 more roles' })).toBeInTheDocument()
+
+    rerender(<FeedView {...props} model={firstModel} />)
+    expect(container.querySelectorAll('[data-feed-id]')).toHaveLength(10)
+    expect(screen.getByRole('button', { name: 'Load 10 more roles' })).toBeInTheDocument()
+  })
+
+  it('keeps a selected role visible when a mutation changes feed membership', () => {
+    const makeData = (indices: number[]) => dashboard({
+      rows: indices.map((index) => jobRow({
+        id: `role-${index}`, company: `Company ${index}`, title: `Role ${index}`,
+        score: 100 - index,
+      })),
+      reviews: indices.map((index) => review({ job_id: `role-${index}` })),
+    })
+    const state = searchSchema.parse({})
+    const props = {
+      state,
+      onSelect: vi.fn(),
+      onStateChange: vi.fn(),
+      onReviewState: vi.fn(),
+      onMonitorCompany: vi.fn(),
+    }
+    const initial = buildFeed(makeData(Array.from({ length: 25 }, (_, index) => index)), state)
+    const { rerender } = render(<FeedView {...props} model={initial} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Load 10 more roles' }))
+
+    const afterMutation = buildFeed(
+      makeData(Array.from({ length: 24 }, (_, index) => index + 1)),
+      state,
+    )
+    rerender(<FeedView {...props} model={afterMutation} selectedId="role-15" />)
+
+    expect(screen.getByRole('button', { name: 'Company 15 — Role 15' })).toBeInTheDocument()
+    expect(screen.getByText('20 of 24 shown')).toBeInTheDocument()
+  })
 })

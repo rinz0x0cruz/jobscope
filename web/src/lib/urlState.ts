@@ -3,7 +3,7 @@ import type { JobRow } from './schema'
 
 export const TAB_VALUES = ['overview', 'applications', 'outreach', 'all', 'Strong', 'Good', 'Stretch', 'Skip'] as const
 export type TabValue = (typeof TAB_VALUES)[number]
-export const VIEW_VALUES = ['review', 'companies', 'campaigns', 'pipeline', 'applications', 'activity', 'settings'] as const
+export const VIEW_VALUES = ['review', 'companies', 'campaigns', 'pipeline', 'applications', 'analytics', 'activity', 'settings'] as const
 export type ViewValue = (typeof VIEW_VALUES)[number]
 export const URL_VIEW_VALUES = [...VIEW_VALUES, 'feed'] as const
 export const REVIEW_BUCKET_VALUES = ['monitored', 'discovery', 'saved', 'dismissed'] as const
@@ -21,7 +21,7 @@ export const FEED_TIER_VALUES = ['Strong', 'Good', 'Stretch'] as const
 // throws and simply falls back.
 export const searchSchema = z.object({
   tab: z.enum(TAB_VALUES).catch('all'),
-  view: z.enum(URL_VIEW_VALUES).optional(),
+  view: z.enum(URL_VIEW_VALUES).optional().catch(undefined),
   reviewBucket: z.enum(REVIEW_BUCKET_VALUES).catch('monitored'),
   company: z.string().optional(),
   campaign: z.string().optional(),
@@ -39,6 +39,7 @@ export const searchSchema = z.object({
   group: z.boolean().catch(false),
   hideClosed: z.boolean().catch(true),
   job: z.string().optional(),
+  engagement: z.string().optional(),
 })
 
 export type SearchState = z.infer<typeof searchSchema>
@@ -67,9 +68,10 @@ export const SEARCH_DEFAULTS: Partial<SearchState> = {
 export function activeView(state: SearchState): ViewValue {
   if (state.view === 'feed') return 'review'
   if (state.view === 'activity') return 'applications'
+  if (state.view === 'pipeline') return 'analytics'
   if (state.view) return state.view
   if (state.tab === 'applications' || state.tab === 'outreach') return 'applications'
-  if (state.tab === 'overview') return 'pipeline'
+  if (state.tab === 'overview') return 'analytics'
   return 'review'
 }
 

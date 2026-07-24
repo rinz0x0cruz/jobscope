@@ -56,6 +56,22 @@ describe('CompaniesView', () => {
     await waitFor(() => expect(resolveButton).toBeEnabled())
   })
 
+  it('resumes a paused unresolved monitor before resolving and scanning', async () => {
+    const onActions = vi.fn().mockResolvedValue(undefined)
+    const paused = monitoredCompany({
+      id: 'company:paused-unresolved', company: 'Acme', lifecycle: 'watching',
+      status: 'paused', resolution_status: 'unresolved', provider: '', slug: '',
+    })
+    renderCompany(paused, onActions)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve & scan' }))
+
+    await waitFor(() => expect(onActions).toHaveBeenCalledWith([
+      { type: 'monitor.status', monitor_id: paused.id, status: 'active' },
+      { type: 'monitor.scan', monitor_id: paused.id },
+    ]))
+  })
+
   it('resumes a paused monitor before allowing a scan', async () => {
     const onActions = vi.fn(async () => undefined)
     const paused = monitoredCompany({
@@ -118,7 +134,7 @@ describe('CompaniesView', () => {
   })
   it('renders monitored companies and status filters', () => {
     setup()
-    expect(screen.getByText('Companies and career portals')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Companies' })).toBeInTheDocument()
     expect(screen.getByText('Acme')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Needs setup' })).toBeInTheDocument()
   })

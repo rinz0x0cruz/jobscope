@@ -18,7 +18,6 @@ _ALLOWED_FIELDS = {
     "monitor.scan": {"type", "monitor_id"},
     "monitor.contacts": {"type", "monitor_id"},
     "review.set": {"type", "job_id", "state"},
-    "application.restore": {"type", "job_id"},
     "application.note": {"type", "job_id", "text", "when"},
 }
 
@@ -76,7 +75,7 @@ def _prepare_actions(cfg: dict, store, actions: Any) -> list[dict[str, Any]]:
             provider = _clean_string(raw.get("provider"), "provider", limit=40).lower()
             slug = _clean_string(raw.get("slug"), "slug", limit=200)
             careers_url = _clean_url(raw.get("careers_url"))
-            status = _clean_string(raw.get("status") or "active", "status", limit=20)
+            status = _clean_string(raw.get("status"), "status", limit=20) or None
             job_id = _clean_string(raw.get("job_id"), "job_id", limit=200)
             if job_id and store.get_job(job_id) is None:
                 raise ValueError(f"unknown job: {job_id}")
@@ -108,25 +107,21 @@ def _prepare_actions(cfg: dict, store, actions: Any) -> list[dict[str, Any]]:
             if store.get_company_monitor(monitor_id) is None:
                 raise ValueError(f"unknown monitor: {monitor_id}")
             prepared.append({"type": action_type, "monitor_id": monitor_id})
-        elif action_type in {"application.restore", "application.note"}:
+        elif action_type == "application.note":
             job_id = _clean_string(raw.get("job_id"), "job_id", limit=240, required=True)
-            include_tombstoned = action_type == "application.restore"
-            if store.get_application(job_id, include_tombstoned=include_tombstoned) is None:
+            if store.get_application(job_id) is None:
                 raise ValueError(f"unknown application: {job_id}")
-            if action_type == "application.restore":
-                prepared.append({"type": action_type, "job_id": job_id})
-            else:
-                when = _clean_string(raw.get("when"), "when", limit=10, required=True)
-                try:
-                    dt.date.fromisoformat(when)
-                except ValueError as exc:
-                    raise ValueError("when must be an ISO date (YYYY-MM-DD)") from exc
-                prepared.append({
-                    "type": action_type,
-                    "job_id": job_id,
-                    "text": _clean_string(raw.get("text"), "text", limit=500, required=True),
-                    "when": when,
-                })
+            when = _clean_string(raw.get("when"), "when", limit=10, required=True)
+            try:
+                dt.date.fromisoformat(when)
+            except ValueError as exc:
+                raise ValueError("when must be an ISO date (YYYY-MM-DD)") from exc
+            prepared.append({
+                "type": action_type,
+                "job_id": job_id,
+                "text": _clean_string(raw.get("text"), "text", limit=500, required=True),
+                "when": when,
+            })
         else:
             prepared.append({
                 "type": action_type,
@@ -142,89 +137,73 @@ def apply_actions(cfg: dict, store, actions: Any, *, initiator: str = "user") ->
     results: list[dict[str, Any]] = []
     scan_ids: list[str] = []
     contact_ids: list[str] = []
-    restore_ids = [
-        action["job_id"] for action in prepared
-        if action["type"] == "application.restore"
-    ]
-    recoverable_restore_ids = [
-        job_id for job_id in restore_ids
-        if (store.get_application(job_id, include_tombstoned=True) or {}).get("tombstoned_at")
-    ]
-    restore_run = (
-        store.begin_reconciliation_run("restore", initiator)
-        if recoverable_restore_ids else None
-    )
-    restored_count = 0
-    try:
-        with store.conn:
-            for action in prepared:
-                action_type = action["type"]
-                if action_type == "monitor.upsert":
-                    company = store._upsert_company_monitor(
-                        action["company"], provider=action["provider"], slug=action["slug"],
-                        careers_url=action["careers_url"], status=action["status"],
-                        resolution_status=action["resolution_status"], added_from="user",
-                    )
-                    if action["job_id"]:
-                        store._link_monitor_job(company["id"], action["job_id"])
-                        existing = store.get_job_review(action["job_id"])
-                        store._set_job_review(
-                            action["job_id"], existing["state"] if existing else "pending",
-                            ["monitored"],
-                        )
-                    results.append(company)
-                elif action_type == "monitor.status":
-                    results.append(store._set_company_monitor_status(
-                        action["monitor_id"], action["status"],
-                    ))
-                elif action_type == "review.set":
-                    results.append(store._set_job_review(
-                        action["job_id"], action["state"], (),
-                    ))
-                elif action_type == "application.restore":
-                    if restore_run is None:
-                        result = {"ok": True, "restored": False, "run_id": ""}
-                    else:
-                        from jobscope.apply import recovery
-                        result = recovery._restore_application_in_run(
-                            store, action["job_id"], restore_run["id"],
-                        )
-                    results.append(result)
-                    restored_count += int(result["restored"])
-                elif action_type == "application.note":
-                    results.append({
-                        "ok": True,
-                        "job_id": action["job_id"],
-                        "added": store._append_note(
-                            action["job_id"], action["text"], when=action["when"],
-                        ),
-                    })
-                elif action_type == "monitor.contacts":
-                    contact_ids.append(action["monitor_id"])
-                else:
-                    scan_ids.append(action["monitor_id"])
-            if restore_run is not None:
-                store._finalize_reconciliation_run(
-                    restore_run["id"], restored=restored_count,
+    with store.conn:
+        for action in prepared:
+            action_type = action["type"]
+            if action_type == "monitor.upsert":
+                company = store._upsert_company_monitor(
+                    action["company"], provider=action["provider"], slug=action["slug"],
+                    careers_url=action["careers_url"], status=action["status"],
+                    resolution_status=action["resolution_status"], added_from="user",
                 )
-    except Exception:
-        if restore_run is not None:
-            store.fail_reconciliation_run(restore_run["id"], "transaction_failed")
-        raise
+                if action["job_id"]:
+                    store._link_monitor_job(company["id"], action["job_id"])
+                    existing = store.get_job_review(action["job_id"])
+                    store._set_job_review(
+                        action["job_id"], existing["state"] if existing else "pending",
+                        ["monitored"],
+                    )
+                results.append(company)
+            elif action_type == "monitor.status":
+                results.append(store._set_company_monitor_status(
+                    action["monitor_id"], action["status"],
+                ))
+            elif action_type == "review.set":
+                results.append(store._set_job_review(
+                    action["job_id"], action["state"], (),
+                ))
+            elif action_type == "application.note":
+                results.append({
+                    "ok": True,
+                    "job_id": action["job_id"],
+                    "added": store._append_note(
+                        action["job_id"], action["text"], when=action["when"],
+                    ),
+                })
+            elif action_type == "monitor.contacts":
+                contact_ids.append(action["monitor_id"])
+            else:
+                scan_ids.append(action["monitor_id"])
     scans = []
     for monitor_id in scan_ids:
         current = store.get_company_monitor(monitor_id)
-        if current["resolution_status"] == "unresolved":
-            current = monitor.resolve_monitor(store, current, probe=True)
-        scans.append(monitor.scan_monitor(
-            cfg, store, current, include_contacts=False,
-        ))
-    contacts = [
-        monitor.refresh_monitor_contacts(
-            cfg, store, store.get_company_monitor(monitor_id), force=True,
-        )
-        for monitor_id in contact_ids
-    ]
+        try:
+            if current["resolution_status"] == "unresolved":
+                current = monitor.resolve_monitor(store, current, probe=True)
+            scans.append(monitor.scan_monitor(
+                cfg, store, current, include_contacts=False,
+            ))
+        except Exception as exc:  # noqa: BLE001 - preserve committed mutations
+            scans.append({
+                "ok": False,
+                "monitor_id": monitor_id,
+                "company": current["company"],
+                "error": str(exc)[:200],
+            })
+    contacts = []
+    for monitor_id in contact_ids:
+        current = store.get_company_monitor(monitor_id)
+        try:
+            contacts.append(monitor.refresh_monitor_contacts(
+                cfg, store, current, force=True,
+            ))
+        except Exception as exc:  # noqa: BLE001 - preserve committed mutations
+            contacts.append({
+                "ok": False,
+                "monitor_id": monitor_id,
+                "company": current["company"],
+                "contact_error": str(exc)[:200],
+            })
     from jobscope.deliver.render import (
         _activity_audit_data,
         _application_records,

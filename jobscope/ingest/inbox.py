@@ -634,17 +634,17 @@ def _dh(raw: str) -> str:
     """Decode an RFC 2047 encoded-word header to a plain string."""
     try:
         return str(make_header(decode_header(raw or "")))
-    except (ValueError, TypeError):
+    except (LookupError, UnicodeError, ValueError, TypeError):
         return raw or ""
 
 
 def _thread_key(hdr, subject: str) -> str:
-    refs = (hdr.get("References") or "").split()
-    if refs:
-        return refs[0].strip("<>")
     irt = (hdr.get("In-Reply-To") or "").strip().strip("<>")
     if irt:
         return irt
+    refs = (hdr.get("References") or "").split()
+    if refs:
+        return refs[-1].strip("<>")
     return "subj:" + mailrules.normalize_subject(subject)
 
 

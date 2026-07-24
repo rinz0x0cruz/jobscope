@@ -106,6 +106,19 @@ def test_plain_pdf_headings_exclude_project_and_education_dates():
     assert r.titles == ["Security Researcher", "Security Researcher Intern"]
 
 
+def test_headingless_resume_does_not_invent_tenure_from_education_dates():
+    r = _parse("""Alex Roe
+Punjab, India
+Security researcher focused on Python and CVE triage.
+Example University 2021 - 2025
+Long-running personal project 2018 - 2024
+""")
+
+    assert r.years_experience == 0
+    assert r.seniority == ""
+    assert r.phone == ""
+
+
 def test_json_resume_preserves_work_date_months():
     r = _parse_json({
         "basics": {"name": "Alex Roe"},

@@ -10,6 +10,7 @@ import { useScoreFormat } from '@/hooks/useScoreFormat'
 import { scoreToGrade } from '@/lib/gamification'
 import { presentFitRationale } from '@/lib/jobPresentation'
 import { localServeToken, outreachPreview } from '@/lib/outreach'
+import { WorkspaceHeader } from '@/ui'
 
 export interface FeedViewProps {
   model: FeedModel
@@ -38,6 +39,7 @@ const FLAG_LABEL: Record<FeedFlag, string> = {
 
 const PRIMARY_FLAGS: FeedFlag[] = ['remote', 'salary']
 const SECONDARY_FLAGS = FEED_FLAG_VALUES.filter((flag) => !PRIMARY_FLAGS.includes(flag))
+const FEED_PAGE_SIZE = 10
 
 function toggle<T extends string>(items: T[], value: T): T[] {
   return items.includes(value) ? items.filter((item) => item !== value) : [...items, value]
@@ -53,12 +55,8 @@ function FeedToolbar({ model, rows, state, onStateChange }: Pick<FeedViewProps, 
     state.flags.filter((flag) => SECONDARY_FLAGS.includes(flag)).length +
     FACETS.reduce((total, facet) => total + state[facet.key].length, 0)
   return (
-    <div className="shrink-0 border-b border-line bg-panel px-4 pb-3 pt-4 sm:px-5">
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <span className="font-mono text-[13px] font-semibold text-ink">{model.total}</span>{' '}
-          <span className="text-[12px] text-ink-3">of {model.available} roles</span>
-        </div>
+    <div className="shrink-0 border-b border-line bg-panel px-4 pb-2.5 pt-3 sm:px-5">
+      <div className="flex items-center justify-end gap-3">
         <label className="flex items-center gap-2 text-[12px] text-ink-3">
           <span className="hidden sm:inline">Sort</span>
           <select
@@ -74,7 +72,7 @@ function FeedToolbar({ model, rows, state, onStateChange }: Pick<FeedViewProps, 
         </label>
       </div>
 
-      <div className="mt-3 flex gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Review buckets">
+      <div className="mt-2.5 flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Review buckets">
         {([
           ['monitored', 'Monitored'], ['discovery', 'Discovery'],
           ['saved', 'Saved'], ['dismissed', 'Dismissed'],
@@ -84,14 +82,14 @@ function FeedToolbar({ model, rows, state, onStateChange }: Pick<FeedViewProps, 
             type="button"
             aria-pressed={state.reviewBucket === value}
             onClick={() => onStateChange({ reviewBucket: value, job: undefined })}
-            className={`h-8 shrink-0 rounded-md border px-3 text-[11px] font-medium transition ${state.reviewBucket === value ? 'border-brand bg-brand-weak text-brand' : 'border-line bg-paper text-ink-3 hover:border-line-strong hover:text-ink'}`}
+            className={`h-8 shrink-0 border-b-2 px-3 text-[12px] font-medium transition ${state.reviewBucket === value ? 'border-brand text-brand' : 'border-transparent text-ink-3 hover:text-ink'}`}
           >
             {label} <span className="font-mono">{model.buckets[value]}</span>
           </button>
         ))}
       </div>
 
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-1.5 flex items-center gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {(['Strong', 'Good', 'Stretch'] as Tier[]).map((tier) => (
             <FilterChip
@@ -399,13 +397,26 @@ function FeedRow({ item, selected, onSelect, onReviewState, onMonitorCompany }: 
   )
 }
 
-function FeedList({ model, selectedId, onSelect, onReviewState, onMonitorCompany }: Pick<FeedViewProps, 'model' | 'selectedId' | 'onSelect' | 'onReviewState' | 'onMonitorCompany'>) {
+function FeedList({
+  model,
+  items,
+  selectedId,
+  onSelect,
+  onReviewState,
+  onMonitorCompany,
+  onOpenDiscovery,
+  onLoadMore,
+}: Pick<FeedViewProps, 'model' | 'selectedId' | 'onSelect' | 'onReviewState' | 'onMonitorCompany'> & {
+  items: FeedItem[]
+  onOpenDiscovery?: () => void
+  onLoadMore: () => void
+}) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const virtual = model.items.length > 50
+  const virtual = items.length > 50
   // TanStack Virtual intentionally returns mutable measurement callbacks.
   // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
-    count: virtual ? model.items.length : 0,
+    count: virtual ? items.length : 0,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 118,
     overscan: 6,
@@ -416,8 +427,13 @@ function FeedList({ model, selectedId, onSelect, onReviewState, onMonitorCompany
     return (
       <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
         <BriefcaseBusiness size={28} strokeWidth={1.4} aria-hidden="true" className="text-ink-3" />
-        <p className="mt-3 text-[14px] font-medium text-ink">No roles match this view</p>
-        <p className="mt-1 text-[12px] text-ink-3">Clear a filter or broaden the search query.</p>
+        <p className="mt-3 text-[14px] font-medium text-ink">{onOpenDiscovery ? 'No monitored roles need review' : 'No roles match this view'}</p>
+        <p className="mt-1 text-[12px] text-ink-3">{onOpenDiscovery ? 'Broad discovery results stay separate until you choose to review them.' : 'Clear a filter or broaden the search query.'}</p>
+        {onOpenDiscovery && (
+          <button type="button" onClick={onOpenDiscovery} className="mt-4 h-9 rounded-md border border-brand px-3 text-[12px] font-semibold text-brand hover:bg-brand-weak">
+            Open Discovery ({model.buckets.discovery})
+          </button>
+        )}
       </div>
     )
   }
@@ -431,7 +447,7 @@ function FeedList({ model, selectedId, onSelect, onReviewState, onMonitorCompany
       {virtual ? (
         <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
           {virtualRows.map((virtualRow) => {
-            const item = model.items[virtualRow.index]
+            const item = items[virtualRow.index]
             return (
               <div
                 key={item.row.id}
@@ -446,16 +462,36 @@ function FeedList({ model, selectedId, onSelect, onReviewState, onMonitorCompany
           })}
         </div>
       ) : (
-        model.items.map((item) => (
+        items.map((item) => (
           <FeedRow key={item.row.id} item={item} selected={selectedId === item.row.id} onSelect={() => onSelect(item.row.id)} onReviewState={(state) => onReviewState(item.row.id, state)} onMonitorCompany={() => onMonitorCompany(item.row.id, item.row.company, item.row.url)} />
         ))
+      )}
+      {items.length < model.items.length && (
+        <div className="flex items-center justify-center gap-3 border-t border-line px-4 py-4">
+          <button
+            type="button"
+            onClick={onLoadMore}
+            aria-label={`Load ${Math.min(FEED_PAGE_SIZE, model.items.length - items.length)} more roles`}
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-line bg-panel px-3 text-[12px] font-semibold text-ink-2 hover:border-line-strong hover:text-ink"
+          >
+            <ChevronDown size={14} aria-hidden="true" /> Load more
+          </button>
+          <span className="text-[11px] text-ink-3">{items.length} of {model.items.length} shown</span>
+        </div>
       )}
     </div>
   )
 }
 
-export function FeedView(props: FeedViewProps) {
+function PaginatedFeed(props: FeedViewProps) {
   const { model, onSelect, selectedId } = props
+  const [visibleCount, setVisibleCount] = useState(() => {
+    const selectedIndex = model.items.findIndex((item) => item.row.id === selectedId)
+    return selectedIndex < FEED_PAGE_SIZE
+      ? FEED_PAGE_SIZE
+      : Math.ceil((selectedIndex + 1) / FEED_PAGE_SIZE) * FEED_PAGE_SIZE
+  })
+  const visibleItems = model.items.slice(0, visibleCount)
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target
@@ -465,13 +501,13 @@ export function FeedView(props: FeedViewProps) {
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return
       const key = event.key.toLowerCase()
       if (key !== 'j' && key !== 'k') return
-      if (!model.items.length) return
+      if (!visibleItems.length) return
       event.preventDefault()
-      const current = model.items.findIndex((item) => item.row.id === selectedId)
+      const current = visibleItems.findIndex((item) => item.row.id === selectedId)
       const next = key === 'j'
-        ? Math.min(current < 0 ? 0 : current + 1, model.items.length - 1)
-        : Math.max(current < 0 ? model.items.length - 1 : current - 1, 0)
-      const id = model.items[next].row.id
+        ? Math.min(current < 0 ? 0 : current + 1, visibleItems.length - 1)
+        : Math.max(current < 0 ? visibleItems.length - 1 : current - 1, 0)
+      const id = visibleItems[next].row.id
       onSelect(id)
       requestAnimationFrame(() => {
         document.querySelector<HTMLElement>(`[data-feed-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -479,11 +515,45 @@ export function FeedView(props: FeedViewProps) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [model.items, onSelect, selectedId])
+  }, [visibleItems, onSelect, selectedId])
+  return (
+    <FeedList
+      model={props.model}
+      items={visibleItems}
+      selectedId={props.selectedId}
+      onSelect={props.onSelect}
+      onReviewState={props.onReviewState}
+      onMonitorCompany={props.onMonitorCompany}
+      onLoadMore={() => setVisibleCount(Math.min(
+        visibleCount + FEED_PAGE_SIZE,
+        model.items.length,
+      ))}
+      onOpenDiscovery={
+        props.state.reviewBucket === 'monitored' && props.model.buckets.discovery > 0
+          ? () => props.onStateChange({ reviewBucket: 'discovery', job: undefined })
+          : undefined
+      }
+    />
+  )
+}
+
+export function FeedView(props: FeedViewProps) {
+  const resultKey = JSON.stringify(props.model.items.map((item) => item.row.id))
   return (
     <section aria-label="Review queue" className="review-queue flex min-h-0 min-w-0 flex-1 flex-col bg-paper min-[1400px]:border-l min-[1400px]:border-line">
+      <WorkspaceHeader
+        eyebrow="Triage"
+        title="Review"
+        description="Rank incoming roles, keep promising work, and dismiss noise without losing provenance."
+        actions={(
+          <div className="flex items-baseline gap-2">
+            <strong className="font-mono text-2xl font-semibold text-ink">{props.model.total}</strong>
+            <span className="text-[11px] text-ink-3">in this queue</span>
+          </div>
+        )}
+      />
       <FeedToolbar model={props.model} rows={props.model.facetRows} state={props.state} onStateChange={props.onStateChange} />
-      <FeedList model={props.model} selectedId={props.selectedId} onSelect={props.onSelect} onReviewState={props.onReviewState} onMonitorCompany={props.onMonitorCompany} />
+      <PaginatedFeed key={resultKey} {...props} />
     </section>
   )
 }

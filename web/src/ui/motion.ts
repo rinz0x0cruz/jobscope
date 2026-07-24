@@ -41,10 +41,23 @@ export function animate(
  */
 export function viewTransition(update: () => void): void {
   const d = document as Document & {
-    startViewTransition?: (callback: () => void) => unknown
+    startViewTransition?: (callback: () => void) => {
+      ready?: Promise<unknown>
+    }
   }
   if (typeof d.startViewTransition === 'function' && !prefersReducedMotion()) {
-    d.startViewTransition(update)
+    let applied = false
+    const apply = () => {
+      applied = true
+      update()
+    }
+    try {
+      const transition = d.startViewTransition(apply)
+      void transition.ready?.catch(() => undefined)
+    } catch (error) {
+      if (applied) throw error
+      update()
+    }
     return
   }
   update()

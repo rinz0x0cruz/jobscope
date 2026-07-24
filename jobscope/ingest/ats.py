@@ -646,10 +646,13 @@ def _title_has_role(title: str, role: str) -> bool:
 
 def _target_locations(search: dict) -> set[str]:
     locs = set()
-    for prof in (search.get("profiles") or []):
+    profiles = search.get("profiles") or []
+    for prof in profiles:
         loc = (prof.get("location") or "").strip().lower()
         if loc and loc != "remote":
             locs.add(loc)
+    if profiles:
+        return locs
     for key in ("location", "country_indeed"):
         v = (search.get(key) or "").strip().lower()
         if v and v != "remote":
@@ -657,20 +660,44 @@ def _target_locations(search: dict) -> set[str]:
     return locs
 
 
+def _profile_homes(search: dict) -> tuple[str, ...] | None:
+    profiles = search.get("profiles") or []
+    if not profiles:
+        return None
+    homes: list[str] = []
+    seen: set[str] = set()
+    for item in profiles:
+        location = str(item.get("location") or "").strip()
+        if location.casefold() == "remote":
+            continue
+        home = str(item.get("home_country") or location).strip()
+        if home and home.casefold() not in seen:
+            seen.add(home.casefold())
+            homes.append(home)
+    return tuple(homes)
+
+
 def _matches(job: Job, locs: set[str], roles: set[str], want_remote: bool,
-             home: str = "India", geo_on: bool = True) -> bool:
+             home: str = "India", geo_on: bool = True,
+             profile_homes: tuple[str, ...] | None = None) -> bool:
     return (
-        _location_matches(job, locs, want_remote, home, geo_on)
+        _location_matches(job, locs, want_remote, home, geo_on, profile_homes)
         and _role_matches(job, roles)
     )
 
 
 def _location_matches(job: Job, locs: set[str], want_remote: bool,
-                      home: str = "India", geo_on: bool = True) -> bool:
+                      home: str = "India", geo_on: bool = True,
+                      profile_homes: tuple[str, ...] | None = None) -> bool:
+    if job.is_remote:
+        return want_remote and (not geo_on or geo.in_scope(job, home))
+    if profile_homes == ():
+        return False
     if geo_on:
-        return geo.in_scope(job, home)
+        homes = (home,) if profile_homes is None else profile_homes
+        return any(geo.in_scope(job, candidate) for candidate in homes)
     loc = (job.location or "").lower()
-    return (want_remote and job.is_remote) or (not locs) or any(s in loc for s in locs)
+    return (not locs) or any(s in loc for s in locs)
 
 
 def _role_matches(job: Job, roles: set[str]) -> bool:
@@ -687,7 +714,11 @@ def filter_board_jobs(cfg: dict, jobs: list[Job]) -> list[Job]:
         profile.get("is_remote") for profile in (search.get("profiles") or []))
     home = search.get("home_country", "India")
     geo_on = bool(search.get("scope_to_home", True))
-    return [job for job in jobs if _matches(job, locs, roles, want_remote, home, geo_on)]
+    profile_homes = _profile_homes(search)
+    return [
+        job for job in jobs
+        if _matches(job, locs, roles, want_remote, home, geo_on, profile_homes)
+    ]
 
 
 def filter_profile_jobs(cfg: dict, store, jobs: list[Job]) -> list[Job]:
@@ -713,9 +744,10 @@ def filter_profile_jobs_with_funnel(
     )
     home = search.get("home_country", "India")
     geo_on = bool(search.get("scope_to_home", True))
+    profile_homes = _profile_homes(search)
     geo_jobs = [
         job for job in jobs
-        if _location_matches(job, locs, want_remote, home, geo_on)
+        if _location_matches(job, locs, want_remote, home, geo_on, profile_homes)
     ]
     candidates = [job for job in geo_jobs if _role_matches(job, roles)]
     return candidates, {

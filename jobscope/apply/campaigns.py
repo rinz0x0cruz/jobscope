@@ -13,6 +13,8 @@ from jobscope.core.model import Job
 from jobscope.core.store.monitoring import normalize_company_key
 from jobscope.core.store.outreach_campaigns import MAX_CAMPAIGN_DAILY_LIMIT
 
+_STALE_SEND_CLAIM = timedelta(minutes=15)
+
 
 def _utc(value: Optional[datetime] = None) -> datetime:
     current = value or datetime.now(timezone.utc)
@@ -65,6 +67,14 @@ def _campaign_defaults(cfg: dict) -> dict:
     return (cfg.get("apply", {}).get("outreach", {}).get("campaign", {}) or {})
 
 
+def _summary_state(target: dict) -> str:
+    return (
+        "delivery_unknown"
+        if target.get("error_code") == "delivery_unknown"
+        else target["state"]
+    )
+
+
 def get_campaign_detail(store, campaign_id: str) -> dict:
     campaign = store.get_outreach_campaign(campaign_id)
     if campaign is None:
@@ -72,7 +82,8 @@ def get_campaign_detail(store, campaign_id: str) -> dict:
     targets = store.outreach_campaign_targets(campaign_id)
     counts: dict[str, int] = {}
     for target in targets:
-        counts[target["state"]] = counts.get(target["state"], 0) + 1
+        state = _summary_state(target)
+        counts[state] = counts.get(state, 0) + 1
     return {
         "campaign": campaign,
         "targets": targets,
@@ -91,7 +102,8 @@ def list_campaigns(store) -> list[dict]:
         targets = store.outreach_campaign_targets(campaign["id"])
         counts: dict[str, int] = {}
         for target in targets:
-            counts[target["state"]] = counts.get(target["state"], 0) + 1
+            state = _summary_state(target)
+            counts[state] = counts.get(state, 0) + 1
         delivered = sum(counts.get(state, 0) for state in ("sent", "replied", "opted_out"))
         responses = sum(counts.get(state, 0) for state in ("replied", "opted_out"))
         result.append({
@@ -99,6 +111,169 @@ def list_campaigns(store) -> list[dict]:
             "delivered_count": delivered, "response_count": responses,
         })
     return result
+
+
+def engagement_activity(store) -> list[dict]:
+    """Project application and cold outreach into privacy-safe activity threads."""
+    from jobscope.deliver.render import _summarize
+
+    groups: dict[str, dict] = {}
+    seen_replies: set[str] = set()
+    campaign_sends: set[tuple[str, str, str]] = set()
+    rows = store.outreach_engagement_rows()
+    rows_by_id = {str(row.get("target_id") or ""): row for row in rows}
+
+    def lineage(row: dict) -> tuple[str, str]:
+        """Return inherited application ID and stable root target, cycle-safe."""
+        current = row
+        application_job_id = ""
+        visited: list[str] = []
+        while True:
+            target_id = str(current.get("target_id") or "")
+            if target_id in visited:
+                return application_job_id, min(visited or [target_id])
+            visited.append(target_id)
+            application_job_id = (
+                application_job_id or str(current.get("application_job_id") or "")
+            )
+            source_target_id = str(current.get("source_target_id") or "")
+            if not source_target_id:
+                return application_job_id, target_id
+            parent = rows_by_id.get(source_target_id)
+            if parent is None:
+                return application_job_id, source_target_id
+            current = parent
+
+    def event_sort_key(event: dict) -> tuple[float, int, str]:
+        parsed = _parse_iso(str(event.get("date") or ""))
+        timestamp = parsed.timestamp() if parsed is not None else float("-inf")
+        direction = 1 if event.get("direction") == "inbound" else 0
+        return timestamp, direction, str(event.get("date") or "")
+
+    def send_identity(application_job_id: str, sent_at: str, recipient: str) -> tuple[str, str, str]:
+        parsed = _parse_iso(sent_at)
+        canonical_sent_at = _iso(parsed) if parsed is not None else sent_at.strip()
+        return application_job_id, canonical_sent_at, recipient.strip().casefold()
+
+    def thread(key: str, *, kind: str, application_job_id: str = "",
+               company: str = "", title: str = "") -> dict:
+        return groups.setdefault(key, {
+            "id": key,
+            "kind": kind,
+            "application_job_id": application_job_id,
+            "company": company,
+            "title": title,
+            "campaign_id": "",
+            "target_id": "",
+            "recipient": "",
+            "subject": "",
+            "state": "",
+            "sent_at": "",
+            "latest_activity_at": "",
+            "followup_count": 0,
+            "outbound_count": 0,
+            "reply_count": 0,
+            "events": [],
+        })
+
+    for row in rows:
+        application_job_id, root_target_id = lineage(row)
+        target_id = str(row.get("target_id") or "")
+        kind = "application" if application_job_id else "cold"
+        key = (f"application:{application_job_id}" if application_job_id
+               else f"cold:{root_target_id or target_id}")
+        current = thread(
+            key, kind=kind, application_job_id=application_job_id,
+            company=str(row.get("company") or ""), title=str(row.get("title") or ""),
+        )
+        event_kind = "cold" if row.get("purpose") == "cold" else "followup"
+        date_value = str(row.get("sent_at") or row.get("updated_at") or "")
+        state = str(row.get("error_code") or row.get("state") or "")
+        outbound = {
+            "direction": "outbound",
+            "kind": event_kind,
+            "date": date_value,
+            "subject": str(row.get("subject") or ""),
+            "participant": str(row.get("recipient") or ""),
+            "summary": "",
+            "state": state,
+            "signal": "",
+            "followup_number": int(row.get("followup_number") or 0),
+            "campaign_id": str(row.get("campaign_id") or ""),
+            "target_id": target_id,
+        }
+        current["events"].append(outbound)
+        campaign_sends.add(send_identity(
+            application_job_id, date_value, str(outbound["participant"]),
+        ))
+
+        reply_event_id = str(row.get("reply_event_id") or "")
+        if reply_event_id and reply_event_id not in seen_replies:
+            seen_replies.add(reply_event_id)
+            current["events"].append({
+                "direction": "inbound",
+                "kind": "opt_out" if row.get("state") == "opted_out" else "reply",
+                "date": str(row.get("reply_date") or row.get("replied_at") or ""),
+                "subject": str(row.get("reply_subject") or ""),
+                "participant": str(row.get("reply_from") or ""),
+                "summary": _summarize(str(row.get("reply_snippet") or "")),
+                "state": str(row.get("state") or ""),
+                "signal": str(row.get("reply_signal") or ""),
+                "followup_number": int(row.get("followup_number") or 0),
+                "campaign_id": str(row.get("campaign_id") or ""),
+                "target_id": target_id,
+            })
+
+    for application in store.applications():
+        sent_at = str(application.get("outreach_at") or "")
+        if not sent_at:
+            continue
+        job_id = str(application.get("job_id") or "")
+        recipient = str(application.get("outreach_to") or "")
+        if send_identity(job_id, sent_at, recipient) in campaign_sends:
+            continue
+        current = thread(
+            f"application:{job_id}", kind="application", application_job_id=job_id,
+            company=str(application.get("company") or ""),
+            title=str(application.get("title") or ""),
+        )
+        current["events"].append({
+            "direction": "outbound",
+            "kind": "direct",
+            "date": sent_at,
+            "subject": "",
+            "participant": recipient,
+            "summary": "",
+            "state": "sent",
+            "signal": "",
+            "followup_number": 0,
+            "campaign_id": "",
+            "target_id": "",
+        })
+
+    for current in groups.values():
+        current["events"].sort(key=event_sort_key)
+        outbound = [event for event in current["events"] if event["direction"] == "outbound"]
+        inbound = [event for event in current["events"] if event["direction"] == "inbound"]
+        latest = current["events"][-1]
+        latest_outbound = outbound[-1]
+        current.update({
+            "campaign_id": latest_outbound["campaign_id"],
+            "target_id": latest_outbound["target_id"],
+            "recipient": latest_outbound["participant"],
+            "subject": latest_outbound["subject"],
+            "state": latest["state"],
+            "sent_at": outbound[0]["date"],
+            "latest_activity_at": latest["date"],
+            "followup_count": sum(event["kind"] == "followup" for event in outbound),
+            "outbound_count": len(outbound),
+            "reply_count": len(inbound),
+        })
+
+    return sorted(groups.values(), key=lambda item: (
+        event_sort_key({"date": item["latest_activity_at"], "direction": "inbound"}),
+        item["id"],
+    ), reverse=True)
 
 
 def delete_draft_campaign(store, campaign_id: str) -> dict:
@@ -178,6 +353,245 @@ def create_campaign(
     }}
 
 
+_FOLLOWUP_RESPONSE_SIGNALS = {
+    "recruiter", "assessment", "interview", "offer", "rejection",
+    "campaign_reply", "campaign_optout",
+}
+_FOLLOWUP_BLOCKING_APPLICATION_STATUSES = {
+    "interview", "rejected", "offer", "withdrawn", "closed",
+}
+
+
+def _latest_timestamp(*values: str) -> Optional[datetime]:
+    parsed = [item for value in values if (item := _parse_iso(value)) is not None]
+    return max(parsed) if parsed else None
+
+
+def _followup_is_due(anchor: Optional[datetime], days: int, now: datetime) -> bool:
+    return bool(anchor and _utc(now) - anchor >= timedelta(days=max(1, days)))
+
+
+def _has_response_after(store, job_id: str, anchor: datetime) -> bool:
+    for event in store.mail_events(job_id):
+        if (event.get("signal") or "") not in _FOLLOWUP_RESPONSE_SIGNALS:
+            continue
+        event_at = _parse_iso(event.get("date") or event.get("first_seen") or "")
+        if event_at and event_at > anchor:
+            return True
+    return False
+
+
+def _followup_job(store, application: dict | None, company: str) -> Job:
+    if application:
+        job = store.get_job(application.get("job_id") or "")
+        if job is not None:
+            return job
+        return Job(
+            source="application", title=application.get("title") or "",
+            company=application.get("company") or company,
+        )
+    return _representative_job(store, company)
+
+
+def _cached_followup_contact(store, company: str) -> tuple[str, list[dict], dict | None]:
+    record = store.get_company_contacts(company) or {}
+    domain = str(record.get("domain") or "").strip().lower()
+    contacts = outreach.rank_recruiter_contacts(record.get("contacts") or [])
+    selected = next((
+        contact for contact in contacts
+        if (
+            contact.get("source") == "recruiter"
+            and outreach.valid_recipient(contact.get("email") or "")
+        ) or (
+            contact.get("source") != "role_inbox"
+            and outreach.valid_company_recipient(contact.get("email") or "", domain)
+        )
+    ), None)
+    return domain, contacts, selected
+
+
+def create_followup_campaign(
+    cfg: dict,
+    store,
+    name: str,
+    requested_count: int,
+    *,
+    resume_name: str = "",
+    include_cold: bool = True,
+    include_applications: bool = True,
+    now: Optional[datetime] = None,
+) -> dict:
+    """Build one deduplicated, unsent follow-up queue; approval remains individual."""
+    if not 1 <= requested_count <= 100:
+        raise ValueError("requested_count must be between 1 and 100")
+    current = _utc(now)
+    followup_days = int((cfg.get("apply", {}) or {}).get("followup_days", 7))
+    existing_applications, existing_sources = store.followup_source_ids()
+    existing_companies = store.followup_company_keys()
+
+    applications_by_company: dict[str, list[dict]] = {}
+    due_apps: dict[str, tuple[dict, datetime]] = {}
+    for application in store.applications():
+        company_key = normalize_company_key(application.get("company") or "")
+        if not company_key:
+            continue
+        applications_by_company.setdefault(company_key, []).append(application)
+        if application.get("status") != "applied":
+            continue
+        job_id = application.get("job_id") or ""
+        if (not job_id or job_id in existing_applications
+                or company_key in existing_companies):
+            continue
+        anchor = _latest_timestamp(
+            application.get("applied_at") or "", application.get("outreach_at") or "",
+        )
+        if not _followup_is_due(anchor, followup_days, current):
+            continue
+        if anchor and _has_response_after(store, job_id, anchor):
+            continue
+        previous = due_apps.get(company_key)
+        if previous is None or anchor > previous[1]:
+            due_apps[company_key] = (application, anchor)
+
+    candidates: list[dict] = []
+    used_companies: set[str] = set()
+    if include_cold:
+        for source in store.sent_outreach_campaign_targets():
+            if source.get("state") != "sent" or source["id"] in existing_sources:
+                continue
+            source_campaign = store.get_outreach_campaign(source["campaign_id"])
+            if not source_campaign or source_campaign.get("purpose", "cold") != "cold":
+                continue
+            company_key = source.get("company_key") or ""
+            if (not company_key or company_key in used_companies
+                    or company_key in existing_companies):
+                continue
+            application = None
+            application_anchor = None
+            related = applications_by_company.get(company_key) or []
+            if related:
+                latest = max(
+                    related,
+                    key=lambda item: _parse_iso(item.get("updated") or "")
+                    or datetime.min.replace(tzinfo=timezone.utc),
+                )
+                status = latest.get("status") or ""
+                if status in _FOLLOWUP_BLOCKING_APPLICATION_STATUSES:
+                    continue
+                if status == "applied":
+                    application = latest
+                    application_anchor = _latest_timestamp(
+                        latest.get("applied_at") or "", latest.get("outreach_at") or "",
+                    )
+                    job_id = latest.get("job_id") or ""
+                    if (not application_anchor or job_id in existing_applications
+                            or _has_response_after(store, job_id, application_anchor)):
+                        continue
+            anchor = _latest_timestamp(
+                source.get("sent_at") or "",
+                application_anchor.isoformat() if application_anchor else "",
+            )
+            if not _followup_is_due(anchor, followup_days, current):
+                continue
+            if not source.get("selected_email") or not source.get("outbound_message_id"):
+                continue
+            candidates.append({
+                "company": source["company"], "company_key": company_key,
+                "application": application, "source_target": source,
+                "anchor": anchor, "source": "cold",
+            })
+            used_companies.add(company_key)
+
+    if include_applications:
+        for company_key, (application, anchor) in sorted(
+            due_apps.items(), key=lambda item: item[1][1]
+        ):
+            if company_key in used_companies:
+                continue
+            candidates.append({
+                "company": application.get("company") or "",
+                "company_key": company_key, "application": application,
+                "source_target": None, "anchor": anchor, "source": "application",
+            })
+            used_companies.add(company_key)
+
+    candidates.sort(key=lambda item: item["anchor"])
+    candidates = candidates[:requested_count]
+    if not candidates:
+        raise ValueError("no follow-up candidates are currently due")
+    resume = _resume_for_campaign(store, {"resume_name": resume_name})
+    if resume is None:
+        raise ValueError("upload or select a résumé before drafting campaign outreach")
+    if not resume.source_path or not os.path.exists(resume.source_path):
+        raise ValueError("the selected résumé file is not available on disk")
+    defaults = _campaign_defaults(cfg)
+    campaign = store.create_outreach_campaign(
+        name, len(candidates), purpose="followup",
+        criteria={
+            "sources": [
+                source for source, enabled in (
+                    ("cold", include_cold), ("applications", include_applications),
+                ) if enabled
+            ],
+            "followup_days": followup_days,
+        },
+        resume_name=resume_name,
+        daily_limit=int(defaults.get("daily_limit", 2)),
+        min_spacing_hours=float(defaults.get("min_spacing_hours", 4)),
+        timezone=str(defaults.get("timezone", "Asia/Kolkata")),
+        send_window_start=str(defaults.get("send_window_start", "10:00")),
+        send_window_end=str(defaults.get("send_window_end", "17:00")),
+    )
+    for candidate in candidates:
+        application = candidate["application"]
+        source = candidate["source_target"]
+        recipient = (source or {}).get("selected_email") or (
+            application or {}
+        ).get("outreach_to") or ""
+        domain = (source or {}).get("domain") or (
+            recipient.split("@", 1)[1].lower() if "@" in recipient else ""
+        )
+        contacts: list[dict] = []
+        selected: dict | None = None
+        recipient_locked = bool(recipient)
+        if recipient:
+            selected = {
+                "email": recipient,
+                "source": "prior_cold" if source else "prior_outreach",
+                "confidence": "high",
+                "note": "locked to the original outreach recipient",
+            }
+            contacts = [selected]
+        else:
+            domain, contacts, selected = _cached_followup_contact(
+                store, candidate["company"],
+            )
+        target = store.upsert_outreach_campaign_target(
+            campaign["id"], candidate["company"], candidate["company_key"],
+            application_job_id=(application or {}).get("job_id") or "",
+            source_target_id=(source or {}).get("id") or "",
+            parent_message_id=(source or {}).get("outbound_message_id") or "",
+            root_message_id=(source or {}).get("root_message_id")
+            or (source or {}).get("outbound_message_id") or "",
+            followup_number=1, recipient_locked=recipient_locked,
+            rank_score=max(0, (current - candidate["anchor"]).days),
+            evidence={
+                "followup_source": candidate["source"],
+                "anchor": _iso(candidate["anchor"]),
+            },
+            state="needs_contact",
+        )
+        store.set_outreach_campaign_contacts(
+            target["id"], domain=domain, contacts=contacts,
+            state="draft" if selected else "needs_contact",
+        )
+        if selected:
+            update_draft(
+                cfg, store, target["id"], selected_email=selected["email"],
+            )
+    return get_campaign_detail(store, campaign["id"])
+
+
 def _company_url(store, company: str) -> str:
     monitor = store.get_company_monitor(company)
     if monitor and monitor.get("careers_url"):
@@ -246,14 +660,21 @@ def discover_pending_targets(
     if not 1 <= limit <= 10:
         raise ValueError("contact discovery batch limit must be between 1 and 10")
     get_campaign_detail(store, campaign_id)
-    candidates = [
-        target for target in store.outreach_campaign_targets(campaign_id)
-        if target["state"] == "ranked"
-    ][:limit]
+    targets = store.outreach_campaign_targets(campaign_id)
+    candidates = (
+        [target for target in targets if target["state"] == "ranked"]
+        + [target for target in targets if target["state"] == "needs_contact"]
+        + [target for target in targets
+           if target["state"] == "failed"
+           and target.get("error_code") == "contact_discovery_failed"]
+    )[:limit]
     drafted = needs_contact = failed = 0
     for target in candidates:
         try:
-            result = discover_target(cfg, store, target["id"], fetch=fetch)
+            result = discover_target(
+                cfg, store, target["id"],
+                force=target["state"] != "ranked", fetch=fetch,
+            )
             if result["state"] == "draft":
                 drafted += 1
             else:
@@ -290,6 +711,9 @@ def update_draft(
     if campaign is None:
         raise KeyError(target["campaign_id"])
     email = (selected_email or "").strip().lower()
+    original_email = str(target.get("selected_email") or "").strip().lower()
+    if target.get("recipient_locked") and original_email and email != original_email:
+        raise ValueError("recipient is locked to the original outreach address")
     contact = next(
         (item for item in target.get("contacts") or []
          if str(item.get("email") or "").strip().lower() == email),
@@ -297,7 +721,10 @@ def update_draft(
     )
     if contact is None:
         raise ValueError("select one of the discovered contacts")
-    if not outreach.valid_company_recipient(email, target.get("domain") or ""):
+    if target.get("recipient_locked"):
+        if not outreach.valid_recipient(email):
+            raise ValueError("locked recipient must be valid and non-automated")
+    elif not outreach.valid_company_recipient(email, target.get("domain") or ""):
         raise ValueError("recipient must be valid, non-automated, and on the company domain")
     resume = _resume_for_campaign(store, campaign)
     if resume is None:
@@ -305,7 +732,12 @@ def update_draft(
     resume_path = resume.source_path if resume.source_path and os.path.exists(resume.source_path) else ""
     if not resume_path:
         raise ValueError("the selected résumé file is not available on disk")
-    job = _representative_job(store, target["company"])
+    application = (
+        store.get_application(target.get("application_job_id") or "")
+        if target.get("application_job_id") else None
+    )
+    job = _followup_job(store, application, target["company"])
+    followup = campaign.get("purpose") == "followup"
     generated_subject, generated_body = outreach.build_draft(
         cfg, store, resume, job,
         outreach.Target(
@@ -313,7 +745,17 @@ def update_draft(
             confidence=contact.get("confidence") or "", domain=target.get("domain") or "",
             note=contact.get("note") or "",
         ),
+        followup=followup,
+        followup_kind="application" if application else "cold",
     )
+    if followup and target.get("source_target_id"):
+        source = store.get_outreach_campaign_target(target["source_target_id"])
+        prior_subject = (source or {}).get("subject") or ""
+        if prior_subject:
+            generated_subject = (
+                prior_subject if prior_subject.lower().startswith("re:")
+                else f"Re: {prior_subject}"
+            )
     return store.set_outreach_campaign_draft(
         target_id,
         selected_email=email,
@@ -374,6 +816,62 @@ def _permanent_guard(cfg: dict, store, target: dict) -> str:
     return ""
 
 
+def _followup_guard(cfg: dict, store, target: dict, now: datetime) -> str:
+    recipient = target.get("selected_email") or ""
+    domain = target.get("domain") or ""
+    if _do_not_contact(cfg, store, target["company"], domain, recipient):
+        return "do_not_contact"
+    if target.get("recipient_locked"):
+        if not outreach.valid_recipient(recipient):
+            return "invalid_recipient"
+    elif not outreach.valid_company_recipient(recipient, domain):
+        return "invalid_recipient"
+    if not target.get("resume_path") or not os.path.exists(target["resume_path"]):
+        return "missing_resume"
+    if (not target.get("resume_sha256")
+            or _file_sha256(target["resume_path"]) != target["resume_sha256"]):
+        return "resume_changed"
+
+    anchors: list[datetime] = []
+    source_target_id = target.get("source_target_id") or ""
+    if source_target_id:
+        source = store.get_outreach_campaign_target(source_target_id)
+        if source is None or source.get("state") != "sent" or not source.get("sent_at"):
+            return "source_no_longer_pending"
+        if recipient.lower() != (source.get("selected_email") or "").lower():
+            return "recipient_changed"
+        if (target.get("parent_message_id") or "") != (
+            source.get("outbound_message_id") or ""
+        ):
+            return "thread_changed"
+        source_at = _parse_iso(source["sent_at"])
+        if source_at:
+            anchors.append(source_at)
+
+    application_job_id = target.get("application_job_id") or ""
+    if application_job_id:
+        application = store.get_application(application_job_id)
+        if application is None or application.get("status") != "applied":
+            return "application_no_longer_pending"
+        application_at = _latest_timestamp(
+            application.get("applied_at") or "", application.get("outreach_at") or "",
+        )
+        if application_at:
+            anchors.append(application_at)
+            if _has_response_after(store, application_job_id, application_at):
+                return "application_has_response"
+        original = application.get("outreach_to") or ""
+        if original and target.get("recipient_locked") and recipient.lower() != original.lower():
+            return "recipient_changed"
+
+    if not anchors:
+        return "followup_source_missing"
+    days = int((cfg.get("apply", {}) or {}).get("followup_days", 7))
+    if not _followup_is_due(max(anchors), days, _utc(now)):
+        return "followup_not_due"
+    return ""
+
+
 def _next_schedule(campaign: dict, targets: list[dict], now: datetime) -> datetime:
     tz = _zone(campaign["timezone"])
     window_start = _clock(campaign["send_window_start"])
@@ -411,10 +909,16 @@ def approve_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] 
     target = store.get_outreach_campaign_target(target_id)
     if target is None:
         raise KeyError(target_id)
-    error = _permanent_guard(cfg, store, target)
+    campaign = store.get_outreach_campaign(target["campaign_id"])
+    if campaign is None:
+        raise KeyError(target["campaign_id"])
+    error = (
+        _followup_guard(cfg, store, target, _utc(now))
+        if campaign.get("purpose") == "followup"
+        else _permanent_guard(cfg, store, target)
+    )
     if error:
         raise ValueError(error.replace("_", " "))
-    campaign = store.get_outreach_campaign(target["campaign_id"])
     scheduled = _next_schedule(
         campaign, store.outreach_campaign_targets(campaign["id"]), _utc(now),
     )
@@ -424,7 +928,7 @@ def approve_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] 
 
 def set_campaign_status(store, campaign_id: str, status: str) -> dict:
     if status == "active" and not any(
-        target["state"] == "approved"
+        _summary_state(target) == "approved"
         for target in store.outreach_campaign_targets(campaign_id)
     ):
         raise ValueError("approve at least one target before starting the campaign")
@@ -460,7 +964,7 @@ def _outbound_message_id(cfg: dict, target: dict) -> str:
 
 
 def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = None,
-                ignore_schedule: bool = False) -> dict:
+                ignore_schedule: bool = False, allow_inactive: bool = False) -> dict:
     current = _utc(now)
     target = store.get_outreach_campaign_target(target_id)
     if target is None:
@@ -468,7 +972,9 @@ def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = N
     campaign = store.get_outreach_campaign(target["campaign_id"])
     if campaign is None:
         raise KeyError(target["campaign_id"])
-    if campaign["status"] != "active":
+    if campaign["status"] != "active" and not (
+        allow_inactive and campaign["status"] in {"draft", "paused"}
+    ):
         return {"ok": False, "sent": False, "code": "campaign_inactive"}
     if target.get("error_code") == "delivery_unknown":
         return {"ok": False, "sent": False, "code": "delivery_unknown"}
@@ -480,10 +986,18 @@ def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = N
     if not ignore_schedule and (scheduled is None or scheduled > current):
         return {"ok": False, "sent": False, "code": "not_due"}
 
-    permanent = _permanent_guard(cfg, store, target)
+    permanent = (
+        _followup_guard(cfg, store, target, current)
+        if campaign.get("purpose") == "followup"
+        else _permanent_guard(cfg, store, target)
+    )
     if permanent:
+        if permanent == "followup_not_due":
+            return {"ok": False, "sent": False, "code": permanent}
         state = "skipped" if permanent in {
             "application_history", "do_not_contact", "invalid_recipient",
+            "application_no_longer_pending", "application_has_response",
+            "source_no_longer_pending", "recipient_changed", "thread_changed",
         } else "failed"
         store.set_outreach_campaign_target_state(
             target_id, state, error_code=permanent,
@@ -502,14 +1016,15 @@ def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = N
         last_sent, float(campaign["min_spacing_hours"]) / 24, current,
     ):
         return {"ok": False, "sent": False, "code": "minimum_spacing"}
-    cooldown_days = int(cfg.get("apply", {}).get("outreach", {}).get("cooldown_days", 14))
-    previous = store.last_outreach_campaign_sent_at(target["company_key"])
-    if previous and _within_days(previous, cooldown_days, current):
-        store.set_outreach_campaign_target_state(
-            target_id, "skipped", error_code="company_cooldown",
-            error_detail="company was contacted within the cooldown window",
-        )
-        return {"ok": False, "sent": False, "code": "company_cooldown"}
+    if campaign.get("purpose") != "followup":
+        cooldown_days = int(cfg.get("apply", {}).get("outreach", {}).get("cooldown_days", 14))
+        previous = store.last_outreach_campaign_sent_at(target["company_key"])
+        if previous and _within_days(previous, cooldown_days, current):
+            store.set_outreach_campaign_target_state(
+                target_id, "skipped", error_code="company_cooldown",
+                error_detail="company was contacted within the cooldown window",
+            )
+            return {"ok": False, "sent": False, "code": "company_cooldown"}
     outreach_cfg = cfg.get("apply", {}).get("outreach", {}) or {}
     if not outreach_cfg.get("enabled") or not cfg.get("email", {}).get("enabled"):
         return {"ok": False, "sent": False, "code": "sending_disabled"}
@@ -522,6 +1037,8 @@ def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = N
         sent = email.send(
             cfg, target["subject"], target["body"], to=target["selected_email"],
             attachments=[target["resume_path"]], message_id=message_id,
+            in_reply_to=target.get("parent_message_id") or "",
+            references=target.get("root_message_id") or target.get("parent_message_id") or "",
             raise_errors=True,
         )
     except email.EmailDeliveryError as exc:
@@ -544,6 +1061,9 @@ def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = N
 def send_next_approved(cfg: dict, store, *, campaign_id: str = "",
                        now: Optional[datetime] = None) -> dict:
     current = _utc(now)
+    store.mark_stale_outreach_campaign_sends_unknown(
+        _iso(current - _STALE_SEND_CLAIM),
+    )
     due = store.due_outreach_campaign_targets(_iso(current), campaign_id=campaign_id)
     if not due:
         return {"ok": True, "sent": False, "code": "nothing_due"}

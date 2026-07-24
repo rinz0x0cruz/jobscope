@@ -19,23 +19,27 @@ describe('urlState: schema + defaults', () => {
 
   it('maps legacy tabs onto the new primary views', () => {
     expect(activeView(searchSchema.parse({ tab: 'applications' }))).toBe('applications')
-    expect(activeView(searchSchema.parse({ tab: 'overview' }))).toBe('pipeline')
+    expect(activeView(searchSchema.parse({ tab: 'overview' }))).toBe('analytics')
     expect(activeView(searchSchema.parse({ tab: 'Strong' }))).toBe('review')
     expect(activeView(searchSchema.parse({ view: 'feed' }))).toBe('review')
     expect(activeView(searchSchema.parse({ view: 'companies' }))).toBe('companies')
     expect(activeView(searchSchema.parse({ view: 'activity', tab: 'applications' }))).toBe('applications')
+    expect(activeView(searchSchema.parse({ view: 'pipeline' }))).toBe('analytics')
+    expect(activeView(searchSchema.parse({ view: 'analytics' }))).toBe('analytics')
   })
 
   it('coerces an invalid tab to "all" instead of throwing', () => {
     expect(searchSchema.parse({ tab: 'bogus' }).tab).toBe('all')
+    expect(searchSchema.parse({ view: 'bogus' }).view).toBeUndefined()
   })
 
   it('preserves valid values', () => {
-    const s = searchSchema.parse({ tab: 'Strong', q: 'siem', country: ['India'], group: true })
+    const s = searchSchema.parse({ tab: 'Strong', q: 'siem', country: ['India'], group: true, engagement: 'cold:one' })
     expect(s.tab).toBe('Strong')
     expect(s.q).toBe('siem')
     expect(s.country).toEqual(['India'])
     expect(s.group).toBe(true)
+    expect(s.engagement).toBe('cold:one')
   })
 
   it('exposes the tabs + facet keys the UI relies on', () => {

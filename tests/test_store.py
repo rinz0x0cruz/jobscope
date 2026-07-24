@@ -10,6 +10,14 @@ def _store():
     return Store(os.path.join(tmp, "t.db"))
 
 
+def test_store_configures_single_host_concurrency():
+    store = _store()
+
+    assert store.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert store.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+    store.close()
+
+
 def test_upsert_and_dedupe():
     store = _store()
     j = Job(source="indeed", title="Security Engineer", company="Acme",

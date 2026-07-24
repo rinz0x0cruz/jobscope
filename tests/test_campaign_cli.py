@@ -1,4 +1,5 @@
 from jobscope.cli import main
+from jobscope.core.model import Application, Job, Resume
 from jobscope.core.store import Store
 
 
@@ -41,3 +42,34 @@ def test_campaign_cli_requires_confirmation_to_delete_draft(tmp_path, capsys):
     assert f"deleted {campaign['id']}" in capsys.readouterr().out
     with Store(str(path)) as store:
         assert store.get_outreach_campaign(campaign["id"]) is None
+
+
+def test_campaign_cli_builds_application_followup_queue(tmp_path, capsys):
+    path = tmp_path / "campaign-followups.db"
+    resume_path = tmp_path / "resume.md"
+    resume_path.write_text("# Jane\n", encoding="utf-8")
+    with Store(str(path)) as store:
+        store.save_resume(Resume(
+            full_name="Jane", skills=["security"], source_path=str(resume_path),
+        ))
+        job = Job(
+            source="test", title="Security Engineer", company="Acme",
+            company_url="https://acme.example", url="https://acme.example/job",
+        ).ensure_id()
+        store.upsert_job(job)
+        store.set_application(Application(
+            job_id=job.id, status="applied", company=job.company,
+            applied_at="2020-01-01T00:00:00Z",
+        ))
+        store.set_company_contacts(job.company, "acme.example", [{
+            "email": "recruiter@acme.example", "source": "hunter",
+            "confidence": "medium", "note": "recruiter",
+        }])
+
+    assert main([
+        "--db", str(path), "campaign", "followups",
+        "--name", "Application follow-ups", "--count", "10",
+    ]) == 0
+    output = capsys.readouterr().out
+    assert "Application follow-ups" in output
+    assert "[application] recruiter@acme.example" in output

@@ -120,7 +120,16 @@ describe('refresh: scanNewMail dispatch (token path)', () => {
       if (url.endsWith('/api/refresh') && opts?.method === 'POST') {
         return { ok: true, json: async () => ({ state: 'started' }) } as Response
       }
-      if (url.endsWith('/api/status')) return { ok: true, json: async () => ({ state: 'done' }) } as Response
+      if (url.endsWith('/api/status')) return {
+        ok: true,
+        json: async () => ({
+          state: 'done',
+          stages: [
+            { name: 'inbox', duration_ms: 1300 },
+            { name: 'match', duration_ms: 250 },
+          ],
+        }),
+      } as Response
       if (url.endsWith('/api/dashboard')) {
         return { ok: true, json: async () => ({ ok: true, data }) } as Response
       }
@@ -130,6 +139,9 @@ describe('refresh: scanNewMail dispatch (token path)', () => {
     await scanNewMail(onData)
     await vi.advanceTimersByTimeAsync(1000)
     await vi.waitFor(() => expect(onData).toHaveBeenCalledWith(data))
+    expect(toast.success).toHaveBeenCalledWith('Local workspace refreshed', {
+      description: 'Slowest stage: inbox · 1.3s',
+    })
   })
 
   it('checks for a running run, then POSTs workflow_dispatch', async () => {

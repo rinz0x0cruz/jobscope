@@ -17,10 +17,10 @@ Design principles:
   one-click link; **a human always clicks submit.** It never drives your logged-in
   LinkedIn/Indeed/Workday. An opt-in `--assist` mode can pre-fill *public* ATS forms
   (Greenhouse/Lever/Ashby) but always **stops before submit**.
-- **Local-first & private.** Your resume, data, and secrets stay on your machine
-  (SQLite + gitignored files). Secrets live in your OS keychain (`jobscope secrets`,
-  with `.env` fallback), the local DB is owner-only, and the published dashboard is
-  redacted. See [SECURITY.md](SECURITY.md).
+- **Local-first & private.** By default your resume, data, and secrets stay on your
+  machine (SQLite + gitignored files). An explicit private hosted mode moves that
+  trust boundary to one protected volume and secret manager. The published dashboard
+  remains redacted. See [SECURITY.md](SECURITY.md).
 
 > Built as a sibling to [threatscope](../threatscope) / [exploitrank](../exploitrank):
 > stdlib CLI, SQLite persistence, concurrent feeds, static dashboard, `selftest`.
@@ -52,13 +52,16 @@ pip install -r requirements.lock
 python -m playwright install chromium
 ```
 
+Run `serve` from this source checkout, where `web/` is available, or use the repository Docker image.
+The Python wheel contains the CLI package but does not bundle the React source/build.
+
 ## Quick start
 
 ```bash
 python -m jobscope init                          # scaffold config.yaml + data/ + .env
 # add your resume at data/resume.md
-python -m jobscope resume import data/resume.md   # parse it + seed a résumé-derived search profile
-python -m jobscope profile show                   # review terms/locations that drive scan
+python -m jobscope resume import data/resume.md   # parse it + seed an editable search profile
+python -m jobscope profile show                   # review roles/markets that drive scan
 python -m jobscope companies seed                 # import configured watchlist; application companies stay known
 python -m jobscope companies scan                 # check monitored supported career portals
 python -m jobscope scan --mode discovery          # optional broad LinkedIn/Indeed/Google discovery (daily cadence)
@@ -76,13 +79,16 @@ Or run the whole loop in one shot:
 python -m jobscope pipeline                        # scan -> match -> enrich -> prep top picks -> digest
 ```
 
+For Markdown, text, and extracted PDFs, tenure is derived only from a recognized
+work/professional experience section; headingless education/project dates are ignored.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `init` | Scaffold `config.yaml`, `data/`, `.env` |
 | `resume import <path> [--name N]` | Parse `.md`/`.json`/`.pdf`/`.txt` into a named base resume (maximum 3 profiles) |
-| `profile [build\|show] [--resume N] [--force]` | Editable résumé-derived search profile (terms/locations/remote) that drives `scan`; local Settings can upload, replace, edit, reset, and switch profiles |
+| `profile [build\|show] [--resume N] [--force]` | Editable search profile (target roles, preferred job markets, worldwide remote) that drives `scan`; résumé facts stay derived |
 | `companies [seed\|list\|scan\|apply]` | Persistent company watchlist. A targeted scan fetches supported official-portal jobs; **Find recruiter** is a separate explicit action. |
 | `scout <company> [--provider P --slug S]` | Preview one company's public ATS board and profile-ranked openings without monitoring it. |
 | `scan [--mode all\|monitored\|discovery] [--force-discovery]` | `all` checks monitored portals and runs broad JobSpy discovery only when its cadence is due; explicit modes isolate either source. |
@@ -96,7 +102,7 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `prep <job_id>` | Application package (docs + pre-filled answers + link + contacts + brief) |
 | `apply <job_id> [--assist]` | Open the application; `--assist` pre-fills public ATS forms, stops before submit |
 | `outreach <job_id> [--send]` | Preview or individually send a résumé-backed recruiter note for one role; local SMTP only |
-| `campaign <action>` | Rank India-relevant cybersecurity companies, review one draft at a time, and send at most one due approved email per invocation |
+| `campaign <action>` | Build cold or due follow-up queues, review one draft at a time, and send at most one due approved email per invocation |
 | `brief <job_id>` | Blunt, risk-forward company brief (no marketing fluff) |
 | `gaps [--top N]` | Skill-gap learning plan: skills to learn ranked by jobs unlocked |
 | `new` | New Strong/Good jobs since you last reviewed |
@@ -108,22 +114,39 @@ python -m jobscope pipeline                        # scan -> match -> enrich -> 
 | `selftest` | Offline self-tests (no network, no keys) |
 | `doctor` | Offline config, SQLite, secret-reference, toolchain, refresh, and source-health checks |
 
-## Ranked recruiter campaigns (local only)
+## Outreach batches (private control plane)
 
-Open **Campaigns** under local `jobscope serve`, choose the number of unique companies, and adjust
-the India / compensation / growth weights. Jobscope combines Watching/Known employers with its curated
+Open **Outreach** under `jobscope serve`, choose **Cold batches** or **Follow-ups**, and review
+each target in the same private workspace. Cold batches rank unique companies using the
+India / compensation / growth weights. Jobscope combines Watching/Known employers with its curated
 India-relevant cybersecurity pool, removes every company with application history, and stores the factor
-scores and evidence behind each rank. Applied companies stay in the existing per-application follow-up flow.
+scores and evidence behind each cold-campaign rank.
+
+**Build follow-up queue** prepares due drafts from sent cold campaign mail and applications still in
+`applied`. It uses `apply.followup_days`, keeps one target per company, prioritizes the oldest due action,
+and excludes sources already queued, replied to, opted out, or advanced beyond `applied`. Building the queue
+does not approve, schedule, or send anything. The CLI equivalent is:
+
+```powershell
+python -m jobscope campaign followups --name "Recruiter follow-ups" --count 10
+```
+
+Cold-email follow-ups reuse and lock the original recipient, subject thread, `In-Reply-To`, and
+`References`. Application follow-ups reuse and lock a prior `outreach_to` address when present; otherwise
+they select a cached verified recruiter/company contact or remain **Needs contact** for explicit discovery.
+Role inboxes are never auto-selected.
 
 Contact discovery reuses verified inbound and company-published addresses plus optional Hunter/Apollo results
 when their key environment variables are configured. Finder results must still be valid, non-automated,
 non-ATS, and on the confirmed employer domain. Conventional role inboxes remain visible fallbacks but are
 never auto-selected.
 
-Every target is reviewed separately. Approval binds the exact recipient, subject, body, and résumé attachment;
+Every target is reviewed separately. Approval binds the exact recipient, subject, body, résumé attachment,
+and follow-up thread identity;
 editing any of them clears approval. Each sent email carries a stable Jobscope `Message-ID`; the local inbox
-tracker links `In-Reply-To` exactly, with confirmed-domain + post-send timing as a fallback for new threads.
-The Campaigns delivery history shows recipient, subject, send time, reply sender/subject/time, and opt-outs.
+tracker links the immediate `In-Reply-To` parent exactly, with confirmed-domain + post-send timing as a
+fallback for new threads.
+The Outreach delivery history shows recipient, subject, send time, reply sender/subject/time, and opt-outs.
 
 The local scheduler runs a campaign tick: incrementally check configured inboxes for replies, then send at
 most one due approved draft. Defaults remain 2/day, at least 4 hours apart, from 10:00–17:00 Asia/Kolkata:
@@ -134,18 +157,21 @@ python -m jobscope campaign ready
 python -m jobscope campaign replies          # check now; --no-fetch reconciles stored mail only
 ```
 
-Draft campaigns can be permanently deleted from their Campaigns detail view. The CLI equivalent requires
+Draft campaigns can be permanently deleted from their Outreach detail view. The CLI equivalent requires
 explicit confirmation: `python -m jobscope campaign delete --campaign-id ID --yes`. Only campaigns still in
 `draft` with no sent, replied, opted-out, in-progress, or delivery-unknown target can be deleted; use cancel
 when delivery history must be retained.
 
 SMTP cannot make delivery and the local SQLite update atomic. If the connection fails after delivery begins,
 Jobscope records **delivery unknown**, locks the target out of automatic retries, and keeps its Message-ID.
-Check the provider's Sent folder, then choose **Confirmed in Sent** or **Confirmed not sent** in Campaigns;
+Check the provider's Sent folder, then choose **Confirmed in Sent** or **Confirmed not sent** in Outreach;
 the latter returns the message to Draft and requires a fresh approval before any retry.
 
-Campaign addresses, drafts, approvals, schedules, and logs stay in local SQLite. GitHub Pages and GitHub
-Actions do not expose or send campaign mail.
+Campaign addresses, drafts, approvals, schedules, source provenance, thread identifiers, and logs stay in
+local SQLite. GitHub Pages and GitHub Actions do not expose or send campaign mail.
+The private Applications ledger reads a separate, token-guarded engagement projection: it may show
+recipient, subject, send/reply dates, state, follow-up count, and a retained inbound snippet summary.
+It never exposes outbound bodies, résumé paths/hashes, approval hashes, or raw message/thread identifiers.
 Campaign auto-drafting selects only valid, non-automated recipients on the confirmed company domain and never
 auto-selects a role inbox. Off-domain recruiter or agency contacts may remain visible as evidence, but cannot
 block a lower-ranked eligible Hunter, Apollo, or employer-published contact.
@@ -283,14 +309,22 @@ and geo-restricted cards show a `Remote · <region>` badge. Set `match.remote_sc
 true` to down-rank geo-restricted remote whose region isn't in your `prefer_locations`
 or search country (off by default; global remote is never penalized).
 
-## Local workspace and published snapshot
+## Local workspace, optional private host, and published snapshot
 
-`python -m jobscope serve --open` is the canonical control plane. It reads current
-SQLite data through a loopback-only, token-guarded API, so profile edits, company
+`python -m jobscope serve --open` is the canonical local control plane. It reads current
+SQLite data through a loopback-only, token-guarded API by default, so profile edits, company
 actions, campaigns, and refreshed matches appear without rebuilding Vite. Settings
-can upload or replace up to three résumés, edit target roles/locations/remote intent,
+can upload or replace up to three résumés, select preferred job markets and worldwide-remote intent,
 or explicitly reset intent from the stored résumé; résumé-derived skills, seniority,
 and experience remain read-only facts.
+
+`python -m jobscope --config /data/config.yaml serve --hosted` is the opt-in
+container entry point for the same single-user workspace. It is **not** a public
+server: hosted mode requires `JOBSCOPE_PUBLIC_ORIGIN`, a Cloudflare Access JWT on
+every non-health request, an origin reachable only through a validating Cloudflare
+Tunnel, one application replica, and a persistent `/data` volume. See
+[OPERATIONS.md](OPERATIONS.md#private-hosted-control-plane) before deploying it.
+No hosted instance, schedule, secret, or data migration is created automatically.
 
 GitHub Pages is an encrypted **read-only snapshot**, not the interactive backend.
 Actions remain useful for scheduled PC-off inbox scans, encrypted database backup,
@@ -325,7 +359,7 @@ the tool and update the live site in one step — it refreshes your data
 (`scan → match → inbox`), rebuilds the redacted dashboard, and pushes it to `gh-pages`.
 Equivalent to `scripts/publish.ps1 -Refresh -Force` (or `scripts/publish.sh --refresh --force`);
 add `-NoScan` / `--no-scan` for a quick applications-only refresh that skips the job scan.
-The unlocked Pages app can queue Save/Dismiss/company-monitor/application-restore actions in browser storage. With
+The unlocked Pages app can queue Save/Dismiss/company-monitor actions in browser storage. With
 the optional fine-grained GitHub token connected, **Sync N** sends one bounded action batch to
 `refresh.yml`; changes clear only after the encrypted DB and site republish successfully.
 
@@ -384,6 +418,14 @@ search:
 
 Results are de-duplicated by URL, so overlapping profiles won't create duplicates.
 Leave `profiles: []` for a single search from the base fields.
+
+Broad discovery calls each configured source separately and commits at most 10
+results per term/source on each `scan`. `results_wanted` is the cap for that
+resumable cycle (for example, `25` runs as `10 + 10 + 5`). A full page leaves the
+cursor immediately due; rerun `scan` to continue. Short pages or the configured cap
+complete that cursor, and the normal discovery interval starts only after every
+active cursor completes. Replayed or overlapping pages remain safe because stable
+job IDs are upserted rather than inserted again.
 
 ## Seniority & experience level ("stop showing me senior roles")
 

@@ -237,6 +237,7 @@ CREATE TABLE IF NOT EXISTS job_reviews (
 CREATE TABLE IF NOT EXISTS outreach_campaigns (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
+    purpose TEXT NOT NULL DEFAULT 'cold',
     status TEXT NOT NULL DEFAULT 'draft'
         CHECK (status IN ('draft', 'active', 'paused', 'completed', 'cancelled')),
     sector TEXT NOT NULL DEFAULT 'cybersecurity',
@@ -258,6 +259,12 @@ CREATE TABLE IF NOT EXISTS outreach_campaign_targets (
     campaign_id TEXT NOT NULL,
     company_key TEXT NOT NULL,
     company TEXT NOT NULL,
+    application_job_id TEXT NOT NULL DEFAULT '',
+    source_target_id TEXT NOT NULL DEFAULT '',
+    parent_message_id TEXT NOT NULL DEFAULT '',
+    root_message_id TEXT NOT NULL DEFAULT '',
+    followup_number INTEGER NOT NULL DEFAULT 0,
+    recipient_locked INTEGER NOT NULL DEFAULT 0,
     state TEXT NOT NULL DEFAULT 'ranked'
         CHECK (state IN ('ranked', 'needs_contact', 'draft', 'approved', 'sent',
                          'skipped', 'failed', 'replied', 'opted_out')),
@@ -364,8 +371,10 @@ class _StoreBase:
         parent = os.path.dirname(os.path.abspath(path))
         os.makedirs(parent, exist_ok=True)
         self.path = path
-        self.conn = sqlite3.connect(path)
+        self.conn = sqlite3.connect(path, timeout=5)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode = WAL")
+        self.conn.execute("PRAGMA busy_timeout = 5000")
         existing_tables = {
             row["name"] for row in self.conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
@@ -428,6 +437,36 @@ class _StoreBase:
                     f"ALTER TABLE outreach_campaign_targets ADD COLUMN {col} "
                     "TEXT NOT NULL DEFAULT ''"
                 )
+        campaign = {
+            r["name"] for r in self.conn.execute(
+                "PRAGMA table_info(outreach_campaigns)"
+            )
+        }
+        if "purpose" not in campaign:
+            self.conn.execute(
+                "ALTER TABLE outreach_campaigns ADD COLUMN purpose "
+                "TEXT NOT NULL DEFAULT 'cold'"
+            )
+        for col, ddl in (
+            ("application_job_id", "TEXT NOT NULL DEFAULT ''"),
+            ("source_target_id", "TEXT NOT NULL DEFAULT ''"),
+            ("parent_message_id", "TEXT NOT NULL DEFAULT ''"),
+            ("root_message_id", "TEXT NOT NULL DEFAULT ''"),
+            ("followup_number", "INTEGER NOT NULL DEFAULT 0"),
+            ("recipient_locked", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if col not in campaign_target:
+                self.conn.execute(
+                    f"ALTER TABLE outreach_campaign_targets ADD COLUMN {col} {ddl}"
+                )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_outreach_campaign_targets_application "
+            "ON outreach_campaign_targets(application_job_id, followup_number)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_outreach_campaign_targets_source "
+            "ON outreach_campaign_targets(source_target_id, followup_number)"
+        )
         self.conn.commit()
 
     def _seed_reconciliation_baseline(self) -> None:

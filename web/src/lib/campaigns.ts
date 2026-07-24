@@ -1,3 +1,5 @@
+import { controlPlaneFetch } from './outreach'
+
 export type CampaignStatus = 'draft' | 'active' | 'paused' | 'completed' | 'cancelled'
 export type CampaignTargetState =
   | 'ranked'
@@ -22,11 +24,14 @@ export interface CampaignEvidence {
   compensation?: string[]
   growth?: string[]
   compensation_basis?: string
+  followup_source?: 'cold' | 'application'
+  anchor?: string
 }
 
 export interface Campaign {
   id: string
   name: string
+  purpose?: 'cold' | 'followup'
   status: CampaignStatus
   sector: string
   region: string
@@ -72,6 +77,12 @@ export interface CampaignTarget {
   campaign_id: string
   company_key: string
   company: string
+  application_job_id?: string
+  source_target_id?: string
+  parent_message_id?: string
+  root_message_id?: string
+  followup_number?: number
+  recipient_locked?: boolean
   state: CampaignTargetState
   rank_score: number
   region_score: number
@@ -140,17 +151,46 @@ export interface CampaignActionResult {
   deleted_campaign_name?: string
 }
 
-const endpoint = (path: string) => `${location.origin}/${path}`
+export interface EngagementEvent {
+  direction: 'outbound' | 'inbound'
+  kind: 'cold' | 'followup' | 'direct' | 'reply' | 'opt_out'
+  date: string
+  subject: string
+  participant: string
+  summary: string
+  state: string
+  signal: string
+  followup_number: number
+  campaign_id: string
+  target_id: string
+}
+
+export interface EngagementThread {
+  id: string
+  kind: 'application' | 'cold'
+  application_job_id: string
+  company: string
+  title: string
+  campaign_id: string
+  target_id: string
+  recipient: string
+  subject: string
+  state: string
+  sent_at: string
+  latest_activity_at: string
+  followup_count: number
+  outbound_count: number
+  reply_count: number
+  events: EngagementEvent[]
+}
 
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(endpoint(path), {
+  const headers = new Headers(init?.headers)
+  if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  const response = await controlPlaneFetch(path, token, {
     ...init,
     cache: 'no-store',
-    headers: {
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      'X-Refresh-Token': token,
-      ...init?.headers,
-    },
+    headers,
   })
   const result = await response.json() as { error?: string }
   if (!response.ok) throw new Error(result.error || `Campaign request failed (${response.status})`)
@@ -174,8 +214,11 @@ export function createCampaign(
   payload: {
     name: string
     requested_count: number
-    weights: { region: number; compensation: number; growth: number }
+    weights?: { region: number; compensation: number; growth: number }
     resume_name?: string
+    purpose?: 'cold' | 'followup'
+    include_cold?: boolean
+    include_applications?: boolean
   },
 ): Promise<CampaignDetailResult> {
   return request<CampaignDetailResult>('api/campaigns', token, {
@@ -192,4 +235,11 @@ export function campaignAction(
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+export async function listEngagements(token: string): Promise<EngagementThread[]> {
+  const result = await request<{ ok: boolean; engagements: EngagementThread[] }>(
+    'api/engagements', token,
+  )
+  return Array.isArray(result.engagements) ? result.engagements : []
 }

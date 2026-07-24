@@ -35,8 +35,12 @@ def test_email_send_includes_campaign_message_id(monkeypatch):
     assert email.send(
         cfg, "Subject", "Body", to="recruiter@acme.example",
         message_id="jobscope-campaign-123@example.com",
+        in_reply_to="parent@example.com",
+        references="root@example.com parent@example.com",
     ) is True
     assert "Message-ID: <jobscope-campaign-123@example.com>" in sent["message"]
+    assert "In-Reply-To: <parent@example.com>" in sent["message"]
+    assert "References: <root@example.com> <parent@example.com>" in sent["message"]
     assert sent["recipients"] == ["recruiter@acme.example"]
 
 

@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -13,10 +13,12 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
+  Sparkles,
   SkipForward,
   Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { Segmented, WorkspaceHeader, animate, viewTransition } from '@/ui'
 import {
   campaignAction,
   createCampaign,
@@ -44,11 +46,15 @@ export function CampaignsView({ token, selectedId, onSelect, onOpenApplications 
   const [targetId, setTargetId] = useState('')
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
+  const [creatingFollowups, setCreatingFollowups] = useState(false)
   const [name, setName] = useState('India cybersecurity outreach')
   const [count, setCount] = useState(10)
   const [regionWeight, setRegionWeight] = useState(50)
   const [compensationWeight, setCompensationWeight] = useState(30)
   const [growthWeight, setGrowthWeight] = useState(20)
+  const [composerMode, setComposerMode] = useState<'cold' | 'followup'>('cold')
+  const listRef = useRef<HTMLUListElement | null>(null)
+  const detailRef = useRef<HTMLDivElement | null>(null)
   const acceptCampaigns = useEffectEvent((values: CampaignSummary[]) => {
     setCampaigns(values)
     if (!selectedId && values[0]) onSelect(values[0].id)
@@ -61,7 +67,7 @@ export function CampaignsView({ token, selectedId, onSelect, onOpenApplications 
         if (!live) return
         acceptCampaigns(values)
       })
-      .catch((error) => live && toast.error(error instanceof Error ? error.message : 'Could not load campaigns'))
+      .catch((error) => live && toast.error(error instanceof Error ? error.message : 'Could not load outreach'))
       .finally(() => live && setLoading(false))
     return () => { live = false }
   }, [token])
@@ -81,6 +87,14 @@ export function CampaignsView({ token, selectedId, onSelect, onOpenApplications 
       .finally(() => live && setLoading(false))
     return () => { live = false }
   }, [token, selectedId])
+
+  useEffect(() => {
+    const rows = listRef.current?.querySelectorAll('[data-outreach-row]') ?? []
+    rows.forEach((row, index) => animate(row, [
+      { opacity: 0, transform: 'translateX(-8px)' },
+      { opacity: 1, transform: 'translateX(0)' },
+    ], { duration: 220, delay: Math.min(index * 35, 280), easing: 'cubic-bezier(.2,0,0,1)', fill: 'backwards' }))
+  }, [campaigns.length])
 
   async function reload(campaignId = selectedId) {
     const [values, nextDetail] = await Promise.all([
@@ -129,62 +143,122 @@ export function CampaignsView({ token, selectedId, onSelect, onOpenApplications 
     }
   }
 
+  async function buildFollowups() {
+    setCreatingFollowups(true)
+    try {
+      const result = await createCampaign(token, {
+        name: 'Recruiter follow-ups', requested_count: count,
+        purpose: 'followup', include_cold: true, include_applications: true,
+      })
+      setDetail(result)
+      setTargetId(result.targets[0]?.id ?? '')
+      onSelect(result.campaign.id)
+      setCampaigns(await listCampaigns(token))
+      toast.success(`Prepared ${result.targets.length} follow-up${result.targets.length === 1 ? '' : 's'} for review`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not build follow-up queue')
+    } finally {
+      setCreatingFollowups(false)
+    }
+  }
+
   const visibleDetail = selectedId && detail?.campaign.id === selectedId ? detail : null
   const visibleTarget = visibleDetail?.targets.find((target) => target.id === targetId)
     ?? visibleDetail?.targets[0]
     ?? null
+  useEffect(() => {
+    animate(detailRef.current, [
+      { opacity: 0, transform: 'translateX(8px)' },
+      { opacity: 1, transform: 'translateX(0)' },
+    ], { duration: 240, easing: 'cubic-bezier(.2,0,0,1)' })
+  }, [visibleDetail?.campaign.id])
   const approved = campaigns.reduce((sum, campaign) => sum + (campaign.counts.approved ?? 0), 0)
   const sent = campaigns.reduce((sum, campaign) => sum + campaign.delivered_count, 0)
   const replies = campaigns.reduce((sum, campaign) => sum + campaign.response_count, 0)
 
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col border-x border-line bg-panel">
-      <header className="shrink-0 border-b border-line px-5 py-5 sm:px-7">
-        <p className="text-[10px] font-semibold uppercase text-ink-3">Local outreach</p>
-        <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold text-ink">Recruiter campaigns</h2>
-            <p className="mt-1 text-[13px] text-ink-3">Rank locally, approve individually, send on your schedule.</p>
-          </div>
-          <div className="flex gap-5 text-right">
-            <Metric label="Campaigns" value={campaigns.length} />
+      <WorkspaceHeader
+        eyebrow={<span className="flex items-center gap-1.5"><ShieldCheck size={13} aria-hidden="true" /> Private control plane</span>}
+        title="Outreach"
+        description="Build deliberate recruiter conversations. Every message stays individually reviewed, recipient-locked, and paced."
+        actions={(
+          <div className="flex gap-5 border-l border-line pl-4 text-right">
+            <Metric label="Batches" value={campaigns.length} />
             <Metric label="Approved" value={approved} />
             <Metric label="Sent" value={sent} />
             <Metric label="Replies" value={replies} />
           </div>
-        </div>
-      </header>
+        )}
+        accent="brand"
+      />
 
-      <form
-        onSubmit={submitCreate}
-        className="grid shrink-0 gap-2 border-b border-line px-4 py-3 md:grid-cols-[minmax(12rem,1fr)_repeat(4,minmax(4.5rem,.45fr))] sm:px-7 xl:grid-cols-[minmax(12rem,1fr)_5rem_repeat(3,5.5rem)_auto]"
-      >
-        <input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          aria-label="Campaign name"
-          className="h-9 min-w-0 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong"
-        />
-        <NumberInput label="Companies" value={count} onChange={setCount} min={1} max={100} />
-        <NumberInput label="India %" value={regionWeight} onChange={setRegionWeight} min={0} max={100} />
-        <NumberInput label="Comp %" value={compensationWeight} onChange={setCompensationWeight} min={0} max={100} />
-        <NumberInput label="Growth %" value={growthWeight} onChange={setGrowthWeight} min={0} max={100} />
-        <button
-          type="submit"
-          disabled={creating || !name.trim() || count < 1}
-          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-white disabled:opacity-50 md:col-span-5 xl:col-span-1"
-        >
-          {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-          Create
-        </button>
-      </form>
+      <div className="shrink-0 border-b border-line bg-inset/35 px-4 py-2.5 sm:px-7">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <Segmented
+            ariaLabel="Outreach type"
+            value={composerMode}
+            onChange={(value) => viewTransition(() => setComposerMode(value as 'cold' | 'followup'))}
+            options={[
+              { value: 'cold', label: 'Cold batches' },
+              { value: 'followup', label: 'Follow-ups' },
+            ]}
+          />
+          <p className="flex items-center gap-1.5 text-[11px] text-ink-3">
+            <Sparkles size={13} className="text-signal" aria-hidden="true" />
+            {composerMode === 'cold' ? 'Rank new companies with auditable evidence.' : 'Collect due application and cold-thread follow-ups.'}
+          </p>
+        </div>
+        {composerMode === 'cold' ? (
+          <form
+            onSubmit={submitCreate}
+            className="grid gap-2 md:grid-cols-[minmax(12rem,1fr)_repeat(4,minmax(4.5rem,.45fr))] xl:grid-cols-[minmax(12rem,1fr)_5rem_repeat(3,5.5rem)_auto]"
+          >
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              aria-label="Campaign name"
+              className="h-9 min-w-0 rounded-md border border-line bg-panel px-3 text-[13px] text-ink outline-none transition-colors focus:border-brand"
+            />
+            <NumberInput label="Companies" value={count} onChange={setCount} min={1} max={100} />
+            <NumberInput label="India %" value={regionWeight} onChange={setRegionWeight} min={0} max={100} />
+            <NumberInput label="Comp %" value={compensationWeight} onChange={setCompensationWeight} min={0} max={100} />
+            <NumberInput label="Growth %" value={growthWeight} onChange={setGrowthWeight} min={0} max={100} />
+            <button
+              type="submit"
+              disabled={creating || !name.trim() || count < 1}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-brand-strong disabled:opacity-50 md:col-span-5 xl:col-span-1"
+            >
+              {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+              Create batch
+            </button>
+          </form>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem_auto] sm:items-end">
+            <div>
+              <p className="text-[12px] font-medium text-ink">Prepare one review queue from every due conversation.</p>
+              <p className="mt-1 text-[11px] text-ink-3">No bulk approval and no send. Original recipients and thread identities remain locked.</p>
+            </div>
+            <NumberInput label="Maximum" value={count} onChange={setCount} min={1} max={100} />
+            <button
+              type="button"
+              disabled={creatingFollowups || count < 1}
+              onClick={() => void buildFollowups()}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-brand bg-panel px-4 text-[12px] font-semibold text-brand transition-transform hover:-translate-y-px disabled:translate-y-0 disabled:opacity-50"
+            >
+              {creatingFollowups ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              Build follow-up queue
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(250px,.48fr)_minmax(0,1.52fr)]">
         <div className={`${visibleDetail ? 'hidden lg:block' : 'block'} min-h-0 overflow-auto border-r border-line`}>
           {loading && campaigns.length === 0 ? (
-            <Loading label="Loading campaigns" />
+            <Loading label="Loading outreach" />
           ) : campaigns.length ? (
-            <ul>
+            <ul ref={listRef}>
               {campaigns.map((campaign) => (
                 <CampaignRow
                   key={campaign.id}
@@ -198,7 +272,7 @@ export function CampaignsView({ token, selectedId, onSelect, onOpenApplications 
             <EmptyCampaigns />
           )}
         </div>
-        <div className={`${visibleDetail ? 'block' : 'hidden lg:block'} min-h-0 overflow-auto`}>
+        <div ref={detailRef} className={`${visibleDetail ? 'block' : 'hidden lg:block'} min-h-0 overflow-auto`}>
           {visibleDetail ? (
             <CampaignDetail
               token={token}
@@ -245,6 +319,11 @@ function CampaignDetail({
       Boolean(item) && typeof item === 'object' && typeof (item as { company?: unknown }).company === 'string'
     ))
     : []
+  const canDiscoverContacts = detail.targets.some((target) => (
+    target.state === 'ranked'
+    || target.state === 'needs_contact'
+    || (target.state === 'failed' && target.error_code === 'contact_discovery_failed')
+  ))
 
   async function discoverPending() {
     setBusy('discover_pending')
@@ -326,7 +405,7 @@ function CampaignDetail({
     <div>
       <header className="border-b border-line px-5 py-5 sm:px-7">
         <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-[12px] text-ink-3 lg:hidden">
-          <ArrowLeft size={14} /> Campaigns
+          <ArrowLeft size={14} /> Outreach
         </button>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -340,7 +419,7 @@ function CampaignDetail({
           </div>
           <div className="flex flex-wrap gap-2">
             <ActionButton label="Check replies" onClick={checkReplies} busy={busy === 'check_replies'} Icon={RefreshCw} />
-            {(detail.counts.ranked ?? 0) > 0 && (
+            {canDiscoverContacts && (
               <ActionButton label="Find recruiters" onClick={discoverPending} busy={busy === 'discover_pending'} Icon={MailSearch} />
             )}
             {campaign.status === 'active' ? (
@@ -371,13 +450,13 @@ function CampaignDetail({
       )}
 
       <div className="overflow-x-auto border-b border-line">
-        <table className="w-full min-w-[760px] border-collapse text-left">
+        <table className={`w-full border-collapse text-left ${campaign.purpose === 'followup' ? 'min-w-[680px]' : 'min-w-[760px]'}`}>
           <thead className="bg-inset text-[9px] font-semibold uppercase text-ink-3">
             <tr>
-              <th className="w-16 px-4 py-2">Rank</th>
+              <th className="w-16 px-4 py-2">{campaign.purpose === 'followup' ? 'Age' : 'Rank'}</th>
               <th className="px-3 py-2">Company</th>
-              <th className="w-40 px-3 py-2">India / comp / growth</th>
-              <th className="w-36 px-3 py-2">Contact</th>
+              <th className="w-40 px-3 py-2">{campaign.purpose === 'followup' ? 'Source' : 'India / comp / growth'}</th>
+              <th className="w-44 px-3 py-2">{campaign.purpose === 'followup' ? 'Recipient' : 'Contact'}</th>
               <th className="w-28 px-3 py-2">State</th>
             </tr>
           </thead>
@@ -386,6 +465,7 @@ function CampaignDetail({
               <TargetRow
                 key={target.id}
                 target={target}
+                followup={campaign.purpose === 'followup'}
                 selected={target.id === selectedTarget?.id}
                 onSelect={() => onTarget(target.id)}
               />
@@ -530,9 +610,6 @@ function TargetEditor({
       await saveDraft()
       await checkedAction(token, { action: 'approve', target_id: target.id })
       if (sendNow) {
-        if (campaign.status !== 'active') {
-          await checkedAction(token, { action: 'status', campaign_id: campaign.id, status: 'active' })
-        }
         const result = await campaignAction(token, { action: 'send_now', target_id: target.id })
         if (!result.ok) throw new Error(messageForCode(result.code))
       }
@@ -596,17 +673,29 @@ function TargetEditor({
           <div>
             <p className="text-[10px] font-semibold uppercase text-ink-3">Individual review</p>
             <h4 className="mt-1 text-[16px] font-semibold text-ink">{target.company}</h4>
-            <p className="mt-1 text-[11px] text-ink-3">Score {target.rank_score.toFixed(1)} · {(target.evidence_coverage * 100).toFixed(0)}% evidence coverage</p>
+            <p className="mt-1 text-[11px] text-ink-3">
+              {campaign.purpose === 'followup'
+                ? `${Math.round(target.rank_score)} days since last action`
+                : `Score ${target.rank_score.toFixed(1)} · ${(target.evidence_coverage * 100).toFixed(0)}% evidence coverage`}
+            </p>
           </div>
-          <StateBadge state={target.state} />
+          <StateBadge state={targetDisplayState(target)} />
         </div>
       </header>
 
-      <div className="grid border-b border-line md:grid-cols-3">
-        <Evidence label="India relevance" score={target.region_score} lines={target.evidence.region} />
-        <Evidence label="Compensation" score={target.compensation_score} lines={target.evidence.compensation} />
-        <Evidence label="Growth" score={target.growth_score} lines={target.evidence.growth} />
-      </div>
+      {campaign.purpose === 'followup' ? (
+        <div className="grid border-b border-line sm:grid-cols-3">
+          <FollowupFact label="Source" value={target.source_target_id ? 'Prior cold email' : 'Application'} />
+          <FollowupFact label="Due since" value={target.evidence.anchor ? formatDate(target.evidence.anchor) : 'Unknown'} />
+          <FollowupFact label="Recipient" value={target.recipient_locked ? 'Locked to original' : 'Verified contact'} />
+        </div>
+      ) : (
+        <div className="grid border-b border-line md:grid-cols-3">
+          <Evidence label="India relevance" score={target.region_score} lines={target.evidence.region} />
+          <Evidence label="Compensation" score={target.compensation_score} lines={target.evidence.compensation} />
+          <Evidence label="Growth" score={target.growth_score} lines={target.evidence.growth} />
+        </div>
+      )}
 
       <div className="space-y-4 px-5 py-5 sm:px-7">
         <div className="flex flex-wrap items-end gap-2">
@@ -615,7 +704,7 @@ function TargetEditor({
             <select
               value={email}
               onChange={(event) => { setEmail(event.target.value); setDirty(true) }}
-              disabled={!editable || target.contacts.length === 0}
+              disabled={!editable || target.contacts.length === 0 || target.recipient_locked}
               className="mt-1 h-9 w-full rounded-md border border-line bg-inset px-3 text-[13px] font-normal normal-case text-ink outline-none focus:border-line-strong"
             >
               {!email && <option value="">No verified recruiter selected</option>}
@@ -626,13 +715,16 @@ function TargetEditor({
               ))}
             </select>
           </label>
-          {editable && (
+          {editable && !target.recipient_locked && (
             <ActionButton label="Find recruiter" onClick={discover} busy={busy === 'discover'} Icon={MailSearch} />
           )}
         </div>
 
         {email && (
           <ContactNote contact={target.contacts.find((contact) => contact.email === email)} />
+        )}
+        {target.recipient_locked && (
+          <p className="text-[11px] font-medium text-strong">Recipient locked to the original outreach address.</p>
         )}
 
         {target.resume_path && (
@@ -733,33 +825,55 @@ function messageForCode(code?: string): string {
   return messages[code || ''] || code?.replaceAll('_', ' ') || 'Campaign action failed'
 }
 
-function TargetRow({ target, selected, onSelect }: { target: CampaignTarget; selected: boolean; onSelect: () => void }) {
+function TargetRow({ target, followup, selected, onSelect }: { target: CampaignTarget; followup: boolean; selected: boolean; onSelect: () => void }) {
+  const recipientStatus = target.recipient_locked
+    ? 'Original locked'
+    : target.selected_email
+      ? 'Verified contact'
+      : 'Needs contact'
   return (
     <tr className={`border-t border-line ${selected ? 'bg-brand-weak' : 'hover:bg-inset/50'}`}>
-      <td className="px-4 py-3 font-mono text-[14px] font-semibold text-ink">{target.rank_score.toFixed(1)}</td>
+      <td className="px-4 py-3 font-mono text-[14px] font-semibold text-ink">
+        {followup ? `${Math.round(target.rank_score)}d` : target.rank_score.toFixed(1)}
+      </td>
       <td className="px-3 py-3">
         <button type="button" onClick={onSelect} className="group flex w-full items-center justify-between gap-2 text-left">
           <span className="min-w-0">
             <strong className="block truncate text-[13px] font-semibold text-ink">{target.company}</strong>
-            <span className="block truncate text-[10px] text-ink-3">{(target.evidence_coverage * 100).toFixed(0)}% evidence</span>
+            <span className="block truncate text-[10px] text-ink-3">
+              {followup && target.evidence.anchor
+                ? `Due since ${formatDate(target.evidence.anchor)}`
+                : `${(target.evidence_coverage * 100).toFixed(0)}% evidence`}
+            </span>
           </span>
           <ArrowRight size={13} className="shrink-0 text-ink-3" />
         </button>
       </td>
       <td className="px-3 py-3 font-mono text-[11px] text-ink-2">
-        {(target.region_score * 100).toFixed(0)} / {(target.compensation_score * 100).toFixed(0)} / {(target.growth_score * 100).toFixed(0)}
+        {followup
+          ? (target.source_target_id ? 'Prior cold email' : 'Application')
+          : `${(target.region_score * 100).toFixed(0)} / ${(target.compensation_score * 100).toFixed(0)} / ${(target.growth_score * 100).toFixed(0)}`}
       </td>
-      <td className="max-w-36 truncate px-3 py-3 text-[11px] text-ink-3">{target.selected_email || `${target.contacts.length} candidate${target.contacts.length === 1 ? '' : 's'}`}</td>
-      <td className="px-3 py-3"><StateBadge state={target.state} /></td>
+      <td className="max-w-44 px-3 py-3 text-[11px] text-ink-3">
+        <span className="block truncate">{target.selected_email || `${target.contacts.length} candidate${target.contacts.length === 1 ? '' : 's'}`}</span>
+        {followup && <span className="block text-[9px] font-semibold uppercase text-ink-3">{recipientStatus}</span>}
+      </td>
+      <td className="px-3 py-3"><StateBadge state={targetDisplayState(target)} /></td>
     </tr>
   )
 }
 
 function CampaignRow({ campaign, selected, onSelect }: { campaign: CampaignSummary; selected: boolean; onSelect: () => void }) {
   return (
-    <li className="border-b border-line">
-      <button type="button" onClick={onSelect} aria-current={selected ? 'true' : undefined} className={`group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-3 text-left hover:bg-inset/60 ${selected ? 'bg-brand-weak shadow-[inset_3px_0_var(--brand-coral)]' : ''}`}>
+    <li data-outreach-row className="border-b border-line">
+      <button type="button" onClick={onSelect} aria-current={selected ? 'true' : undefined} className={`group relative grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-3 text-left outline-none transition-colors hover:bg-inset/60 focus-visible:bg-inset ${selected ? 'bg-brand-weak shadow-[inset_3px_0_var(--brand-coral)]' : ''}`}>
         <span className="min-w-0">
+          <span className="mb-1 flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: campaign.purpose === 'followup' ? 'var(--signal)' : 'var(--brand-coral)' }} aria-hidden="true" />
+            <span className="text-[9px] font-semibold uppercase" style={{ color: campaign.purpose === 'followup' ? 'var(--signal)' : 'var(--brand-coral)' }}>
+              {campaign.purpose === 'followup' ? 'Follow-up' : 'Cold'}
+            </span>
+          </span>
           <strong className="block truncate text-[13px] font-semibold text-ink">{campaign.name}</strong>
           <span className="mt-0.5 block text-[11px] text-ink-3">{campaign.target_count} targets · {campaign.counts.approved ?? 0} approved · {campaign.delivered_count} sent · {campaign.response_count} replies</span>
         </span>
@@ -786,11 +900,15 @@ function ContactNote({ contact }: { contact?: CampaignContact }) {
   return <p className="text-[11px] text-ink-3">{contact.note || contact.source} · {contact.confidence} confidence</p>
 }
 
+function targetDisplayState(target: CampaignTarget): string {
+  return target.error_code === 'delivery_unknown' ? 'delivery_unknown' : target.state
+}
+
 function StateBadge({ state }: { state: string }) {
   const positive = ['active', 'approved', 'sent', 'replied'].includes(state)
   const warning = ['failed', 'opted_out', 'cancelled'].includes(state)
   return (
-    <span className={`inline-flex w-fit rounded-full px-2 py-1 text-[9px] font-semibold uppercase ${positive ? 'bg-[color-mix(in_srgb,var(--strong)_14%,transparent)] text-strong' : warning ? 'bg-[color-mix(in_srgb,var(--hot)_10%,transparent)] text-hot' : 'bg-inset text-ink-3'}`}>
+    <span className={`inline-flex w-fit whitespace-nowrap rounded-full px-2 py-1 text-[9px] font-semibold uppercase ${positive ? 'bg-[color-mix(in_srgb,var(--strong)_14%,transparent)] text-strong' : warning ? 'bg-[color-mix(in_srgb,var(--hot)_10%,transparent)] text-hot' : 'bg-inset text-ink-3'}`}>
       {state.replaceAll('_', ' ')}
     </span>
   )
@@ -822,11 +940,11 @@ function Loading({ label }: { label: string }) {
 }
 
 function EmptyCampaigns() {
-  return <div className="flex h-full flex-col items-center justify-center px-6 text-center"><ShieldCheck size={28} className="text-ink-3" /><p className="mt-3 text-[14px] font-medium text-ink">No campaigns yet</p></div>
+  return <div className="flex h-full flex-col items-center justify-center px-6 text-center"><ShieldCheck size={28} className="text-ink-3" /><p className="mt-3 text-[14px] font-medium text-ink">No outreach batches yet</p></div>
 }
 
 function NoCampaign() {
-  return <div className="flex h-full flex-col items-center justify-center px-6 text-center"><Send size={28} className="text-ink-3" /><p className="mt-3 text-[14px] font-medium text-ink">Select a campaign</p></div>
+  return <div className="flex h-full flex-col items-center justify-center px-6 text-center"><Send size={28} className="text-ink-3" /><p className="mt-3 text-[14px] font-medium text-ink">Select an outreach batch</p></div>
 }
 
 function formatDate(value: string): string {
@@ -839,7 +957,7 @@ export function CampaignsUnavailable() {
     <section className="mx-auto flex min-h-full max-w-[900px] items-center justify-center px-6 py-16 text-center">
       <div>
         <ShieldCheck size={30} className="mx-auto text-ink-3" />
-        <h2 className="mt-4 text-lg font-semibold text-ink">Campaigns stay on this computer</h2>
+        <h2 className="mt-4 text-lg font-semibold text-ink">Outreach stays in your private workspace</h2>
         <p className="mt-2 text-[13px] text-ink-3">Open Jobscope through <code className="font-mono text-ink-2">jobscope serve</code> to review approvals and scheduled email.</p>
       </div>
     </section>
@@ -848,4 +966,13 @@ export function CampaignsUnavailable() {
 
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop() || path
+}
+
+function FollowupFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border-b border-line px-5 py-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0 sm:px-7">
+      <p className="text-[9px] font-semibold uppercase text-ink-3">{label}</p>
+      <p className="mt-1 text-[12px] font-medium text-ink">{value}</p>
+    </div>
+  )
 }

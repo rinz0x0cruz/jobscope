@@ -1,6 +1,8 @@
-"""Tests for the résumé-derived search profile (`analyze.profile`). Deterministic."""
+"""Tests for editable search intent and résumé-derived profile facts."""
 import os
 import tempfile
+
+import pytest
 
 from jobscope.analyze import profile
 from jobscope.core.config import load_config
@@ -67,9 +69,15 @@ def test_build_profile_shape_and_locations():
     prof = profile.build_profile(_resume(), cfg, "research")
     assert prof["resume"] == "research"
     assert prof["seniority"] == "junior" and prof["years_experience"] == 1.7
-    assert prof["search_terms"] and prof["locations"][0] == "Remote"
-    assert "Bengaluru, India" in prof["locations"]
+    assert prof["search_terms"] and prof["locations"] == ["India"]
+    assert "Bengaluru, India" not in prof["locations"]
     assert prof["remote"] is True and prof["top_skills"]
+
+
+def test_job_market_normalizes_legacy_locations_without_substring_collisions():
+    assert profile._job_market("Punjab, India") == ("India", "India")
+    assert profile._job_market("London, UK") == ("United Kingdom", "UK")
+    assert profile._job_market("Indianapolis, United States") == ("United States", "USA")
 
 
 def test_write_load_roundtrip():
@@ -93,15 +101,67 @@ def test_update_profile_changes_search_intent_and_preserves_resume_facts():
         updated = profile.update_profile(
             cfg, "research",
             search_terms=["Threat Researcher", "threat researcher", "Detection Engineer"],
-            locations=["India", "Remote"],
+            locations=[" India ", "germany", "GERMANY"],
             remote=False,
         )
 
         assert updated["search_terms"] == ["Threat Researcher", "Detection Engineer"]
-        assert updated["locations"] == ["India", "Remote"] and updated["remote"] is False
+        assert updated["locations"] == ["India", "Germany"] and updated["remote"] is False
         assert updated["seniority"] == original["seniority"]
         assert updated["top_skills"] == original["top_skills"]
         assert profile.load(cfg) == updated
+
+
+def test_update_profile_allows_worldwide_remote_without_job_markets():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        profile.write_profile(
+            profile._profile_file(cfg, "research"),
+            profile.build_profile(_resume(), cfg, "research"),
+        )
+
+        updated = profile.update_profile(
+            cfg, "research", search_terms=["Security Engineer"],
+            locations=[], remote=True,
+        )
+        search = profile.apply_to_search(cfg["search"], updated)
+
+        assert updated["locations"] == []
+        assert search["profiles"][0]["location"] == "Remote"
+
+
+def test_update_profile_accepts_every_supported_job_market():
+    markets = [
+        ("India", "India"),
+        ("Singapore", "Singapore"),
+        ("Japan", "Japan"),
+        ("Australia", "Australia"),
+        ("United Kingdom", "UK"),
+        ("Germany", "Germany"),
+        ("France", "France"),
+        ("Netherlands", "Netherlands"),
+        ("Ireland", "Ireland"),
+        ("United States", "USA"),
+        ("Canada", "Canada"),
+        ("United Arab Emirates", "United Arab Emirates"),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        profile.write_profile(
+            profile._profile_file(cfg, "research"),
+            profile.build_profile(_resume(), cfg, "research"),
+        )
+
+        updated = profile.update_profile(
+            cfg, "research", search_terms=["Security Engineer"],
+            locations=[name for name, _ in markets], remote=False,
+        )
+        search = profile.apply_to_search(cfg["search"], updated)
+
+        assert [
+            (item["name"], item["country_indeed"])
+            for item in search["profiles"]
+        ] == markets
 
 
 def test_update_profile_rejects_invalid_or_empty_intent():
@@ -121,6 +181,22 @@ def test_update_profile_rejects_invalid_or_empty_intent():
             raise AssertionError("empty profile search terms were accepted")
 
 
+@pytest.mark.parametrize("location", ["Mars", "Remote"])
+def test_update_profile_rejects_unsupported_job_market(location):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        profile.write_profile(
+            profile._profile_file(cfg, "research"),
+            profile.build_profile(_resume(), cfg, "research"),
+        )
+
+        with pytest.raises(ValueError, match="unsupported job market"):
+            profile.update_profile(
+                cfg, "research", search_terms=["Security Engineer"],
+                locations=[location], remote=False,
+            )
+
+
 def test_reset_profile_rebuilds_search_intent_from_stored_resume():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
@@ -133,7 +209,7 @@ def test_reset_profile_rebuilds_search_intent_from_stored_resume():
             )
             reset = profile.reset_profile(cfg, store, "research")
         assert "Security Researcher" in reset["search_terms"]
-        assert reset["locations"][0] == "Remote" and reset["remote"] is True
+        assert reset["locations"] == ["India"] and reset["remote"] is True
 
 
 def test_load_missing_returns_none():
@@ -142,17 +218,39 @@ def test_load_missing_returns_none():
 
 
 def test_apply_to_search_overlays_and_respects_empty():
-    base = {"terms": ["software engineer"], "location": "Remote", "is_remote": True, "profiles": []}
+    base = {
+        "terms": ["software engineer"], "location": "Remote", "is_remote": True,
+        "profiles": [], "home_country": "India", "country_indeed": "India",
+    }
     prof = {"search_terms": ["Security Engineer", "AppSec"],
-            "locations": ["Remote", "Bengaluru"], "remote": False}
+            "locations": ["Germany", "Canada"], "remote": True}
     s = profile.apply_to_search(base, prof)
     assert s["terms"] == ["Security Engineer", "AppSec"]
-    assert s["profiles"] == [{"name": "Remote", "location": "Remote"},
-                             {"name": "Bengaluru", "location": "Bengaluru"}]
-    assert s["is_remote"] is False
+    assert s["profiles"] == [
+        {"name": "Remote", "location": "Remote", "home_country": "India",
+         "country_indeed": "India"},
+        {"name": "Germany", "location": "Germany", "home_country": "Germany",
+         "country_indeed": "Germany"},
+        {"name": "Canada", "location": "Canada", "home_country": "Canada",
+         "country_indeed": "Canada"},
+    ]
+    assert s["is_remote"] is True
     # empty profile fields never clobber the config values
     s2 = profile.apply_to_search(base, {"search_terms": [], "locations": []})
     assert s2["terms"] == ["software engineer"]
+
+
+def test_apply_to_search_normalizes_legacy_resume_location_to_job_market():
+    base = {
+        "terms": ["security"], "location": "Remote", "is_remote": True,
+        "profiles": [], "home_country": "India", "country_indeed": "India",
+    }
+
+    search = profile.apply_to_search(base, {
+        "locations": ["Remote", "Punjab, India"], "remote": True,
+    })
+
+    assert [item["name"] for item in search["profiles"]] == ["Remote", "India"]
 
 
 def test_ensure_seeded_only_once():

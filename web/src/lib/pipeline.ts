@@ -100,6 +100,7 @@ export interface Timing {
   medianDaysToReply: number | null
   medianDaysToInterview: number | null
   replied: number
+  interviewed: number
 }
 
 /** Median days from applying to the first real reply and to the first interview
@@ -119,5 +120,6 @@ export function timing(apps: Application[]): Timing {
     medianDaysToReply: median(replyGaps),
     medianDaysToInterview: median(ivGaps),
     replied: replyGaps.length,
+    interviewed: ivGaps.length,
   }
 }

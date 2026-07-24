@@ -26,7 +26,7 @@ jobs:
       - name: Set up Node for crypto compatibility tests
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: "20"
+          node-version: "24"
       - name: Install locked Python dependencies
         run: python -m pip install --requirement requirements.lock
       - name: Lint (ruff)
@@ -46,7 +46,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Install
@@ -66,6 +66,92 @@ jobs:
           JOBSCOPE_ENCRYPTED_JSON=none \
           npm run build
 
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Build hosted image once
+        run: docker build --tag "jobscope-hosted:${GITHUB_SHA}" .
+      - name: Smoke hosted image and persistent volume
+        env:
+          IMAGE: jobscope-hosted:${{ github.sha }}
+          PUBLIC_ORIGIN: https://jobs.example.test
+        run: |
+          set -euo pipefail
+          data="$RUNNER_TEMP/jobscope-data"
+          mkdir -p "$data"
+          cat > "$data/config.yaml" <<'YAML'
+          output:
+            db_path: /data/jobscope.db
+          serve:
+            refresh_enabled: false
+            build_on_start: false
+          ai:
+            enabled: false
+          email:
+            enabled: false
+          YAML
+
+          cleanup() {
+            docker rm --force jobscope-hosted >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          start() {
+            docker run --detach --name jobscope-hosted \
+              --publish 127.0.0.1:8799:8799 \
+              --env "JOBSCOPE_PUBLIC_ORIGIN=$PUBLIC_ORIGIN" \
+              --volume "$data:/data" \
+              "$IMAGE" >/dev/null
+            for attempt in {1..30}; do
+              if curl --fail --silent http://127.0.0.1:8799/healthz >/dev/null; then
+                return 0
+              fi
+              sleep 1
+            done
+            docker logs jobscope-hosted
+            return 1
+          }
+
+          start
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:8799/api/token)" = "403"
+          curl --fail --silent \
+            --header "Cf-Access-Jwt-Assertion: validated-ci-access-jwt" \
+            http://127.0.0.1:8799/api/token \
+            | python -c 'import json,sys; value=json.load(sys.stdin); assert len(value["token"]) == 32 and value["enabled"] is False'
+
+          cleanup
+          start
+          test -s "$data/jobscope.db"
+          python - "$data/jobscope.db" <<'PY'
+          import sqlite3
+          import sys
+
+          with sqlite3.connect(sys.argv[1]) as connection:
+              assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+              assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+          PY
+      - name: Publish the tested image by commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tested="jobscope-hosted:${GITHUB_SHA}"
+          echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker tag "$tested" "$repository:$GITHUB_SHA"
+          output="$(docker push "$repository:$GITHUB_SHA" 2>&1)"
+          printf '%s\n' "$output"
+          digest="$(printf '%s\n' "$output" | awk '/digest:/ { print $2 }' | tail -n 1)"
+          test -n "$digest"
+          printf 'Tested hosted image: `%s@%s`\n' "$repository" "$digest" >> "$GITHUB_STEP_SUMMARY"
+
   publish-artifact:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -78,7 +164,7 @@ jobs:
           cache-dependency-path: requirements.lock
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Install locked dependencies

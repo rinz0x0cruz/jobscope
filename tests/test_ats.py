@@ -215,6 +215,49 @@ def test_phenom_fetches_bounded_category_and_normalizes_jobs(monkeypatch):
     assert sase.url.endswith("/job/P-100131/SASE-ENGINEER")
 
 
+def test_phenom_first_page_failure_is_error_not_partial(monkeypatch):
+    calls = []
+
+    def fetch(*_args, **_kwargs):
+        calls.append(1)
+        return None, "HTTP 503", 3, 503
+
+    monkeypatch.setattr(ats, "_load_json", fetch)
+
+    result = ats.fetch_company_result("NTT DATA", "phenom", "NTT1GLOBAL")
+
+    assert result.status == ats.BoardStatus.ERROR
+    assert result.jobs == [] and not result.successful
+    assert result.attempts == 3 and result.status_code == 503
+    assert len(calls) == 1
+
+
+def test_phenom_later_page_failure_preserves_partial_jobs(monkeypatch):
+    calls = []
+    first_page = {
+        "refineSearch": {
+            "totalHits": 60,
+            "data": {"jobs": PHENOM["refineSearch"]["data"]["jobs"]},
+        },
+    }
+
+    def fetch(_url, **kwargs):
+        start = json.loads(kwargs["params"]["payload"])["from"]
+        calls.append(start)
+        if start == 0:
+            return first_page, "", 1, 200
+        return None, "HTTP 503", 3, 503
+
+    monkeypatch.setattr(ats, "_load_json", fetch)
+
+    result = ats.fetch_company_result("NTT DATA", "phenom", "NTT1GLOBAL")
+
+    assert result.status == ats.BoardStatus.PARTIAL
+    assert result.successful and len(result.jobs) == 2
+    assert result.attempts == 4 and result.status_code == 503
+    assert calls == [0, 50]
+
+
 def test_phenom_hydrates_full_description_after_filtering(monkeypatch):
     detail = {
         "jobDetail": {"data": {"job": {
@@ -345,8 +388,41 @@ def test_matches_unit():
     assert ats._matches(remote_us, locs, roles, want_remote=True) is False
     assert ats._matches(uk, locs, roles, want_remote=True) is False
     assert ats._matches(sales, locs, roles, want_remote=True) is False
+    assert ats._matches(remote_global, locs, roles, want_remote=False) is False
     # geo_on=False falls back to the legacy location match (want_remote honored)
     assert ats._matches(remote_us, locs, roles, want_remote=True, geo_on=False) is True
+    assert ats._matches(remote_us, locs, roles, want_remote=False, geo_on=False) is False
+
+
+def test_profile_filter_honors_preferred_market_and_work_mode():
+    from jobscope.analyze import profile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp, home_country="India", scope_to_home=True)
+        path = profile._profile_file(cfg, "research")
+        base = {
+            "resume": "research", "search_terms": ["Security Engineer"],
+            "locations": ["Germany"], "remote": False,
+        }
+        profile.write_profile(path, base)
+        profile._write_active(cfg, "research")
+        jobs = [
+            Job(id="de", title="Security Engineer", company="A", location="Berlin, Germany"),
+            Job(id="in", title="Security Engineer", company="B", location="Pune, India"),
+            Job(
+                id="remote", title="Security Engineer", company="C", location="Remote",
+                is_remote=True, remote_scope="global",
+            ),
+        ]
+        with Store(cfg["output"]["db_path"]) as store:
+            kept, funnel = ats.filter_profile_jobs_with_funnel(cfg, store, jobs)
+            assert [job.id for job in kept] == ["de"]
+            assert funnel["geo_eligible"] == 1
+
+            profile.write_profile(path, {**base, "locations": [], "remote": True})
+            kept, funnel = ats.filter_profile_jobs_with_funnel(cfg, store, jobs)
+            assert [job.id for job in kept] == ["remote"]
+            assert funnel["geo_eligible"] == 1
 
 
 _BOARD2 = {"jobs": [

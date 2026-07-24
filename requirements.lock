@@ -33,7 +33,7 @@ iniconfig==2.3.0
     # via pytest
 lxml==6.1.1
     # via yfinance
-markdown==3.5
+markdown==3.8.1
     # via -r requirements.txt
 markdownify==0.13.1
     # via python-jobspy
@@ -64,9 +64,11 @@ pydantic-core==2.46.4
     # via pydantic
 pyee==11.0.1
     # via playwright
-pypdf==4.0.0
+pygments==2.20.0
+    # via pytest
+pypdf==6.14.2
     # via -r requirements.txt
-pytest==8.3.4
+pytest==9.0.3
     # via -r requirements.txt
 python-dateutil==2.9.0.post0
     # via pandas
@@ -82,7 +84,7 @@ pyyaml==6.0.2
     #   detect-secrets
 regex==2024.11.6
     # via python-jobspy
-requests==2.32.3
+requests==2.33.0
     # via
     #   -r requirements.txt
     #   detect-secrets

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { AppShell } from '@/app/AppShell'
 
-const NAV_LABELS = ['Review', 'Companies', 'Pipeline', 'Applications', 'Settings']
+const NAV_LABELS = ['Review', 'Companies', 'Applications', 'Analytics', 'Settings']
 
 describe('AppShell', () => {
   it('omits snapshot locking when no lock handler is available', () => {
@@ -14,7 +14,7 @@ describe('AppShell', () => {
     expect(screen.queryByRole('button', { name: 'Lock' })).not.toBeInTheDocument()
   })
 
-  it('renders the five primary sections and marks the active one', () => {
+  it('renders the five public sections and marks the active one', () => {
     render(
       <AppShell active="applications" onNavigate={() => {}} search="" onSearch={() => {}}>
         <div>Routed content</div>
@@ -25,6 +25,7 @@ describe('AppShell', () => {
       expect(nav.getByRole('button', { name: label })).toBeInTheDocument()
     }
     expect(nav.getByRole('button', { name: 'Applications' })).toHaveAttribute('aria-current', 'page')
+    expect(nav.queryByRole('button', { name: 'Pipeline' })).not.toBeInTheDocument()
     expect(nav.getByRole('button', { name: 'Review' })).not.toHaveAttribute('aria-current')
     expect(nav.queryByRole('button', { name: 'Activity' })).not.toBeInTheDocument()
   })
@@ -41,13 +42,27 @@ describe('AppShell', () => {
     expect(onNavigate).toHaveBeenCalledWith('review')
   })
 
-  it('renders the page title and routed children', () => {
+  it('presents private campaigns as the Outreach workspace', () => {
+    const onNavigate = vi.fn()
+    render(
+      <AppShell active="campaigns" onNavigate={onNavigate} search="" onSearch={() => {}} campaignsAvailable>
+        <div>Outreach content</div>
+      </AppShell>,
+    )
+    const nav = within(screen.getByRole('navigation', { name: 'Primary' }))
+    expect(nav.queryByRole('button', { name: 'Campaigns' })).not.toBeInTheDocument()
+    fireEvent.click(nav.getByRole('button', { name: 'Outreach' }))
+    expect(onNavigate).toHaveBeenCalledWith('campaigns')
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+  })
+
+  it('leaves page-title ownership to routed children', () => {
     render(
       <AppShell active="review" onNavigate={() => {}} search="" onSearch={() => {}}>
         <div>Routed content</div>
       </AppShell>,
     )
-    expect(screen.getByRole('heading', { level: 1, name: 'Review' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
     expect(screen.getByText('Routed content')).toBeInTheDocument()
   })
 
@@ -84,5 +99,16 @@ describe('AppShell', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Scan Gmail' }))
     expect(onRefresh).toHaveBeenCalledOnce()
+  })
+
+  it('keeps theme switching available outside the desktop sidebar', () => {
+    const onToggleTheme = vi.fn()
+    render(
+      <AppShell active="review" onNavigate={() => {}} search="" onSearch={() => {}} onToggleTheme={onToggleTheme}>
+        <div>Routed content</div>
+      </AppShell>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle theme' }))
+    expect(onToggleTheme).toHaveBeenCalledOnce()
   })
 })

@@ -4,11 +4,11 @@ import tempfile
 
 import pytest
 
-from jobscope.apply import monitoring, recovery
+from jobscope.apply import monitoring
 from jobscope.core.config import load_config
 from jobscope.core.model import Application, Job, Resume
 from jobscope.core.store import Store
-from jobscope.ingest import ats, reconcile
+from jobscope.ingest import ats
 
 
 def _setup():
@@ -81,6 +81,24 @@ def test_monitor_upsert_never_probes_or_fetches(monkeypatch):
     store.close()
 
 
+def test_monitor_upsert_without_status_preserves_paused_monitor(monkeypatch):
+    cfg, store = _setup()
+    paused = store.upsert_company_monitor(
+        "Acme", status="paused", added_from="user",
+    )
+    monkeypatch.setattr(ats, "resolve_board_result", lambda *_a, **_k: ats.BoardResolution(
+        "Acme", ats.ResolutionStatus.UNRESOLVED,
+    ))
+
+    result = monitoring.apply_actions(cfg, store, [{
+        "type": "monitor.upsert", "company": "Acme",
+    }])
+
+    assert result["companies"][0]["id"] == paused["id"]
+    assert store.get_company_monitor(paused["id"])["status"] == "paused"
+    store.close()
+
+
 def test_action_validation_rejects_unknown_fields_before_mutation(monkeypatch):
     cfg, store = _setup()
     monkeypatch.setattr(ats, "resolve_board_result", lambda *_a, **_k: ats.BoardResolution(
@@ -110,6 +128,33 @@ def test_scan_actions_run_after_monitor_status_commit(monkeypatch):
     assert result["scans"][0]["ok"]
     assert result["reviews"][0]["state"] == "pending"
     assert result["rows"][0]["title"] == "Security Engineer"
+    store.close()
+
+
+def test_scan_exception_returns_committed_canonical_state(monkeypatch):
+    cfg, store = _setup()
+    company = store.upsert_company_monitor(
+        "Acme", provider="greenhouse", slug="acme", added_from="user",
+    )
+    monkeypatch.setattr(
+        monitoring.monitor,
+        "scan_monitor",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("temporary scan crash")),
+    )
+
+    result = monitoring.apply_actions(cfg, store, [
+        {"type": "monitor.status", "monitor_id": company["id"], "status": "paused"},
+        {"type": "monitor.scan", "monitor_id": company["id"]},
+    ])
+
+    assert result["ok"] is True
+    assert result["scans"] == [{
+        "ok": False, "monitor_id": company["id"], "company": "Acme",
+        "error": "temporary scan crash",
+    }]
+    assert next(item for item in result["companies"] if item["id"] == company["id"])[
+        "status"
+    ] == "paused"
     store.close()
 
 
@@ -225,32 +270,11 @@ def test_monitor_upsert_links_discovery_job_and_preserves_review_state(monkeypat
     store.close()
 
 
-def test_application_restore_action_owns_audit_run_and_is_idempotent():
+def test_application_restore_action_is_not_exposed_by_monitoring_api():
     cfg, store = _setup()
-    job_id = "mail:action-recover"
-    store.set_application(Application(
-        job_id=job_id, status="applied", company="Acme", source="inbox",
-    ))
-    reconcile.recompute(store)
-
-    result = monitoring.apply_actions(cfg, store, [
-        {"type": "application.restore", "job_id": job_id},
-    ])
-
-    assert result["ok"] and result["applied"] == 1
-    assert result["results"][0]["restored"] is True
-    assert result["applications"][0]["job_id"] == job_id
-    assert result["activity_audit"]["recent_runs"][0]["action"] == "restore"
-    assert result["activity_audit"]["recoverable_applications"] == []
-    assert store.get_application(job_id)["reconciliation_exempt"] == 1
-
-    repeated = monitoring.apply_actions(cfg, store, [
-        {"type": "application.restore", "job_id": job_id},
-    ])
-    assert repeated["results"][0]["restored"] is False
-    with pytest.raises(ValueError, match="unknown fields"):
+    with pytest.raises(ValueError, match="unsupported monitoring action"):
         monitoring.apply_actions(cfg, store, [{
-            "type": "application.restore", "job_id": job_id, "run_id": "client-run",
+            "type": "application.restore", "job_id": "mail:recover",
         }])
     store.close()
 
@@ -292,45 +316,30 @@ def test_application_note_action_is_validated_idempotent_and_preserves_status():
     store.close()
 
 
-def test_restore_failure_rolls_back_the_entire_action_batch(monkeypatch):
+def test_deprecated_restore_rejects_the_entire_action_batch():
     cfg, store = _setup()
     review_job = Job(
         source="indeed", title="Engineer", company="Beta", url="https://x/review",
     ).ensure_id()
     store.upsert_job(review_job)
     store.set_job_review(review_job.id, "pending", origins=["discovery"])
-    recover_job = "mail:batch-recover"
-    store.set_application(Application(
-        job_id=recover_job, status="applied", company="Acme", source="inbox",
-    ))
-    reconcile.recompute(store)
     note_job = "mail:batch-note"
     store.set_application(Application(
         job_id=note_job, status="rejected", company="IBM", source="inbox",
     ))
 
-    def fail_restore(*_args, **_kwargs):
-        raise RuntimeError("injected restore failure")
-
-    monkeypatch.setattr(recovery, "_restore_application_in_run", fail_restore)
-
-    with pytest.raises(RuntimeError, match="injected restore failure"):
+    with pytest.raises(ValueError, match="unsupported monitoring action"):
         monitoring.apply_actions(cfg, store, [
             {"type": "review.set", "job_id": review_job.id, "state": "saved"},
             {"type": "application.note", "job_id": note_job,
              "when": "2026-07-17", "text": "must roll back"},
-            {"type": "application.restore", "job_id": recover_job},
+            {"type": "application.restore", "job_id": "mail:recover"},
         ])
 
     assert store.get_job_review(review_job.id)["state"] == "pending"
     assert "must roll back" not in (
         store.get_application(note_job)["notes"] or ""
     )
-    assert store.get_application(recover_job) is None
-    assert store.get_application(recover_job, include_tombstoned=True)["tombstoned_at"]
-    latest = store.reconciliation_runs()[0]
-    assert latest["action"] == "restore" and latest["status"] == "failed"
-    assert store.reconciliation_decisions(latest["id"]) == []
     store.close()
 
 

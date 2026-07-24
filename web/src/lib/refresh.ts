@@ -1,6 +1,11 @@
 import { toast } from 'sonner'
 import { acknowledgeMonitoringActions, queuedMonitoringActions } from './companyActions'
-import { localDashboard, localServeToken, resetLocalServeToken } from './outreach'
+import {
+  controlPlaneFetch,
+  localDashboard,
+  localServeToken,
+  resetLocalServeToken,
+} from './outreach'
 import type { DashboardData } from './schema'
 
 // Local serve refreshes SQLite and reloads DashboardData in memory. Static Pages
@@ -152,20 +157,48 @@ async function updateAfterLocalRefresh(
   const deadline = Date.now() + 15 * 60 * 1000
   while (Date.now() < deadline) {
     await sleep(1000)
-    const response = await fetch(`${location.origin}/api/status`, {
-      headers: { 'X-Refresh-Token': token },
+    const response = await controlPlaneFetch('api/status', token, {
       cache: 'no-store',
     })
     if (!response.ok) throw new Error(`Refresh status HTTP ${response.status}`)
-    const status = await response.json() as { state?: string; message?: string }
+    const status = await response.json() as { state?: string; message?: string; stages?: unknown }
     if (status.state === 'done' || status.state === 'skipped') {
       onData(await localDashboard(token, true))
-      toast.success(status.state === 'skipped' ? 'Local data already current' : 'Local workspace refreshed')
+      if (status.state === 'skipped') {
+        toast.success('Local data already current')
+      } else {
+        const slowestStage = formatSlowestStage(status.stages)
+        if (slowestStage) {
+          toast.success('Local workspace refreshed', {
+            description: `Slowest stage: ${slowestStage}`,
+          })
+        } else {
+          toast.success('Local workspace refreshed')
+        }
+      }
       return
     }
     if (status.state === 'error') throw new Error(status.message || 'Local refresh failed')
   }
   throw new Error('Local refresh timed out')
+}
+
+function formatSlowestStage(value: unknown): string | null {
+  if (!Array.isArray(value)) return null
+  const stages = value.filter((stage): stage is { name: string; duration_ms: number } => (
+    typeof stage === 'object' && stage !== null
+    && typeof stage.name === 'string'
+    && typeof stage.duration_ms === 'number'
+    && Number.isFinite(stage.duration_ms)
+  ))
+  if (stages.length === 0) return null
+  const slowest = stages.reduce((current, stage) => (
+    stage.duration_ms > current.duration_ms ? stage : current
+  ))
+  const duration = slowest.duration_ms < 1000
+    ? `${Math.round(slowest.duration_ms)}ms`
+    : `${(slowest.duration_ms / 1000).toFixed(1)}s`
+  return `${slowest.name} · ${duration}`
 }
 
 export async function scanNewMail(onLocalData?: (data: DashboardData) => void): Promise<void> {
@@ -174,9 +207,9 @@ export async function scanNewMail(onLocalData?: (data: DashboardData) => void): 
   if (localToken) {
     const id = toast.loading('Starting Gmail scan…')
     try {
-      const response = await fetch(`${location.origin}/api/refresh`, {
+      const response = await controlPlaneFetch('api/refresh', localToken, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': localToken },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force: true, full_scan: false }),
       })
       const payload = await response.json() as { state?: string; message?: string }

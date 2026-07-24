@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { AuthGate } from '@/app/AuthGate'
 import { UNLOCK_KEY } from '@/lib/unlock'
 import { resetLocalServeToken } from '@/lib/outreach'
@@ -35,7 +35,10 @@ describe('AuthGate', () => {
     sessionStorage.clear()
     resetLocalServeToken()
   })
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
 
   it('renders the app straight through when the baked build has rows (local/dev)', () => {
     render(
@@ -92,6 +95,21 @@ describe('AuthGate', () => {
     expect(screen.queryByLabelText('Passphrase')).not.toBeInTheDocument()
   })
 
+  it('clears a cached snapshot and restores the lock screen immediately', () => {
+    sessionStorage.setItem(UNLOCK_KEY, JSON.stringify(makeData({ rows: [row('x')] })))
+    render(
+      <AuthGate baked={makeData()} encrypted={{ v: 1, url: 'site.enc.json' }}>
+        {(_data, lock) => <button onClick={lock}>Lock snapshot</button>}
+      </AuthGate>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock snapshot' }))
+
+    expect(sessionStorage.getItem(UNLOCK_KEY)).toBeNull()
+    expect(screen.getByText('This dashboard is locked')).toBeInTheDocument()
+    expect(screen.getByLabelText('Passphrase')).toBeInTheDocument()
+  })
+
   it('shows a no-data message when locked with no encrypted blob', () => {
     render(
       <AuthGate baked={makeData()} encrypted={null}>
@@ -114,5 +132,28 @@ describe('AuthGate', () => {
 
     expect(screen.getByText('This dashboard is locked')).toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('loads the live API from a marked non-loopback hosted build', async () => {
+    const live = makeData({ generated: 'hosted', rows: [row('hosted')] })
+    vi.stubEnv('VITE_JOBSCOPE_HOSTED', '1')
+    vi.stubGlobal('location', new URL('https://jobs.example.com/'))
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/api/token')) {
+        return { ok: true, json: async () => ({ token: 'hosted-token' }) } as Response
+      }
+      if (url.endsWith('/api/dashboard')) {
+        return { ok: true, json: async () => ({ ok: true, data: live }) } as Response
+      }
+      throw new Error(`unexpected URL: ${url}`)
+    }))
+
+    render(
+      <AuthGate baked={makeData()} encrypted={null}>
+        {(data) => <div>hosted rows: {data.rows.length}</div>}
+      </AuthGate>,
+    )
+
+    expect(await screen.findByText('hosted rows: 1')).toBeInTheDocument()
   })
 })

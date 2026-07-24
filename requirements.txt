@@ -1,7 +1,7 @@
 # Core (Phase 1): scraping, config, HTTP, RSS
 python-jobspy==1.1.80
 pyyaml==6.0.2
-requests==2.32.3
+requests==2.33.0
 feedparser==6.0.11
 
 # Enrichment (Phase 2)
@@ -9,10 +9,10 @@ yfinance==0.2.40
 
 # Tailoring + PDF + assisted apply (Phase 3-4)
 playwright==1.40.0
-pypdf==4.0.0
-markdown==3.5
+pypdf==6.14.2
+markdown==3.8.1
 
 # Dev / tests
-pytest==8.3.4
+pytest==9.0.3
 ruff==0.12.4
 detect-secrets==1.5.0

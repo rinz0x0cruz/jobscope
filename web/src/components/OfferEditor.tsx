@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Check, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { localServeToken, applicationUpdate } from '@/lib/outreach'
+import {
+  localServeToken,
+  applicationUpdate,
+  type ApplicationUpdateResult,
+} from '@/lib/outreach'
 import type { Application } from '@/lib/schema'
+
+export type ApplicationOfferUpdate = NonNullable<ApplicationUpdateResult['updated']>
 
 /**
  * Drawer editor for an application's interview + offer details. Renders only
@@ -10,7 +16,13 @@ import type { Application } from '@/lib/schema'
  * has no backend, so it stays hidden. Writes through /api/application/update;
  * empty fields never clobber saved values, matching the store's upsert guard.
  */
-export function OfferEditor({ app }: { app: Application }) {
+export function OfferEditor({
+  app,
+  onUpdated,
+}: {
+  app: Application
+  onUpdated?: (updated: ApplicationOfferUpdate) => void
+}) {
   const [token, setToken] = useState<string | null>(null)
   const [interviewAt, setInterviewAt] = useState(app.interview_at || '')
   const [salary, setSalary] = useState(app.salary_offered || '')
@@ -40,7 +52,10 @@ export function OfferEditor({ app }: { app: Application }) {
         salary_offered: salary,
         offer_accepted: decision,
       })
-      if (res.ok) toast.success('Offer details saved')
+      if (res.ok) {
+        if (res.updated) onUpdated?.(res.updated)
+        toast.success('Offer details saved')
+      }
       else toast.error(res.error || 'Save failed')
     } catch {
       toast.error('Could not reach jobscope serve.')

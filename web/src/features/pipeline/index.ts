@@ -1,2 +1,1 @@
-export { PipelinePreview, PipelineView } from './PipelineView'
-export type { PipelineViewProps } from './PipelineView'
+export { PipelinePreview } from './PipelineView'

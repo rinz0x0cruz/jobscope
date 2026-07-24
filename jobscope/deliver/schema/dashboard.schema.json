@@ -17,7 +17,7 @@
       "items": {"$ref": "#/definitions/Application"}
     },
     "profile": {
-      "description": "Résumé-derived search profile; null for the public build, present behind the site unlock.",
+      "description": "Editable search intent plus résumé-derived facts; null for the public build, present behind the site unlock.",
       "oneOf": [{"type": "null"}, {"$ref": "#/definitions/Profile"}]
     },
     "applied_outreach": {

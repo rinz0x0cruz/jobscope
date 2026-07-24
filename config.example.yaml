@@ -27,7 +27,7 @@ search:
   country_indeed: "India"
   home_country: "India"               # geo scope target: the country you can work onsite in
   scope_to_home: true                 # drop roles outside {home onsite, global/home-eligible remote}
-  results_wanted: 25
+  results_wanted: 25                  # per term/source cycle; scan commits 10 per run and resumes
   hours_old: 168                      # last 7 days
   is_remote: true
   distance: 50

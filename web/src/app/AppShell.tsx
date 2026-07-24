@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
   Building2,
+  ChartNoAxesCombined,
   CloudUpload,
   BriefcaseBusiness,
   Compass,
@@ -13,7 +14,6 @@ import {
   Search,
   Settings,
   SunMedium,
-  Workflow,
 } from 'lucide-react'
 import { IconButton, Input } from '@/ui'
 import type { ViewValue } from '@/lib/urlState'
@@ -36,17 +36,17 @@ export interface AppShellProps {
 const NAV_ITEMS: Array<{ value: ViewValue; label: string; Icon: typeof ListFilter }> = [
   { value: 'review', label: 'Review', Icon: ListFilter },
   { value: 'companies', label: 'Companies', Icon: Building2 },
-  { value: 'campaigns', label: 'Campaigns', Icon: Send },
-  { value: 'pipeline', label: 'Pipeline', Icon: Workflow },
   { value: 'applications', label: 'Applications', Icon: BriefcaseBusiness },
+  { value: 'campaigns', label: 'Outreach', Icon: Send },
+  { value: 'analytics', label: 'Analytics', Icon: ChartNoAxesCombined },
   { value: 'settings', label: 'Settings', Icon: Settings },
 ]
 
-const MOBILE_VIEWS: ViewValue[] = ['review', 'companies', 'pipeline', 'applications']
+const MOBILE_VIEWS: ViewValue[] = ['review', 'companies', 'applications']
 
 const NAV_SECTIONS: Array<{ label: string; views: ViewValue[] }> = [
   { label: 'Workspace', views: ['review', 'companies'] },
-  { label: 'Progress', views: ['campaigns', 'pipeline', 'applications'] },
+  { label: 'Progress', views: ['applications', 'campaigns', 'analytics'] },
   { label: 'System', views: ['settings'] },
 ]
 
@@ -83,7 +83,7 @@ function DesktopSidebar({
       <nav aria-label="Primary" className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
         {NAV_SECTIONS.map((section, sectionIndex) => (
           <div key={section.label} className={sectionIndex ? 'mt-5' : ''}>
-            <p className="mb-1.5 px-2 text-[9px] font-semibold uppercase text-ink-3">{section.label}</p>
+            <p className="mb-1.5 px-2 text-[11px] font-semibold text-ink-3">{section.label}</p>
             <div className="space-y-1">
               {section.views.filter((value) => value !== 'campaigns' || campaignsAvailable).map((value) => {
                 const item = NAV_ITEMS.find((candidate) => candidate.value === value)
@@ -139,7 +139,7 @@ function MobileNav({ active, onNavigate, campaignsAvailable }: { active: ViewVal
   const moreActive = !MOBILE_VIEWS.includes(active)
   return (
     <>
-      <nav aria-label="Mobile primary" className="grid h-16 grid-cols-5 border-t border-line bg-panel/95 shadow-[0_-8px_24px_-20px_rgba(0,0,0,.55)] backdrop-blur">
+      <nav aria-label="Mobile primary" className="grid h-16 grid-cols-4 border-t border-line bg-panel/95 shadow-[0_-8px_24px_-20px_rgba(0,0,0,.55)] backdrop-blur">
         {NAV_ITEMS.filter((item) => MOBILE_VIEWS.includes(item.value)).map(({ value, label, Icon }) => {
           const selected = active === value
           return (
@@ -203,7 +203,6 @@ export function AppShell({
   campaignsAvailable = false,
   children,
 }: AppShellProps) {
-  const title = NAV_ITEMS.find((item) => item.value === active)?.label ?? 'Feed'
   return (
     <div className="grid h-dvh min-h-0 overflow-hidden bg-paper font-sans text-ink lg:grid-cols-[224px_minmax(0,1fr)]">
       <DesktopSidebar
@@ -216,7 +215,7 @@ export function AppShell({
 
       <div className="flex min-h-0 min-w-0 flex-col">
         <header className="z-30 shrink-0 border-b border-line bg-panel">
-          <div className="flex h-16 items-center gap-3 px-3 sm:px-5 lg:px-6">
+          <div className="flex h-14 items-center gap-3 px-3 sm:px-5 lg:px-6">
           <button
             type="button"
             onClick={() => onNavigate('review')}
@@ -228,11 +227,7 @@ export function AppShell({
             </span>
           </button>
 
-          <h1 className="sr-only min-w-24 shrink-0 font-display text-xl font-semibold text-ink sm:not-sr-only">
-            {title}
-          </h1>
-
-          <div className="relative ml-auto w-full max-w-xl">
+          <div className="relative ml-auto w-full max-w-2xl lg:ml-0">
             <Search
               size={15}
               aria-hidden="true"
@@ -280,7 +275,7 @@ export function AppShell({
               <MailSearch size={16} aria-hidden="true" />
               <span className="hidden sm:inline">Scan Gmail</span>
             </button>
-            <IconButton label="Toggle theme" onClick={onToggleTheme} className="hidden sm:inline-flex lg:hidden">
+            <IconButton label="Toggle theme" onClick={onToggleTheme} className="inline-flex lg:hidden">
               <SunMedium size={17} aria-hidden="true" />
             </IconButton>
             {onLock && <IconButton label="Lock" onClick={onLock} className="lg:hidden">

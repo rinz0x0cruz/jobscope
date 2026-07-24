@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 
 import pytest
@@ -73,6 +74,38 @@ def test_delivery_unknown_requires_explicit_resolution():
     store.close()
 
 
+def test_stale_send_claim_becomes_delivery_unknown_without_retry():
+    store = _store()
+    campaign = store.create_outreach_campaign("Interrupted send", 1)
+    target = store.upsert_outreach_campaign_target(
+        campaign["id"], "Acme", "acme", rank_score=80,
+    )
+    store.set_outreach_campaign_draft(
+        target["id"], selected_email="recruiter@acme.example",
+        subject="Hello", body="Body",
+    )
+    store.approve_outreach_campaign_target(target["id"])
+    assert store.claim_outreach_campaign_target_send(target["id"], "message@example.com")
+    store.conn.execute(
+        "UPDATE outreach_campaign_targets SET updated_at = ? WHERE id = ?",
+        ("2026-07-23T10:00:00Z", target["id"]),
+    )
+    store.conn.commit()
+
+    assert store.mark_stale_outreach_campaign_sends_unknown(
+        "2026-07-23T10:15:00Z",
+    ) == 1
+    recovered = store.get_outreach_campaign_target(target["id"])
+    assert recovered["state"] == "approved"
+    assert recovered["error_code"] == "delivery_unknown"
+    assert recovered["outbound_message_id"] == "message@example.com"
+    assert "interrupted" in recovered["error_detail"].lower()
+    assert store.mark_stale_outreach_campaign_sends_unknown(
+        "9999-12-31T23:59:59Z",
+    ) == 0
+    store.close()
+
+
 def test_draft_campaign_delete_removes_unsent_targets_and_runs():
     store = _store()
     campaign = store.create_outreach_campaign("Disposable draft", 1)
@@ -128,3 +161,95 @@ def test_draft_campaign_delete_refuses_status_or_delivery_history(unsafe):
     assert store.get_outreach_campaign(campaign["id"]) is not None
     assert store.get_outreach_campaign_target(target["id"]) is not None
     store.close()
+
+
+def test_followup_campaign_persists_source_thread_and_recipient_lock():
+    store = _store()
+    campaign = store.create_outreach_campaign(
+        "Application follow-ups", 1, purpose="followup",
+    )
+    target = store.upsert_outreach_campaign_target(
+        campaign["id"], "Acme", "acme",
+        application_job_id="job:acme", source_target_id="campaign-target:source",
+        parent_message_id="<parent@example.com>", followup_number=1,
+        recipient_locked=True,
+    )
+
+    assert campaign["purpose"] == "followup"
+    assert target["application_job_id"] == "job:acme"
+    assert target["source_target_id"] == "campaign-target:source"
+    assert target["parent_message_id"] == "parent@example.com"
+    assert target["root_message_id"] == "parent@example.com"
+    assert target["followup_number"] == 1
+    assert target["recipient_locked"] is True
+    assert store.followup_source_ids() == ({"job:acme"}, {"campaign-target:source"})
+    assert store.followup_company_keys() == {"acme"}
+    store.close()
+
+
+def test_followup_recipient_lock_rejects_address_change():
+    store = _store()
+    source_campaign = store.create_outreach_campaign("Cold", 1)
+    source = store.upsert_outreach_campaign_target(
+        source_campaign["id"], "Acme", "acme",
+    )
+    contacts = [{"email": "first@acme.example", "source": "hunter"}]
+    store.set_outreach_campaign_contacts(
+        source["id"], domain="acme.example", contacts=contacts, state="draft",
+    )
+    store.set_outreach_campaign_draft(
+        source["id"], selected_email="first@acme.example",
+        subject="Hello", body="Body",
+    )
+    campaign = store.create_outreach_campaign("Follow-ups", 1, purpose="followup")
+    followup = store.upsert_outreach_campaign_target(
+        campaign["id"], "Acme", "acme",
+        source_target_id=source["id"], recipient_locked=True,
+    )
+
+    with pytest.raises(ValueError, match="locked to the original"):
+        store.set_outreach_campaign_draft(
+            followup["id"], selected_email="other@acme.example",
+            subject="Re: Hello", body="Following up.",
+        )
+    store.close()
+
+
+def test_followup_schema_migrates_existing_cold_campaign(tmp_path):
+    path = tmp_path / "legacy-campaign.db"
+    with Store(str(path)) as store:
+        campaign = store.create_outreach_campaign("Existing cold campaign", 1)
+        target = store.upsert_outreach_campaign_target(
+            campaign["id"], "Acme", "acme", rank_score=80,
+        )
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP INDEX idx_outreach_campaign_targets_application")
+        connection.execute("DROP INDEX idx_outreach_campaign_targets_source")
+        for column in (
+            "application_job_id", "source_target_id", "parent_message_id",
+            "root_message_id", "followup_number", "recipient_locked",
+        ):
+            connection.execute(
+                f"ALTER TABLE outreach_campaign_targets DROP COLUMN {column}"
+            )
+        connection.execute("ALTER TABLE outreach_campaigns DROP COLUMN purpose")
+
+    with Store(str(path)) as migrated:
+        stored_campaign = migrated.get_outreach_campaign(campaign["id"])
+        stored_target = migrated.get_outreach_campaign_target(target["id"])
+        indexes = {
+            row[1]
+            for row in migrated.conn.execute(
+                "PRAGMA index_list(outreach_campaign_targets)"
+            )
+        }
+
+    assert stored_campaign["name"] == "Existing cold campaign"
+    assert stored_campaign["purpose"] == "cold"
+    assert stored_target["company"] == "Acme"
+    assert stored_target["application_job_id"] == ""
+    assert stored_target["recipient_locked"] is False
+    assert {
+        "idx_outreach_campaign_targets_application",
+        "idx_outreach_campaign_targets_source",
+    } <= indexes

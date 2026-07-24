@@ -5,14 +5,17 @@ import { Board } from '@/features/board'
 import { FeedView } from '@/features/feed'
 import { CompaniesView } from '@/features/companies'
 import { CampaignsUnavailable, CampaignsView } from '@/features/campaigns'
-import { PipelinePreview, PipelineView } from '@/features/pipeline'
+import { AnalyticsView, type AnalyticsMode } from '@/features/analytics'
+import { PipelinePreview } from '@/features/pipeline'
 import { Settings } from '@/features/settings'
 import { CommandPalette } from '@/features/command'
 import { ApplicationReader, JobDrawer, RoleReader } from '@/components/JobDrawer'
+import type { ApplicationOfferUpdate } from '@/components/OfferEditor'
 import { buildBoard } from '@/lib/board'
 import { buildFeed } from '@/lib/feed'
 import { buildCompanies } from '@/lib/companies'
 import { filterData } from '@/lib/viewFilter'
+import { listEngagements, type EngagementThread } from '@/lib/campaigns'
 import { activeView, type SearchState, type ViewValue } from '@/lib/urlState'
 import { scanNewMail, syncMonitoringQueue } from '@/lib/refresh'
 import { viewTransition } from '@/ui'
@@ -36,8 +39,8 @@ export interface ShellV2Props {
   onLock: () => void
 }
 
-const PUBLIC_VIEW_ORDER: ViewValue[] = ['review', 'companies', 'pipeline', 'applications', 'settings']
-const LOCAL_VIEW_ORDER: ViewValue[] = ['review', 'companies', 'campaigns', 'pipeline', 'applications', 'settings']
+const PUBLIC_VIEW_ORDER: ViewValue[] = ['review', 'companies', 'applications', 'analytics', 'settings']
+const LOCAL_VIEW_ORDER: ViewValue[] = ['review', 'companies', 'applications', 'campaigns', 'analytics', 'settings']
 
 function toggleTheme() {
   viewTransition(() => {
@@ -57,12 +60,18 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
   const [commandOpen, setCommandOpen] = useState(false)
   const [pendingChanges, setPendingChanges] = useState(() => queuedMonitoringActions().length)
   const [scanFunnels, setScanFunnels] = useState<Record<string, ScanDecisionFunnel>>({})
+  const [engagements, setEngagements] = useState<EngagementThread[]>([])
+  const accessibleEngagements = useMemo(
+    () => serveToken ? engagements : [],
+    [serveToken, engagements],
+  )
   const [workingData, setWorkingData] = useState(() =>
     projectMonitoringActions(data, queuedMonitoringActions()),
   )
   const snapshotLock = mode === 'snapshot' ? onLock : undefined
   const mobileReader = useMediaQuery('(max-width: 1399px)')
   const view = activeView(state)
+  const analyticsMode: AnalyticsMode = state.tab === 'outreach' ? 'outreach' : 'applications'
   const selectedJob = useMemo(
     () => workingData.rows.find((row) => row.id === state.job) ?? null,
     [workingData.rows, state.job],
@@ -74,16 +83,51 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
         : null,
     [workingData.applications, state.job],
   )
+  const selectedEngagement = useMemo(
+    () => accessibleEngagements.find((engagement) => engagement.id === state.engagement) ?? null,
+    [accessibleEngagements, state.engagement],
+  )
+  const selectedApplicationEngagement = useMemo(
+    () => selectedApplication
+      ? accessibleEngagements.find((engagement) => (
+        engagement.kind === 'application'
+        && engagement.application_job_id === selectedApplication.job_id
+      )) ?? null
+      : null,
+    [accessibleEngagements, selectedApplication],
+  )
   const searchedData = useMemo(() => filterData(workingData, state.q), [workingData, state.q])
   const feed = useMemo(() => buildFeed(workingData, state), [workingData, state])
   const companies = useMemo(() => buildCompanies(workingData, state.q), [workingData, state.q])
   const board = useMemo(() => buildBoard(searchedData), [searchedData])
-  const navigate = (next: ViewValue) => onStateChange({ view: next, job: undefined, company: undefined, campaign: undefined })
-  const open = (jobId: string) => onStateChange({ job: jobId })
-  const close = () => onStateChange({ job: undefined }, { replace: true })
+  const visibleEngagements = useMemo(() => {
+    const query = state.q.trim().toLowerCase()
+    if (!query) return accessibleEngagements
+    return accessibleEngagements.filter((engagement) => (
+      `${engagement.company} ${engagement.title} ${engagement.recipient} ${engagement.subject}`
+        .toLowerCase().includes(query)
+    ))
+  }, [accessibleEngagements, state.q])
+  const navigate = (next: ViewValue) => onStateChange({ view: next, job: undefined, engagement: undefined, company: undefined, campaign: undefined })
+  const open = (jobId: string) => onStateChange({ job: jobId, engagement: undefined })
+  const openEngagement = (engagementId: string) => onStateChange({ engagement: engagementId, job: undefined })
+  const close = () => onStateChange({ job: undefined, engagement: undefined }, { replace: true })
+  const openOutreach = (campaignId: string) => onStateChange({
+    view: 'campaigns', campaign: campaignId, job: undefined, engagement: undefined,
+  })
   const refresh = useCallback(() => void scanNewMail((fresh) => {
     setWorkingData(projectMonitoringActions(fresh, queuedMonitoringActions()))
   }), [])
+  const acceptApplicationUpdate = useCallback((updated: ApplicationOfferUpdate) => {
+    setWorkingData((current) => ({
+      ...current,
+      applications: (current.applications ?? []).map((application) => (
+        application.job_id === updated.job_id
+          ? { ...application, ...updated }
+          : application
+      )),
+    }))
+  }, [])
   const runMonitoringActions = async (actions: MonitoringAction[]) => {
     const previous = workingData
     setWorkingData((current) => projectMonitoringActions(current, actions))
@@ -147,6 +191,17 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
   }, [])
 
   useEffect(() => {
+    if (!serveToken) return
+    let live = true
+    void listEngagements(serveToken)
+      .then((values) => live && setEngagements(values))
+      .catch((error) => live && toast.error(
+        error instanceof Error ? error.message : 'Could not load outreach activity',
+      ))
+    return () => { live = false }
+  }, [serveToken, view])
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
@@ -163,7 +218,7 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
         document.querySelector<HTMLInputElement>('input[type="search"]')?.focus()
         return
       }
-      if (event.key === 'Escape' && state.job) {
+      if (event.key === 'Escape' && (state.job || state.engagement)) {
         close()
         return
       }
@@ -215,16 +270,21 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
                 <RoleReader
                   job={selectedJob}
                   application={selectedApplication}
+                  engagement={selectedApplicationEngagement ?? undefined}
                   allRows={data.rows}
                   onOpen={open}
                   onClose={close}
+                  onOpenOutreach={openOutreach}
                 />
               ) : selectedApplication ? (
-                <ApplicationReader app={selectedApplication} onClose={close} />
+                <ApplicationReader app={selectedApplication} engagement={selectedApplicationEngagement ?? undefined} onClose={close} onOpenOutreach={openOutreach} onApplicationUpdated={acceptApplicationUpdate} />
               ) : (
                 <PipelinePreview
                   applications={workingData.applications ?? []}
-                  onOpenPipeline={() => navigate('pipeline')}
+                  onOpenAnalytics={() => onStateChange({
+                    view: 'analytics', tab: 'overview', job: undefined,
+                    engagement: undefined, company: undefined, campaign: undefined,
+                  })}
                 />
               )}
             </aside>
@@ -255,19 +315,27 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
               <CampaignsUnavailable />
             )}
           </div>
-        ) : view === 'pipeline' ? (
-          <div className="px-3 pb-20 pt-4 sm:px-5 lg:px-7 lg:pb-6">
-            <PipelineView applications={searchedData.applications ?? []} onOpen={open} />
-          </div>
         ) : view === 'applications' ? (
           <div className="h-full min-h-0 pb-16 lg:pb-0">
             <Board
               columns={board}
+              engagements={visibleEngagements}
               onOpen={open}
+              onOpenEngagement={openEngagement}
               audit={workingData.activity_audit}
-              onRecover={(jobId) => void runMonitoringActions([
-                { type: 'application.restore', job_id: jobId },
-              ])}
+            />
+          </div>
+        ) : view === 'analytics' ? (
+          <div className="h-full min-h-0 pb-16 lg:pb-0">
+            <AnalyticsView
+              mode={analyticsMode}
+              onModeChange={(nextMode) => onStateChange({
+                view: 'analytics',
+                tab: nextMode === 'outreach' ? 'outreach' : 'overview',
+              }, { replace: true })}
+              applications={searchedData.applications ?? []}
+              engagements={visibleEngagements}
+              outreachAvailable={Boolean(serveToken)}
             />
           </div>
         ) : (
@@ -300,9 +368,12 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
       <JobDrawer
         job={selectedJob}
         application={selectedApplication}
+        engagement={selectedEngagement ?? selectedApplicationEngagement}
         allRows={workingData.rows}
         onOpen={open}
         onClose={close}
+        onOpenOutreach={openOutreach}
+        onApplicationUpdated={acceptApplicationUpdate}
         enabled={view !== 'review' || mobileReader}
       />
       <Toaster position="bottom-right" />

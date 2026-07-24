@@ -127,7 +127,7 @@ class MonitoringMixin:
         provider: str = "",
         slug: str = "",
         careers_url: str = "",
-        status: str = "active",
+        status: str | None = None,
         resolution_status: str | None = None,
         added_from: str = "user",
     ) -> dict[str, Any]:
@@ -139,7 +139,10 @@ class MonitoringMixin:
         slug = (slug or "").strip()
         if bool(provider) != bool(slug):
             raise ValueError("provider and slug must be supplied together")
-        status = _validate_choice(status, MONITOR_STATUSES, "monitor status")
+        requested_status = (
+            _validate_choice(status, MONITOR_STATUSES, "monitor status")
+            if status else None
+        )
         resolution = resolution_status or ("resolved" if provider and slug else "unresolved")
         resolution = _validate_choice(resolution, RESOLUTION_STATUSES, "resolution status")
         origin = (added_from or "user").strip().lower()
@@ -158,6 +161,11 @@ class MonitoringMixin:
             key_row = None
             board_row = self._monitor_row(board_row["id"])
         existing = board_row or key_row
+        effective_status = requested_status or (
+            existing["status"]
+            if existing is not None and existing["status"] != "removed"
+            else "active"
+        )
         timestamp = now_iso()
         if existing is None:
             monitor_id = _monitor_id(company_key)
@@ -166,7 +174,7 @@ class MonitoringMixin:
                 "(id, company_key, company, provider, slug, careers_url, status, "
                 "resolution_status, origins_json, created_at, updated_at, last_success_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')",
-                (monitor_id, company_key, display, provider, slug, careers_url.strip(), status,
+                (monitor_id, company_key, display, provider, slug, careers_url.strip(), effective_status,
                  resolution, json.dumps([origin] if origin else []), timestamp, timestamp),
             )
         else:
@@ -178,7 +186,7 @@ class MonitoringMixin:
                 "resolution_status = ?, origins_json = ?, updated_at = ? WHERE id = ?",
                 (existing["company"] or display,
                  provider or existing["provider"], slug or existing["slug"],
-                 careers_url.strip() or existing["careers_url"], status, resolution,
+                 careers_url.strip() or existing["careers_url"], effective_status, resolution,
                  json.dumps(origins), timestamp, monitor_id),
             )
         return self._monitor_dict(self._monitor_row(monitor_id))

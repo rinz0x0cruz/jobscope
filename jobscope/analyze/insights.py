@@ -11,6 +11,11 @@ import re
 from .resume import SKILL_LEXICON
 
 _TIERS_DEFAULT = {"Strong", "Good", "Stretch"}
+_SKILL_PATTERN = re.compile(
+    r"(?<![a-z0-9])(?P<skill>" +
+    "|".join(re.escape(skill) for skill in sorted(SKILL_LEXICON, key=len, reverse=True)) +
+    r")(?![a-z0-9])"
+)
 
 
 def skill_gap(store, top: int = 15, tiers: set[str] | None = None):
@@ -28,12 +33,11 @@ def skill_gap(store, top: int = 15, tiers: set[str] | None = None):
             continue
         considered += 1
         jd = f"{job.title}\n{job.description}".lower()
-        for skill in SKILL_LEXICON:
+        for skill in {match.group("skill") for match in _SKILL_PATTERN.finditer(jd)}:
             if skill in have:
                 continue
-            if re.search(r"(?<![a-z0-9])" + re.escape(skill) + r"(?![a-z0-9])", jd):
-                counts[skill] = counts.get(skill, 0) + 1
-                examples.setdefault(skill, set()).add(job.company)
+            counts[skill] = counts.get(skill, 0) + 1
+            examples.setdefault(skill, set()).add(job.company)
 
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
     return considered, [(s, c, sorted(x for x in examples[s] if x)[:3]) for s, c in ranked]

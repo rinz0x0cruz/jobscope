@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { JobDrawer, RoleReader } from '@/components/JobDrawer'
+import type { EngagementThread } from '@/lib/campaigns'
 import type { Application } from '@/lib/schema'
 import { jobRow } from './factories'
 
@@ -42,6 +43,22 @@ function makeApp(): Application {
   }
 }
 
+function makeEngagement(over: Partial<EngagementThread> = {}): EngagementThread {
+  return {
+    id: 'cold:one', kind: 'cold', application_job_id: '', company: 'Sentinel Labs',
+    title: '', campaign_id: 'campaign:one', target_id: 'target:one',
+    recipient: 'recruiter@sentinel.example', subject: 'Security research introduction',
+    state: 'replied', sent_at: '2026-07-10T00:00:00Z',
+    latest_activity_at: '2026-07-11T00:00:00Z', followup_count: 0,
+    outbound_count: 1, reply_count: 1,
+    events: [
+      { direction: 'outbound', kind: 'cold', date: '2026-07-10T00:00:00Z', subject: 'Security research introduction', participant: 'recruiter@sentinel.example', summary: '', state: 'sent', signal: '', followup_number: 0, campaign_id: 'campaign:one', target_id: 'target:one' },
+      { direction: 'inbound', kind: 'reply', date: '2026-07-11T00:00:00Z', subject: 'Re: Security research introduction', participant: 'alex@sentinel.example', summary: 'Let us schedule a call.', state: 'replied', signal: 'campaign_reply', followup_number: 0, campaign_id: 'campaign:one', target_id: 'target:one' },
+    ],
+    ...over,
+  }
+}
+
 describe('JobDrawer', () => {
   it('shows the email timeline for an applied role that has no match row', () => {
     render(
@@ -61,6 +78,46 @@ describe('JobDrawer', () => {
   it('renders nothing when neither a job nor an application is provided', () => {
     render(<JobDrawer job={null} application={null} allRows={[]} onOpen={() => {}} onClose={() => {}} />)
     expect(screen.queryByText(/Emails/)).not.toBeInTheDocument()
+  })
+
+  it('shows safe cold outreach correspondence and links back to Outreach', () => {
+    const onOpenOutreach = vi.fn()
+    render(<JobDrawer
+      job={null}
+      application={null}
+      engagement={makeEngagement()}
+      allRows={[]}
+      onOpen={() => {}}
+      onOpenOutreach={onOpenOutreach}
+      onClose={() => {}}
+    />)
+
+    expect(screen.getByRole('heading', { name: 'Sentinel Labs' })).toBeInTheDocument()
+    expect(screen.getByText('Security research introduction')).toBeInTheDocument()
+    expect(screen.getByText('Let us schedule a call.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Outreach' }))
+    expect(onOpenOutreach).toHaveBeenCalledWith('campaign:one')
+    expect(document.body).not.toHaveTextContent('PRIVATE-OUTBOUND-BODY')
+  })
+
+  it('renders one inbound reply when application and outreach timelines overlap', () => {
+    const app = makeApp()
+    app.timeline.push({
+      date: '2026-07-11', signal: 'campaign_reply',
+      subject: 'Re: Security research introduction', from: 'sentinel.example',
+      summary: 'Let us schedule a call.',
+    })
+    render(<JobDrawer
+      job={null}
+      application={app}
+      engagement={makeEngagement()}
+      allRows={[]}
+      onOpen={() => {}}
+      onClose={() => {}}
+    />)
+
+    expect(screen.getAllByText('Re: Security research introduction')).toHaveLength(1)
+    expect(screen.getAllByText('Let us schedule a call.')).toHaveLength(1)
   })
 
   it('renders the same role reader outside the dialog wrapper', () => {
@@ -95,5 +152,32 @@ describe('JobDrawer', () => {
     expect(screen.getByText('Manage day-to-day operations')).toBeInTheDocument()
     expect(screen.getByText('Research résumé · Technical role')).toBeInTheDocument()
     expect(screen.queryByText(/top: skills/)).not.toBeInTheDocument()
+  })
+
+  it('does not navigate to unsafe scraped links', () => {
+    render(
+      <RoleReader
+        job={jobRow({
+          id: 'unsafe-links',
+          url: 'javascript:alert(1)',
+          sources: [
+            { source: 'primary', url: 'https://jobs.example.test/role' },
+            { source: 'mirror', url: 'data:text/html,bad' },
+          ],
+          enrich: {
+            news: [{ title: 'Untrusted news', link: 'javascript:alert(2)' }],
+          },
+          contacts: [{ name: 'Untrusted lead', url: 'vbscript:alert(3)' }],
+        })}
+        application={null}
+        allRows={[]}
+        onOpen={() => {}}
+        onClose={() => {}}
+      />,
+    )
+
+    for (const label of ['Apply on greenhouse', 'mirror', 'Untrusted news', /Untrusted lead/]) {
+      expect(screen.getByText(label).closest('a')).not.toHaveAttribute('href')
+    }
   })
 })

@@ -57,16 +57,16 @@
   --font-reader: var(--reader);
 }
 
-/* Dark defaults use neutral graphite surfaces with restrained coral actions. */
+/* Graphite and mineral surfaces: quiet fields, crisp work regions, sparse coral actions. */
 :root {
-  --bg: #111411; --bg2: #171b17; --card: #1c211c; --card-h: #232a23;
-  --border: #303830; --border-h: #485248; --fg: #edf1ec; --dim: #b3bcb2; --mute: #7d887d;
+  --bg: #0e1210; --bg2: #141a17; --card: #19201c; --card-h: #222b26;
+  --border: #2c3630; --border-h: #455249; --fg: #f0f3ef; --dim: #b6c0b8; --mute: #7f8b82;
 
   /* warm terminal signature — accents, CTAs, status warmth */
-  --accent: #e06850; --accent-dim: rgba(224, 104, 80, .16);
+  --accent: #e36f56; --accent-dim: rgba(227, 111, 86, .16);
   --hot: #e36c76;
   /* cool cyber + data — charts, links/entities (concept C's "signal"), focus */
-  --cool: #22d3ee; --signal: #38bdf8; --teal: #2dd4bf;
+  --cool: #40c4dc; --signal: #55b8e7; --teal: #43c7ad;
 
   /* legacy neon vars, retuned to the cool half of the duotone */
   --neon-cyan: #22d3ee; --neon-blue: #38bdf8; --neon-violet: #a78bfa; --neon-emerald: #2dd4bf; --neon-amber: #fbbf24;
@@ -92,18 +92,18 @@
   --ease-standard: cubic-bezier(.2, 0, 0, 1); --ease-entrance: cubic-bezier(0, 0, 0, 1); --ease-exit: cubic-bezier(.4, 0, 1, 1);
 
   /* Feed + Reader surfaces; light mode overrides these below. */
-  --paper: #111411; --panel: #171b17; --inset: #202620;
-  --line: #303830; --line-strong: #485248;
-  --ink: #edf1ec; --ink-2: #b3bcb2; --ink-3: #7d887d;
-  --brand-coral: #e06850; --brand-weak: #38251f; --brand-strong: #f0846d;
+  --paper: #0e1210; --panel: #151b18; --inset: #202823;
+  --line: #2c3630; --line-strong: #455249;
+  --ink: #f0f3ef; --ink-2: #b6c0b8; --ink-3: #7f8b82;
+  --brand-coral: #e36f56; --brand-weak: #3b261f; --brand-strong: #f08b73;
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, .32);
 }
 
 html.light {
-  --bg: #f5f6f3; --bg2: #f0f2ee; --card: #ffffff; --card-h: #f7f8f5;
-  --border: #dfe3dc; --border-h: #c1c9c0; --fg: #1c211d; --dim: #515b53; --mute: #7d887f;
-  --accent: #c94f39; --accent-dim: rgba(201, 79, 57, .12);
-  --hot: #e11d48; --cool: #0891b2; --signal: #0284c7; --teal: #0d9488;
+  --bg: #edf1ec; --bg2: #e6ebe5; --card: #fbfcfa; --card-h: #f3f6f2;
+  --border: #d2d9d1; --border-h: #aeb9af; --fg: #172019; --dim: #465149; --mute: #6f7b72;
+  --accent: #c6533c; --accent-dim: rgba(198, 83, 60, .12);
+  --hot: #d92d55; --cool: #087f9f; --signal: #0b7fa8; --teal: #138b79;
   --neon-cyan: #0891b2; --neon-blue: #0284c7; --neon-violet: #7c3aed; --neon-emerald: #0d9488;
   --strong: #18865b; --good: #3175ad; --stretch: #a96f13; --skip: #727d74;
   /* Retained for the pure overview model and its tests. */
@@ -112,11 +112,11 @@ html.light {
   --shadow: 0 8px 24px -14px rgba(15, 23, 42, .22);
 
   /* Light-first neutral surfaces with terracotta actions. */
-  --paper: #f5f6f3; --panel: #ffffff; --inset: #f0f2ee;
-  --line: #dfe3dc; --line-strong: #c1c9c0;
-  --ink: #1c211d; --ink-2: #515b53; --ink-3: #7d887f;
-  --brand-coral: #c94f39; --brand-weak: #fae9e5; --brand-strong: #a93e2b;
-  --shadow-panel: 0 1px 2px rgba(28, 33, 29, .05);
+  --paper: #edf1ec; --panel: #fbfcfa; --inset: #e6ebe5;
+  --line: #d2d9d1; --line-strong: #aeb9af;
+  --ink: #172019; --ink-2: #465149; --ink-3: #6f7b72;
+  --brand-coral: #c6533c; --brand-weak: #f7e4df; --brand-strong: #a84230;
+  --shadow-panel: 0 1px 2px rgba(23, 32, 25, .08);
 }
 
 @layer base {
@@ -173,8 +173,8 @@ html.light {
   display: flex;
   flex-direction: column;
   align-content: start;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px 12px 12px;
   background: var(--paper);
 }
 

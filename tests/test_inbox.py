@@ -344,6 +344,16 @@ def test_strip_html_drops_style_and_script():
     assert "padding" not in out and "var x" not in out and "hidden" not in out
 
 
+def test_malformed_rfc2047_header_falls_back_without_losing_subject():
+    from jobscope.ingest.inbox import _dh
+
+    raw = "=?unknown-charset?Q?Interview_Scheduled?="
+    decoded = _dh(raw)
+
+    assert decoded
+    assert "Interview" in decoded or decoded == raw
+
+
 # --- mailrules: parsing -----------------------------------------------------
 def test_parse_company_role_from_subject():
     company, role = mailrules.parse_company_role(
@@ -520,6 +530,17 @@ def test_best_company_match_fuzzy():
     cands = ["databricks", "stripe", "coinbase"]
     assert mailrules.best_company_match("Databricks, Inc.", cands) == "databricks"
     assert mailrules.best_company_match("Totally Unrelated Co", cands) is None
+
+
+def test_thread_key_prefers_immediate_parent_for_followup_replies():
+    headers = {
+        "References": "<cold@example.com> <followup@example.com>",
+        "In-Reply-To": "<followup@example.com>",
+    }
+    assert inbox._thread_key(headers, "Re: Follow-up") == "followup@example.com"
+    assert inbox._thread_key(
+        {"References": headers["References"]}, "Re: Follow-up",
+    ) == "followup@example.com"
 
 
 # --- store: mail_events + applications --------------------------------------

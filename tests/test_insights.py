@@ -47,6 +47,25 @@ def test_skill_gap_ignores_skip_tier():
         store.close()
 
 
+def test_skill_gap_preserves_punctuation_and_word_boundaries():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.save_resume(Resume(skills=[]))
+        job = Job(
+            title="Platform Engineer", company="A", url="1", tier="Good",
+            description="C++, node.js, golang, javascript, nosql, and soc2",
+        ).ensure_id()
+        store.upsert_job(job)
+        store.update_score(job.id, 70, "Good", "x")
+
+        _considered, gaps = insights.skill_gap(store, top=20)
+
+        skills = {gap[0] for gap in gaps}
+        assert {"c++", "node.js", "golang", "javascript", "nosql", "soc2"} <= skills
+        assert not ({"go", "java", "sql", "soc"} & skills)
+        store.close()
+
+
 def _cfg():
     # Hermetic: the on-disk config.yaml (AI enabled, a real provider/key) must not
     # make the brief call a live model. DEFAULT_CONFIG has ai.enabled=False.

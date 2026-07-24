@@ -1,7 +1,47 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRef } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { Badge, Button, Card, Chip, IconButton, Input, Segmented, StatCard } from '@/ui'
+import { Badge, Button, Card, Chip, IconButton, Input, Segmented, StatCard, WorkspaceHeader, viewTransition } from '@/ui'
+
+describe('viewTransition', () => {
+  it('handles an interrupted transition without an unobserved rejection', () => {
+    const observeAbort = vi.fn()
+    const start = vi.fn((update: () => void) => {
+      update()
+      return { ready: { catch: observeAbort } }
+    })
+    const original = Object.getOwnPropertyDescriptor(document, 'startViewTransition')
+    Object.defineProperty(document, 'startViewTransition', { configurable: true, value: start })
+    const update = vi.fn()
+
+    try {
+      viewTransition(update)
+      expect(update).toHaveBeenCalledOnce()
+      expect(observeAbort).toHaveBeenCalledOnce()
+      expect(observeAbort).toHaveBeenCalledWith(expect.any(Function))
+    } finally {
+      if (original) Object.defineProperty(document, 'startViewTransition', original)
+      else Reflect.deleteProperty(document, 'startViewTransition')
+    }
+  })
+
+  it('applies the update when the native transition cannot start', () => {
+    const original = Object.getOwnPropertyDescriptor(document, 'startViewTransition')
+    Object.defineProperty(document, 'startViewTransition', {
+      configurable: true,
+      value: vi.fn(() => { throw new DOMException('not ready', 'InvalidStateError') }),
+    })
+    const update = vi.fn()
+
+    try {
+      expect(() => viewTransition(update)).not.toThrow()
+      expect(update).toHaveBeenCalledOnce()
+    } finally {
+      if (original) Object.defineProperty(document, 'startViewTransition', original)
+      else Reflect.deleteProperty(document, 'startViewTransition')
+    }
+  })
+})
 
 describe('Button', () => {
   it('renders its label and fires onClick', () => {
@@ -18,6 +58,23 @@ describe('Button', () => {
       </Button>,
     )
     expect(screen.getByRole('button', { name: 'Nope' })).toBeDisabled()
+  })
+})
+
+describe('WorkspaceHeader', () => {
+  it('owns the route title and keeps actions beside its context', () => {
+    render(
+      <WorkspaceHeader
+        eyebrow="Progress"
+        title="Analytics"
+        description="Measured outcomes"
+        actions={<button>Applications</button>}
+        accent="signal"
+      />,
+    )
+    expect(screen.getByRole('heading', { level: 1, name: 'Analytics' })).toBeInTheDocument()
+    expect(screen.getByText('Progress')).toHaveClass('text-signal')
+    expect(screen.getByRole('button', { name: 'Applications' })).toBeInTheDocument()
   })
 })
 

@@ -10,7 +10,7 @@ import tempfile
 
 from jobscope.apply import outreach
 from jobscope.core.config import load_config
-from jobscope.core.model import Job, MailEvent, Resume
+from jobscope.core.model import Application, Job, MailEvent, Resume
 from jobscope.core.store import Store, now_iso
 
 
@@ -83,6 +83,26 @@ def test_draft_is_deterministic_and_grounded():
         assert "Jane Doe" in subject and "Security Engineer" in subject
         assert "attached" in body.lower() and ("résumé" in body.lower() or "resume" in body.lower())
         assert "python" in body.lower()  # a real matched skill, not invented
+        store.close()
+
+
+def test_followup_preview_reuses_prior_recipient_and_uses_followup_copy():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg, store, job = _seed(tmp)
+        store.set_application(Application(
+            job_id=job.id, status="applied", company=job.company,
+            outreach_at="2026-06-01T00:00:00Z", outreach_to="agent@agency.example",
+        ))
+
+        result = outreach.api_preview(cfg, store, job.id, followup=True)
+
+        assert result["ok"] is True
+        assert result["to"] == "agent@agency.example"
+        assert result["recipient_locked"] is True
+        assert result["followup"] is True
+        assert "Following up" in result["subject"]
+        assert "recently applied" in result["body"]
+        assert "I'm Jane Doe" not in result["body"]
         store.close()
 
 

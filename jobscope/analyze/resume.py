@@ -75,7 +75,7 @@ def import_resume(path: str, store, cfg: dict, name: str = "default") -> int:
           f"| ~{resume.years_experience:g}y exp")
     if not resume.skills:
         print("  note: no skills detected -- add a '## Skills' section for best matching")
-    # Seed an editable, résumé-derived search profile the first time (drives `scan`);
+    # Seed editable search intent plus résumé-derived facts the first time (drives `scan`);
     # never clobbers a profile you've already edited.
     seeded = _profile.ensure_seeded(cfg, resume, name)
     if seeded:
@@ -141,7 +141,6 @@ def _from_json_resume(path: str) -> Resume:
 def _from_text(text: str, path: str) -> Resume:
     name = _guess_name(text)
     email_m = EMAIL_RE.search(text)
-    phone_m = PHONE_RE.search(text)
     links = dict(_guess_links(text))
     skills = _merge_skills(_section_skills(text), _extract_skills(text))
     exp = _experience_section(text)
@@ -150,7 +149,7 @@ def _from_text(text: str, path: str) -> Resume:
     return Resume(
         full_name=name,
         email=email_m.group(0) if email_m else "",
-        phone=(phone_m.group(0).strip() if phone_m else ""),
+        phone=_guess_phone(text),
         location=_guess_location(text),
         summary=_first_paragraph(text),
         skills=skills,
@@ -192,6 +191,15 @@ def _guess_location(text: str) -> str:
                 return mm.group(1).strip()
     mm = pat.search(text)
     return mm.group(1).strip() if mm else ""
+
+
+def _guess_phone(text: str) -> str:
+    for match in PHONE_RE.finditer(text):
+        candidate = match.group(0).strip()
+        if YEAR_RANGE_RE.fullmatch(candidate):
+            continue
+        return candidate
+    return ""
 
 
 def _guess_links(text: str):
@@ -267,7 +275,7 @@ def _experience_section(text: str) -> str:
         text,
     )
     if start is None:
-        return text
+        return ""
     remainder = text[start.end():]
     end = re.search(
         r"(?im)^[ \t]*(?:#{1,6}[ \t]*)?"

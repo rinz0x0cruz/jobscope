@@ -9,7 +9,7 @@ import Fuse from 'fuse.js'
 import {
   Briefcase,
   Building2,
-  Columns3,
+  ChartNoAxesCombined,
   Home,
   Inbox,
   Lock,
@@ -36,8 +36,8 @@ export interface CommandPaletteProps {
 const LENSES: { section: ViewValue; label: string; Icon: LucideIcon }[] = [
   { section: 'review', label: 'Review', Icon: Home },
   { section: 'companies', label: 'Companies', Icon: Building2 },
-  { section: 'pipeline', label: 'Pipeline', Icon: Inbox },
-  { section: 'applications', label: 'Applications', Icon: Columns3 },
+  { section: 'applications', label: 'Applications', Icon: Inbox },
+  { section: 'analytics', label: 'Analytics', Icon: ChartNoAxesCombined },
   { section: 'settings', label: 'Settings', Icon: SettingsIcon },
 ]
 
@@ -65,6 +65,12 @@ export function CommandPalette({
     if (!q.trim()) return rows.slice(0, 6)
     return fuse.search(q).slice(0, 8).map((r) => r.item)
   }, [q, fuse, rows])
+  const query = q.trim().toLowerCase()
+  const matches = (value: string) => !query || value.toLowerCase().includes(query)
+  const lenses = LENSES.filter(({ label }) => matches(`go ${label}`))
+  const showRefresh = matches('refresh scan mail')
+  const showTheme = matches('toggle theme dark light')
+  const showLock = Boolean(onLock) && matches('lock dashboard sign out')
 
   const run = (fn: () => void) => {
     onOpenChange(false)
@@ -98,8 +104,8 @@ export function CommandPalette({
                 No matches.
               </Command.Empty>
 
-              <Command.Group heading="Go to">
-                {LENSES.map(({ section, label, Icon }) => (
+              {lenses.length > 0 && <Command.Group heading="Go to">
+                {lenses.map(({ section, label, Icon }) => (
                   <Command.Item
                     key={section}
                     value={`go ${label}`}
@@ -110,22 +116,22 @@ export function CommandPalette({
                     <span>{label}</span>
                   </Command.Item>
                 ))}
-              </Command.Group>
+              </Command.Group>}
 
-              <Command.Group heading="Actions">
-                <Command.Item value="refresh scan mail" onSelect={() => run(onRefresh)} className={ITEM}>
+              {(showRefresh || showTheme || showLock) && <Command.Group heading="Actions">
+                {showRefresh && <Command.Item value="refresh scan mail" onSelect={() => run(onRefresh)} className={ITEM}>
                   <RefreshCw size={16} aria-hidden="true" className="text-ink-3" />
                   <span>Refresh · scan mail</span>
-                </Command.Item>
-                <Command.Item value="toggle theme dark light" onSelect={() => run(onToggleTheme)} className={ITEM}>
+                </Command.Item>}
+                {showTheme && <Command.Item value="toggle theme dark light" onSelect={() => run(onToggleTheme)} className={ITEM}>
                   <SunMedium size={16} aria-hidden="true" className="text-ink-3" />
                   <span>Toggle theme</span>
-                </Command.Item>
-                {onLock && <Command.Item value="lock dashboard sign out" onSelect={() => run(onLock)} className={ITEM}>
+                </Command.Item>}
+                {showLock && <Command.Item value="lock dashboard sign out" onSelect={() => run(onLock!)} className={ITEM}>
                   <Lock size={16} aria-hidden="true" className="text-ink-3" />
                   <span>Lock dashboard</span>
                 </Command.Item>}
-              </Command.Group>
+              </Command.Group>}
 
               {jobs.length > 0 && (
                 <Command.Group heading={q.trim() ? 'Jobs' : 'Recent roles'}>

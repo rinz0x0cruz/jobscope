@@ -3,14 +3,46 @@
 
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { Download, FileText, GitBranch, Lock, Palette, RefreshCw, Shield, Upload } from 'lucide-react'
+import { ChevronDown, Download, FileText, GitBranch, Lock, Palette, RefreshCw, Shield, Upload } from 'lucide-react'
 import { toast } from 'sonner'
-import { Badge, Button, Chip, Segmented } from '@/ui'
+import { Badge, Button, Chip, Segmented, WorkspaceHeader } from '@/ui'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
 import { connectToken, disconnectToken, hasGitHubToken, pullLatestData, scanNewMail } from '@/lib/refresh'
 import { profileReset, profileUpdate, profileUpload, profileUse } from '@/lib/outreach'
 import { fmtGenerated } from '@/lib/format'
 import type { Profile } from '@/lib/schema'
+
+const JOB_MARKET_GROUPS = [
+  { label: 'South Asia', markets: ['India'] },
+  { label: 'Asia Pacific', markets: ['Singapore', 'Japan', 'Australia'] },
+  { label: 'Europe', markets: ['United Kingdom', 'Germany', 'France', 'Netherlands', 'Ireland'] },
+  { label: 'North America', markets: ['United States', 'Canada'] },
+  { label: 'Middle East', markets: ['United Arab Emirates'] },
+] as const
+
+const JOB_MARKETS = JOB_MARKET_GROUPS.flatMap(({ markets }) => markets)
+
+function canonicalJobMarket(value: string): string | null {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!normalized || normalized === 'remote') return null
+  const exact = JOB_MARKETS.find((market) => market.toLowerCase() === normalized)
+  if (exact) return exact
+  const contained = JOB_MARKETS.find((market) => (
+    new RegExp(`\\b${market.toLowerCase()}\\b`).test(normalized)
+  ))
+  if (contained) return contained
+  if (/\busa?\b/.test(normalized)) return 'United States'
+  if (/\buk\b/.test(normalized)) return 'United Kingdom'
+  if (/\buae\b/.test(normalized)) return 'United Arab Emirates'
+  return null
+}
+
+function preferredJobMarkets(locations: string[]): string[] {
+  const selected = locations
+    .map(canonicalJobMarket)
+    .filter((market): market is string => Boolean(market))
+  return [...new Set(selected)]
+}
 
 export interface SettingsProps {
   profile: Profile | null
@@ -47,7 +79,7 @@ export function Settings({ profile, generated, total, serveToken, onLock, onRefr
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [profileName, setProfileName] = useState(profile?.name ?? '')
   const [uploading, setUploading] = useState(false)
-  const locations = prof ? [...new Set([...prof.locations, ...(prof.remote ? ['Remote'] : [])])] : []
+  const jobMarkets = prof ? preferredJobMarkets(prof.locations) : []
 
   const switchProfile = async (name: string) => {
     if (!serveToken || !prof || name === prof.name) return
@@ -100,24 +132,22 @@ export function Settings({ profile, generated, total, serveToken, onLock, onRefr
 
   return (
     <section className="mx-auto min-h-full w-full max-w-[1600px] border-x border-line bg-panel">
-      <header className="border-b border-line px-5 py-5 sm:px-7">
-        <p className="text-[10px] font-semibold uppercase text-ink-3">Settings</p>
-        <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold text-ink">Workspace preferences</h2>
-            <p className="mt-1 text-[13px] text-ink-3">Search profile, local display preferences, sync, and session privacy.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+      <WorkspaceHeader
+        eyebrow="System"
+        title="Settings"
+        description="Search profiles, local display preferences, data sync, and session privacy."
+        actions={(
+          <>
             {serveToken !== undefined && (
               <Badge tone={serveToken ? 'good' : 'neutral'}>{serveToken ? 'Local workspace' : 'Published snapshot'}</Badge>
             )}
             <p className="text-[12px] text-ink-3">{total} {total === 1 ? 'role' : 'roles'} · updated {fmtGenerated(generated)}</p>
-          </div>
-        </div>
-      </header>
+          </>
+        )}
+      />
 
-      <div className="grid lg:grid-cols-[14rem_minmax(0,1fr)]">
-        <aside className="border-b border-line bg-inset/35 p-4 lg:border-b-0 lg:border-r lg:p-5">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] lg:grid-cols-[14rem_minmax(0,1fr)]">
+        <aside className="min-w-0 border-b border-line bg-inset/35 p-4 lg:border-b-0 lg:border-r lg:p-5">
           <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto [scrollbar-width:none] lg:sticky lg:top-4 lg:flex-col [&::-webkit-scrollbar]:hidden">
             <SettingsLink target="resume" icon={<Upload size={14} aria-hidden="true" />}>Résumé</SettingsLink>
             <SettingsLink target="profile" icon={<FileText size={14} aria-hidden="true" />}>Search profiles</SettingsLink>
@@ -224,61 +254,80 @@ export function Settings({ profile, generated, total, serveToken, onLock, onRefr
             >
               {prof ? (
                 <>
-              <div className="flex flex-wrap items-center justify-between gap-3 pb-5">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-base font-semibold text-ink">{prof.resume}</span>
-                    {prof.seniority && <Badge tone="brand">{prof.seniority}</Badge>}
-                    {prof.years_experience > 0 && <span className="text-[12px] text-ink-3">{prof.years_experience} yrs</span>}
+              <section
+                aria-label="Active search profile"
+                className="overflow-hidden rounded-card border border-line bg-panel shadow-[var(--shadow-panel)]"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-inset/35 px-4 py-4 sm:px-5">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-brand-weak font-display text-base font-semibold text-brand">
+                      {(prof.name || prof.resume).slice(0, 1).toUpperCase()}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-[15px] font-semibold text-ink">{prof.name}</span>
+                        {prof.seniority && <Badge tone="brand">{prof.seniority}</Badge>}
+                        {prof.years_experience > 0 && <span className="font-mono text-[11px] text-ink-3">{prof.years_experience} yrs</span>}
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-ink-3">
+                        Active ranking profile{prof.resume !== prof.name ? ` · ${prof.resume} résumé` : ''}
+                      </p>
+                    </div>
                   </div>
-                  <p className="mt-1 text-[12px] text-ink-3">Active ranking résumé</p>
+                  {serveToken && prof.available.length > 1 && (
+                    <select
+                      value={prof.name}
+                      onChange={(e) => void switchProfile(e.target.value)}
+                      disabled={switching}
+                      aria-label="Active search profile"
+                      className="h-9 w-full rounded-md border border-line bg-panel px-3 text-[13px] text-ink outline-none focus:border-line-strong disabled:opacity-50 sm:w-auto sm:min-w-36"
+                    >
+                      {prof.available.map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
-            {serveToken && prof.available.length > 1 && (
-                <select
-                  value={prof.name}
-                  onChange={(e) => void switchProfile(e.target.value)}
-                  disabled={switching}
-                  aria-label="Active search profile"
-                  className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong disabled:opacity-50"
-                >
-                  {prof.available.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-            )}
-              </div>
-            {prof.search_terms.length > 0 && (
-                <TagField label="Target roles">
-                {prof.search_terms.map((t) => (
-                  <Chip key={t}>{t}</Chip>
-                ))}
-                </TagField>
-            )}
-              {locations.length > 0 && (
-                <TagField label="Locations">
-                {locations.map((l) => (
-                  <Chip key={l}>{l}</Chip>
-                ))}
-                </TagField>
-            )}
-            {prof.top_skills.length > 0 && (
-                <TagField label="Top skills">
-                {prof.top_skills.slice(0, 12).map((s) => (
-                  <Chip key={s}>{s}</Chip>
-                ))}
-                </TagField>
-            )}
+                <div className="divide-y divide-line">
+                  {prof.search_terms.length > 0 && (
+                    <ProfileFact label="Target roles">
+                      {prof.search_terms.map((t) => (
+                        <Chip key={t}>{t}</Chip>
+                      ))}
+                    </ProfileFact>
+                  )}
+                  {jobMarkets.length > 0 && (
+                    <ProfileFact label="Preferred job regions">
+                      {jobMarkets.map((market) => (
+                        <Chip key={market}>{market}</Chip>
+                      ))}
+                    </ProfileFact>
+                  )}
+                  <ProfileFact label="Work mode">
+                    <Chip>{prof.remote ? 'Worldwide remote included' : 'On-site and hybrid only'}</Chip>
+                  </ProfileFact>
+                  {prof.top_skills.length > 0 && (
+                    <ProfileFact label="Top skills">
+                      {prof.top_skills.slice(0, 12).map((s) => (
+                        <Chip key={s}>{s}</Chip>
+                      ))}
+                    </ProfileFact>
+                  )}
+                </div>
+              </section>
             {serveToken && (
-              <ProfileIntentEditor
-                key={`${prof.name}:${prof.search_terms.join('|')}:${prof.locations.join('|')}:${prof.remote}`}
-                profile={prof}
-                token={serveToken}
-                onChange={(next) => {
-                  onProfileChange?.(next)
-                }}
-              />
+              <div className="mt-5">
+                <ProfileIntentEditor
+                  key={`${prof.name}:${prof.search_terms.join('|')}:${prof.locations.join('|')}:${prof.remote}`}
+                  profile={prof}
+                  token={serveToken}
+                  onChange={(next) => {
+                    onProfileChange?.(next)
+                  }}
+                />
+              </div>
             )}
                 </>
               ) : (
@@ -378,16 +427,17 @@ function SettingsLink({ target, icon, children }: { target: string; icon: ReactN
 
 function SettingsSection({ id, icon, title, description, children }: { id: string; icon: ReactNode; title: string; description: string; children: ReactNode }) {
   return (
-    <section id={id} className="scroll-mt-4 border-b border-line px-5 py-6 last:border-b-0 sm:px-7">
-      <header className="mb-5 flex items-start gap-3">
+    <details id={id} open className="group scroll-mt-4 border-b border-line px-5 py-1 last:border-b-0 sm:px-7 lg:py-6">
+      <summary className="flex cursor-pointer list-none items-start gap-3 py-4 marker:hidden lg:py-0 [&::-webkit-details-marker]:hidden">
         <span className="mt-0.5 text-ink-3">{icon}</span>
-        <div>
+        <div className="min-w-0 flex-1">
           <h3 className="text-[15px] font-semibold text-ink">{title}</h3>
           <p className="mt-0.5 text-[12px] text-ink-3">{description}</p>
         </div>
-      </header>
-      {children}
-    </section>
+        <ChevronDown size={16} className="mt-1 text-ink-3 transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="pb-5 lg:pb-0 lg:pt-5">{children}</div>
+    </details>
   )
 }
 
@@ -403,10 +453,10 @@ function PreferenceRow({ label, hint, children }: { label: string; hint?: string
   )
 }
 
-function TagField({ label, children }: { label: string; children: ReactNode }) {
+function ProfileFact({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="border-t border-line py-4 last:pb-0">
-      <div className="mb-2 text-[10px] font-semibold uppercase text-ink-3">
+    <div className="grid gap-2 px-4 py-3 sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:px-5">
+      <div className="pt-0.5 text-[11px] font-semibold text-ink-3">
         {label}
       </div>
       <div className="flex flex-wrap gap-1.5">{children}</div>
@@ -424,7 +474,7 @@ function ProfileIntentEditor({
   onChange: (profile: Profile) => void
 }) {
   const [roles, setRoles] = useState(profile.search_terms.join('\n'))
-  const [locations, setLocations] = useState(profile.locations.join('\n'))
+  const [markets, setMarkets] = useState(() => preferredJobMarkets(profile.locations))
   const [remote, setRemote] = useState(profile.remote)
   const [saving, setSaving] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -436,7 +486,7 @@ function ProfileIntentEditor({
     try {
       const result = await profileUpdate(profile.name, token, {
         search_terms: splitLines(roles),
-        locations: splitLines(locations),
+        locations: markets,
         remote,
       })
       if (!result.ok || !result.profile) throw new Error(result.error || 'Could not save profile')
@@ -474,14 +524,14 @@ function ProfileIntentEditor({
           <Button variant="ghost" disabled={saving || resetting} onClick={() => void reset()}>
             <RefreshCw size={14} aria-hidden="true" /> Reset from résumé
           </Button>
-          <Button variant="secondary" disabled={saving || resetting || !splitLines(roles).length || !splitLines(locations).length} onClick={() => void save()}>
+          <Button variant="secondary" disabled={saving || resetting || !splitLines(roles).length || (!markets.length && !remote)} onClick={() => void save()}>
             {saving ? <RefreshCw size={14} className="animate-spin" aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
             Save profile
           </Button>
         </div>
       </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="text-[10px] font-semibold uppercase text-ink-3">
+      <div className="grid gap-4 md:grid-cols-[minmax(0,.8fr)_minmax(0,1.2fr)]">
+        <label className="text-[11px] font-semibold text-ink-3">
           Target roles
           <textarea
             aria-label="Target roles"
@@ -491,16 +541,34 @@ function ProfileIntentEditor({
             className="mt-1 w-full resize-y rounded-md border border-line bg-inset px-3 py-2 text-[13px] font-normal leading-5 normal-case text-ink outline-none focus:border-line-strong"
           />
         </label>
-        <label className="text-[10px] font-semibold uppercase text-ink-3">
-          Locations
-          <textarea
-            aria-label="Profile locations"
-            value={locations}
-            onChange={(event) => setLocations(event.target.value)}
-            rows={6}
-            className="mt-1 w-full resize-y rounded-md border border-line bg-inset px-3 py-2 text-[13px] font-normal leading-5 normal-case text-ink outline-none focus:border-line-strong"
-          />
-        </label>
+        <fieldset className="min-w-0" aria-label="Preferred job regions">
+          <legend className="text-[11px] font-semibold text-ink-3">Preferred job regions</legend>
+          <p className="mt-0.5 text-[11px] text-ink-3">Choose one or more job markets. Each runs as a separate search.</p>
+          <div className="mt-2 grid gap-x-4 gap-y-3 sm:grid-cols-2">
+            {JOB_MARKET_GROUPS.map((group) => (
+              <div key={group.label}>
+                <p className="mb-1 text-[10px] font-medium text-ink-3">{group.label}</p>
+                <div className="space-y-1">
+                  {group.markets.map((market) => (
+                    <label key={market} className="flex min-h-8 cursor-pointer items-center gap-2 rounded-md px-2 text-[12px] text-ink-2 hover:bg-inset">
+                      <input
+                        type="checkbox"
+                        checked={markets.includes(market)}
+                        onChange={() => setMarkets((current) => (
+                          current.includes(market)
+                            ? current.filter((value) => value !== market)
+                            : [...current, market]
+                        ))}
+                        className="h-4 w-4 accent-[var(--brand-coral)]"
+                      />
+                      {market}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </fieldset>
       </div>
       <label className="mt-3 inline-flex items-center gap-2 text-[12px] text-ink-2">
         <input
@@ -509,7 +577,7 @@ function ProfileIntentEditor({
           onChange={(event) => setRemote(event.target.checked)}
           className="h-4 w-4 accent-[var(--brand-coral)]"
         />
-        Include remote roles
+        Include worldwide remote roles
       </label>
     </section>
   )

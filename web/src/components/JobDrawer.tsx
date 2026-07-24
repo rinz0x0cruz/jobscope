@@ -1,16 +1,27 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ExternalLink, Link2, Search, X } from 'lucide-react'
+import { ArrowRight, ExternalLink, Link2, Reply, Search, Send, X } from 'lucide-react'
 import { toast } from 'sonner'
+import type { EngagementThread } from '@/lib/campaigns'
 import type { Application, ApplicationEvent, JobRow } from '@/lib/schema'
 import { TIER_COLOR } from '@/lib/schema'
 import { signalColor, statusColor, statusLabel } from '@/components/applications/constants'
 import { compLabel } from '@/lib/format'
 import { scoreToGrade } from '@/lib/gamification'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
-import { OfferEditor } from '@/components/OfferEditor'
+import { OfferEditor, type ApplicationOfferUpdate } from '@/components/OfferEditor'
 import { RecruiterOutreach } from '@/components/RecruiterOutreach'
 import { presentFitRationale, presentJobDescription, type DescriptionBlock } from '@/lib/jobPresentation'
+
+function safeExternalUrl(value?: string | null): string | undefined {
+  if (!value) return undefined
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined
+  } catch {
+    return undefined
+  }
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -207,12 +218,85 @@ function ApplicationTimeline({ events }: { events: ApplicationEvent[] }) {
   )
 }
 
+function sameInboundEvent(event: EngagementThread['events'][number], app: ApplicationEvent): boolean {
+  if (event.direction !== 'inbound') return false
+  const participant = event.participant.trim().toLowerCase()
+  const sender = app.from.trim().toLowerCase()
+  const sameSender = !participant || !sender || participant === sender || participant.endsWith(`@${sender}`)
+  const sameSummary = !event.summary || !app.summary || event.summary.trim() === app.summary.trim()
+  return event.date.slice(0, 10) === app.date.slice(0, 10)
+    && event.subject.trim().toLowerCase() === app.subject.trim().toLowerCase()
+    && sameSender
+    && sameSummary
+}
+
+function OutreachTimeline({
+  engagement,
+  applicationEvents = [],
+}: {
+  engagement: EngagementThread
+  applicationEvents?: ApplicationEvent[]
+}) {
+  const events = engagement.events.filter((event) => (
+    !applicationEvents.some((applicationEvent) => sameInboundEvent(event, applicationEvent))
+  ))
+  return (
+    <Section title={`Outreach activity (${events.length})`}>
+      <ol className="space-y-3">
+        {events.map((event, index) => {
+          const inbound = event.direction === 'inbound'
+          const color = inbound ? 'var(--strong)' : 'var(--signal)'
+          const label = inbound
+            ? event.kind === 'opt_out' ? 'Opt out' : 'Reply'
+            : event.kind === 'followup' ? `Follow-up ${event.followup_number || ''}`.trim()
+              : event.kind === 'direct' ? 'Direct outreach' : 'Cold email'
+          return (
+            <li key={`${event.direction}:${event.date}:${index}`} className="relative border-l border-border pl-4">
+              <span
+                aria-hidden="true"
+                className="absolute -left-[5px] top-0.5 grid h-2.5 w-2.5 place-items-center rounded-full"
+                style={{ background: color, boxShadow: '0 0 0 3px var(--bg2)' }}
+              />
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase" style={{ color }}>
+                  {inbound ? <Reply size={12} aria-hidden="true" /> : <Send size={12} aria-hidden="true" />}
+                  {label}
+                </span>
+                <time className="shrink-0 text-[11px] text-mute">{fmtEventDate(event.date)}</time>
+              </div>
+              {event.subject && <div className="mt-0.5 text-[13px] font-medium leading-snug text-fg">{event.subject}</div>}
+              {event.participant && (
+                <div className="mt-0.5 text-[11px] text-mute">
+                  {inbound ? 'From' : 'To'} {event.participant}
+                </div>
+              )}
+              {inbound && event.summary && <p className="mt-1 text-[12px] leading-relaxed text-dim">{event.summary}</p>}
+            </li>
+          )
+        })}
+      </ol>
+    </Section>
+  )
+}
+
 /**
  * Drawer body for an applied role that no longer has a live match row (it aged
  * out of the fresh feed): a compact header + the email timeline, so opening a
  * board card always surfaces the mail summary.
  */
-export function ApplicationReader({ app, onClose }: { app: Application; onClose: () => void }) {
+export function ApplicationReader({
+  app,
+  onClose,
+  engagement,
+  onOpenOutreach,
+  onApplicationUpdated,
+}: {
+  app: Application
+  onClose: () => void
+  engagement?: EngagementThread
+  onOpenOutreach?: (campaignId: string) => void
+  onApplicationUpdated?: (updated: ApplicationOfferUpdate) => void
+}) {
   return (
     <>
       <div className="flex items-start gap-3 px-5 py-4">
@@ -243,9 +327,18 @@ export function ApplicationReader({ app, onClose }: { app: Application; onClose:
             <p className="text-[13px] text-mute">No activity linked to this application yet.</p>
           </Section>
         )}
+        {engagement && <OutreachTimeline engagement={engagement} applicationEvents={app.timeline} />}
+        {engagement?.campaign_id && onOpenOutreach && (
+          <div className="border-t border-border px-5 py-4 sm:px-6">
+            <button type="button" onClick={() => onOpenOutreach(engagement.campaign_id)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-accent hover:underline">
+              Open follow-up in Outreach <ArrowRight size={13} aria-hidden="true" />
+            </button>
+          </div>
+        )}
         <OfferEditor
           key={`${app.job_id}:${app.interview_at}:${app.salary_offered}:${app.offer_accepted}`}
           app={app}
+          onUpdated={onApplicationUpdated}
         />
         <RecruiterOutreach key={`${app.job_id}:followup`} jobId={app.job_id} followup />
       </div>
@@ -256,15 +349,19 @@ export function ApplicationReader({ app, onClose }: { app: Application; onClose:
 export function RoleReader({
   job,
   application,
+  engagement,
   allRows,
   onOpen,
   onClose,
+  onOpenOutreach,
 }: {
   job: JobRow
   application?: Application | null
+  engagement?: EngagementThread
   allRows: JobRow[]
   onOpen: (id: string) => void
   onClose: () => void
+  onOpenOutreach?: (campaignId: string) => void
 }) {
   const e = job.enrich
   const stock = e.stock
@@ -346,7 +443,7 @@ export function RoleReader({
 
       <div className="px-5 pb-4">
         <a
-          href={job.url}
+          href={safeExternalUrl(job.url)}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-1.5 rounded-[10px] bg-accent px-3.5 py-2 text-[13px] font-semibold text-white transition hover:opacity-90"
@@ -359,7 +456,7 @@ export function RoleReader({
             {job.sources.slice(1).map((s, i) => (
               <span key={s.url}>
                 {i > 0 && ', '}
-                <a href={s.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                <a href={safeExternalUrl(s.url)} target="_blank" rel="noreferrer" className="text-accent hover:underline">
                   {s.source}
                 </a>
               </span>
@@ -387,6 +484,14 @@ export function RoleReader({
         {application && application.timeline.length > 0 && (
           <ApplicationTimeline events={application.timeline} />
         )}
+        {engagement && <OutreachTimeline engagement={engagement} applicationEvents={application?.timeline} />}
+        {engagement?.campaign_id && onOpenOutreach && (
+          <div className="border-t border-border px-5 py-4 sm:px-6">
+            <button type="button" onClick={() => onOpenOutreach(engagement.campaign_id)} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-accent hover:underline">
+              Open follow-up in Outreach <ArrowRight size={13} aria-hidden="true" />
+            </button>
+          </div>
+        )}
         <RecruiterOutreach key={job.id} jobId={job.id} />
         {job.description && <JobDescription text={job.description} />}
 
@@ -401,12 +506,12 @@ export function RoleReader({
             {comp && <div className="text-sm font-medium text-fg">{comp}</div>}
             <div className="mt-1 flex flex-wrap gap-3 text-[13px]">
               {e.comp?.levels_fyi && (
-                <a href={e.comp.levels_fyi} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                <a href={safeExternalUrl(e.comp.levels_fyi)} target="_blank" rel="noreferrer" className="text-accent hover:underline">
                   Levels.fyi salaries ↗
                 </a>
               )}
               {e.comp?.levels_search && (
-                <a href={e.comp.levels_search} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                <a href={safeExternalUrl(e.comp.levels_search)} target="_blank" rel="noreferrer" className="text-accent hover:underline">
                   Levels.fyi search ↗
                 </a>
               )}
@@ -481,7 +586,7 @@ export function RoleReader({
               {e.news.slice(0, 3).map((n, i) => (
                 <li key={i}>
                   <a
-                    href={n.link}
+                    href={safeExternalUrl(n.link)}
                     target="_blank"
                     rel="noreferrer"
                     className="text-[13px] text-fg hover:text-accent hover:underline"
@@ -501,7 +606,7 @@ export function RoleReader({
               {job.contacts.map((c, i) => (
                 <li key={i}>
                   <a
-                    href={c.url ?? '#'}
+                    href={safeExternalUrl(c.url)}
                     target="_blank"
                     rel="noreferrer"
                     className="text-[13px] text-accent hover:underline"
@@ -573,40 +678,86 @@ export function RoleReader({
   )
 }
 
+function EngagementReader({
+  engagement,
+  onClose,
+  onOpenOutreach,
+}: {
+  engagement: EngagementThread
+  onClose: () => void
+  onOpenOutreach?: (campaignId: string) => void
+}) {
+  return (
+    <>
+      <div className="relative overflow-hidden border-b border-border px-5 py-4 sm:px-6">
+        <span className="absolute inset-y-0 left-0 w-1 bg-signal" aria-hidden="true" />
+        <p className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase text-signal"><Send size={12} aria-hidden="true" /> Cold outreach</p>
+        <div className="mt-1 flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-semibold leading-snug text-fg">{engagement.company || 'Outreach thread'}</h2>
+            <p className="mt-1 truncate text-[12px] text-mute">{engagement.recipient}</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border text-dim transition hover:border-border-h hover:text-fg"><X size={15} /></button>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        <OutreachTimeline engagement={engagement} />
+        {engagement.campaign_id && onOpenOutreach && (
+          <div className="border-t border-border px-5 py-4 sm:px-6">
+            <button type="button" onClick={() => onOpenOutreach(engagement.campaign_id)} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-semibold text-white transition-transform hover:-translate-y-px">
+              Open in Outreach <ArrowRight size={13} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
 export function JobDrawer({
   job,
   application,
+  engagement,
   allRows,
   onOpen,
   onClose,
+  onOpenOutreach,
+  onApplicationUpdated,
   enabled = true,
 }: {
   job: JobRow | null
   application?: Application | null
+  engagement?: EngagementThread | null
   allRows: JobRow[]
   onOpen: (id: string) => void
   onClose: () => void
+  onOpenOutreach?: (campaignId: string) => void
+  onApplicationUpdated?: (updated: ApplicationOfferUpdate) => void
   enabled?: boolean
 }) {
   return (
-    <Dialog.Root open={enabled && (!!job || !!application)} onOpenChange={(o) => !o && onClose()}>
+    <Dialog.Root open={enabled && (!!job || !!application || !!engagement)} onOpenChange={(o) => !o && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="js-overlay fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" />
         <Dialog.Content
           aria-describedby={undefined}
-          aria-label={job ? `Role details: ${job.title}` : application ? `Application details: ${application.company}` : 'Details'}
+          aria-label={job ? `Role details: ${job.title}` : application ? `Application details: ${application.company}` : engagement ? `Outreach details: ${engagement.company}` : 'Details'}
           className="js-drawer fixed right-0 top-0 z-50 flex h-full w-full max-w-xl flex-col border-l border-border bg-bg2 shadow-2xl outline-none"
         >
           {job ? (
             <RoleReader
               job={job}
               application={application}
+              engagement={engagement ?? undefined}
               allRows={allRows}
               onOpen={onOpen}
               onClose={onClose}
+              onOpenOutreach={onOpenOutreach}
             />
           ) : application ? (
-            <ApplicationReader app={application} onClose={onClose} />
+            <ApplicationReader app={application} engagement={engagement ?? undefined} onClose={onClose} onOpenOutreach={onOpenOutreach} onApplicationUpdated={onApplicationUpdated} />
+          ) : engagement ? (
+            <EngagementReader engagement={engagement} onClose={onClose} onOpenOutreach={onOpenOutreach} />
           ) : null}
         </Dialog.Content>
       </Dialog.Portal>

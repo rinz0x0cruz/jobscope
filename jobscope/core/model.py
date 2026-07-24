@@ -239,7 +239,7 @@ class MailEvent:
     account: str = ""                # mailbox the email came from
     uid: str = ""                    # IMAP UID within the account/folder
     message_id: str = ""             # RFC822 Message-ID header
-    thread_id: str = ""              # best-effort thread key (References root / normalized subject)
+    thread_id: str = ""              # immediate parent Message-ID, else latest reference/subject key
     from_addr: str = ""
     from_name: str = ""
     from_domain: str = ""

@@ -3,7 +3,7 @@
 Usage:
     python -m jobscope init                       Scaffold config + data dir
     python -m jobscope resume import <path> [--name N]  Parse/store a (named) base resume
-    python -m jobscope profile [build|show] [--force]   Editable résumé-derived search profile (drives scan)
+    python -m jobscope profile [build|show] [--force]   Editable roles/job-markets profile (drives scan)
     python -m jobscope scan                        Scrape jobs for your searches
     python -m jobscope match                       Score jobs (multi-resume + filters)
     python -m jobscope enrich [--job ID]           Add comp/stock/reddit/news/contacts/brief
@@ -34,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from .. import __version__
@@ -203,6 +204,17 @@ def cmd_campaign(args, cfg):
                 if follow_up:
                     print(f"  excluded {len(follow_up)} applied compan(ies); use follow-up outreach")
                 return 0
+            if action == "followups":
+                result = campaigns.create_followup_campaign(
+                    cfg, store, args.name, args.count, resume_name=args.resume,
+                )
+                campaign = result["campaign"]
+                print(f"  created {campaign['id']} — {campaign['name']}")
+                for target in result["targets"]:
+                    source = "cold" if target["source_target_id"] else "application"
+                    recipient = target["selected_email"] or "needs contact"
+                    print(f"  {target['company']:<28} [{source}] {recipient}")
+                return 0
             if action == "list":
                 for campaign in campaigns.list_campaigns(store):
                     counts = ", ".join(
@@ -311,7 +323,7 @@ def cmd_dashboard(args, cfg):
 
 def cmd_serve(args, cfg):
     from ..deliver import serve
-    return serve.run(cfg, port=args.port, open_browser=args.open)
+    return serve.run(cfg, port=args.port, open_browser=args.open, hosted=args.hosted)
 
 
 def cmd_refresh(args, cfg):
@@ -614,7 +626,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_resume)
 
     sp = sub.add_parser("profile",
-                        help="Manage résumé-derived search profiles that drive scan (build/show/list/use)")
+                        help="Manage editable roles/job-markets profiles that drive scan (build/show/list/use)")
     sp.add_argument("action", nargs="?", choices=["build", "show", "list", "use"], default="show",
                     help="build (from a résumé), show (default), list all, or use <name> to switch")
     sp.add_argument("name", nargs="?", default=None,
@@ -704,7 +716,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument(
         "action", nargs="?",
-        choices=["create", "list", "show", "discover", "draft", "approve", "start",
+        choices=["create", "followups", "list", "show", "discover", "draft", "approve", "start",
                  "pause", "cancel", "delete", "skip", "send-approved", "ready", "replies", "tick"],
         default="list",
     )
@@ -734,9 +746,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="(deprecated) view the dashboard with `jobscope serve`")
     sp.set_defaults(func=cmd_dashboard)
 
-    sp = sub.add_parser("serve", help="Serve the dashboard locally")
-    sp.add_argument("--port", type=int, default=8799)
+    sp = sub.add_parser("serve", help="Serve the dashboard locally or behind a private tunnel")
+    sp.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8799")))
     sp.add_argument("--open", action="store_true")
+    sp.add_argument("--hosted", action="store_true",
+                    help="Bind externally with fail-closed tunnel and HTTPS-origin guards")
     sp.set_defaults(func=cmd_serve)
 
     sp = sub.add_parser("refresh",

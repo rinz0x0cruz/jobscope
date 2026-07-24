@@ -1,25 +1,75 @@
 """Job scraping via JobSpy (LinkedIn / Indeed / Glassdoor / Google / ZipRecruiter).
 
-Thin, defensive wrapper: run each configured search term, normalize the JobSpy
-DataFrame rows into `Job` objects, and upsert them (dedupe + first/last-seen is
-handled by the store). Failures are per-term so one bad site doesn't sink the run.
+Thin, defensive wrapper: run each configured term/source in committed pages of
+ten, normalize JobSpy rows into `Job` objects, and upsert them (dedupe and
+first/last-seen are handled by the store). Durable cursors resume the next page;
+failures are isolated so one bad source doesn't sink the run.
 """
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
+import json
 from typing import Any
 
 from jobscope.core import geo
 from jobscope.core.model import Job, derive_remote_scope
 from jobscope.core.store import now_iso
+from jobscope.ingest.ats import _strip_html
 
 DISCOVERY_MARKER = "discovery:last_scan"
+DISCOVERY_CURSOR_MARKER = "discovery:cursors:v1"
+DISCOVERY_PAGE_SIZE = 10
+_CURSOR_DONE = "done"
+
+
+def _load_cursors(store) -> dict[str, int | str]:
+    raw = store.meta_get(DISCOVERY_CURSOR_MARKER)
+    if not raw:
+        return {}
+    try:
+        values = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(values, dict):
+        return {}
+    return {
+        str(key): value
+        for key, value in values.items()
+        if value == _CURSOR_DONE
+        or (isinstance(value, int) and not isinstance(value, bool) and value >= 0)
+    }
+
+
+def _save_cursors(store, cursors: dict[str, int | str]) -> None:
+    store.meta_set(
+        DISCOVERY_CURSOR_MARKER,
+        json.dumps(cursors, sort_keys=True, separators=(",", ":")),
+    )
+
+
+def _cursor_key(settings: dict, term: str, site: str) -> str:
+    query = {
+        "site": site,
+        "term": term,
+        "google_term": settings.get("google_term") or term,
+        "location": settings.get("location") or "",
+        "country_indeed": settings.get("country_indeed", "USA"),
+        "distance": settings.get("distance", 50),
+        "hours_old": settings.get("hours_old") or 0,
+        "is_remote": bool(settings.get("is_remote")),
+        "job_type": settings.get("job_type") or "",
+    }
+    encoded = json.dumps(query, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def discovery_due(cfg: dict, store, *, now: _dt.datetime | None = None) -> bool:
     settings = cfg.get("discovery", {}) or {}
     if not settings.get("enabled", True):
         return False
+    if store.meta_get(DISCOVERY_CURSOR_MARKER) not in (None, "", "{}"):
+        return True
     interval = max(1, int(settings.get("interval_hours", 24) or 24))
     last = store.meta_get(DISCOVERY_MARKER)
     if not last:
@@ -66,11 +116,14 @@ def run(cfg: dict, store, *, mode: str = "all", force_discovery: bool = False) -
         print("  search profile active: "
               f"{len(terms)} role(s)" + (f" x {len(locs)} location(s)" if locs else "")
               + (f" -> {', '.join(terms[:6])}" if terms else ""))
-    home = base.get("home_country", "India")
+    default_home = base.get("home_country", "India")
     geo_on = bool(base.get("scope_to_home", True))
     total_new = 0
     total_seen = 0
     total_dropped = 0
+    cursors = _load_cursors(store)
+    active_cursors: set[str] = set()
+    pages_remaining = False
 
     try:
         from jobspy import scrape_jobs
@@ -83,95 +136,155 @@ def run(cfg: dict, store, *, mode: str = "all", force_discovery: bool = False) -
     profiles = base.get("profiles") or [{}]
     for search_profile in profiles:
         settings = {**base, **search_profile}
+        home = settings.get("home_country", default_home)
         label = search_profile.get("name") or settings.get("location") or "search"
         if len(profiles) > 1:
             print(f"\n  == profile: {label} "
                   f"(location={settings.get('location')!r}, hours_old={settings.get('hours_old')}) ==")
-        new, seen, dropped = _scan_profile(
+        new, seen, dropped, pending = _scan_profile(
             scrape_jobs, settings, store, label, home, geo_on,
+            cursors, active_cursors,
         )
         total_new += new
         total_seen += seen
         total_dropped += dropped
+        pages_remaining = pages_remaining or pending
 
-    store.meta_set(DISCOVERY_MARKER, now_iso())
+    cursors = {key: value for key, value in cursors.items() if key in active_cursors}
+    if pages_remaining:
+        _save_cursors(store, cursors)
+    else:
+        store.meta_set(DISCOVERY_MARKER, now_iso())
+        _save_cursors(store, {})
 
     drop_note = f" ({total_dropped} out-of-scope dropped)" if total_dropped else ""
-    print(f"\n  broad discovery complete: {total_new} new / {total_seen} seen{drop_note}. "
-          f"Next: python -m jobscope match")
+    if pages_remaining:
+        print(f"\n  broad discovery page complete: {total_new} new / {total_seen} seen{drop_note}. "
+              "More pages are ready; run scan again to resume.")
+    else:
+        print(f"\n  broad discovery complete: {total_new} new / {total_seen} seen{drop_note}. "
+              "Next: python -m jobscope match")
     return 0
 
 
 def _scan_profile(scrape_jobs, s: dict, store, label: str,
-                  home: str = "India", geo_on: bool = True) -> tuple[int, int, int]:
-    """Run every search term for one profile; returns (new, seen, dropped) counts."""
+                  home: str, geo_on: bool, cursors: dict[str, int | str],
+                  active_cursors: set[str]) -> tuple[int, int, int, bool]:
+    """Run one page per term/source; return counts plus whether work remains."""
     new_total = 0
     seen_total = 0
     dropped_total = 0
+    pages_remaining = False
+    sites = s.get("sites") or []
+    if isinstance(sites, str):
+        sites = [sites]
+    try:
+        result_limit = max(1, int(s.get("results_wanted") or DISCOVERY_PAGE_SIZE))
+    except (TypeError, ValueError):
+        result_limit = DISCOVERY_PAGE_SIZE
     for term in s["terms"]:
-        try:
-            kwargs: dict[str, Any] = dict(
-                site_name=s["sites"],
+        for site_value in sites:
+            site = str(site_value)
+            cursor_key = _cursor_key(s, term, site)
+            active_cursors.add(cursor_key)
+            cursor = cursors.get(cursor_key, 0)
+            if cursor == _CURSOR_DONE:
+                continue
+            offset = int(cursor)
+            if offset >= result_limit:
+                cursors[cursor_key] = _CURSOR_DONE
+                _save_cursors(store, cursors)
+                continue
+            page_size = min(DISCOVERY_PAGE_SIZE, result_limit - offset)
+            source = f"jobspy:{site}:{label}:{term}"
+            action = f"scan:{site}:{label}:{term}"
+            try:
+                kwargs: dict[str, Any] = dict(
+                site_name=site,
                 search_term=term,
                 google_search_term=s.get("google_term") or term,
                 location=s["location"],
-                results_wanted=s["results_wanted"],
+                results_wanted=page_size,
+                offset=offset,
                 country_indeed=s.get("country_indeed", "USA"),
                 distance=s.get("distance", 50),
-                description_format="markdown",
+                description_format="html",
                 linkedin_fetch_description=s.get("linkedin_fetch_description", True),
                 verbose=0,
             )
-            # optional proxies protect your main IP on big scans (no fake accounts)
-            if s.get("proxies"):
-                kwargs["proxies"] = s["proxies"]
-            # Indeed/LinkedIn only allow ONE of {hours_old} vs {is_remote/job_type};
-            # prefer recency and let the location string handle remote vs on-site.
-            if s.get("hours_old"):
-                kwargs["hours_old"] = s["hours_old"]
-            elif s.get("is_remote"):
-                kwargs["is_remote"] = True
+                # Optional proxies protect your main IP on big scans (no fake accounts).
+                if s.get("proxies"):
+                    kwargs["proxies"] = s["proxies"]
+                # Indeed/LinkedIn only allow one of hours_old vs is_remote/job_type;
+                # prefer recency and let the location string handle work mode.
+                if s.get("hours_old"):
+                    kwargs["hours_old"] = s["hours_old"]
+                elif s.get("is_remote"):
+                    kwargs["is_remote"] = True
 
-            df = scrape_jobs(**kwargs)
-            if df is None or len(df) == 0:
-                print(f"  [{term}] 0 results")
-                store.log_run(f"scan:{label}:{term}", 0, "empty")
-                store.set_source_health(
-                    f"jobspy:{label}:{term}", provider="jobspy", slug=term,
-                    status="empty", item_count=0, attempts=1,
+                df = scrape_jobs(**kwargs)
+                result_count = min(len(df), page_size) if df is not None else 0
+                new_here = 0
+                if df is not None:
+                    for index, (_, row) in enumerate(df.iterrows()):
+                        if index >= page_size:
+                            break
+                        job = _row_to_job(row)
+                        if not (job.title and job.company):
+                            continue
+                        if job.is_remote and not bool(s.get("is_remote", True)):
+                            dropped_total += 1
+                            continue
+                        if geo_on and not geo.in_scope(job, home):
+                            dropped_total += 1
+                            continue
+                        seen_total += 1
+                        if store.upsert_job(job):
+                            new_here += 1
+                new_total += new_here
+
+                page_full = result_count >= page_size
+                next_offset = offset + page_size
+                has_more = page_full and next_offset < result_limit
+                cursors[cursor_key] = next_offset if has_more else _CURSOR_DONE
+                _save_cursors(store, cursors)
+                pages_remaining = pages_remaining or has_more
+
+                if result_count == 0:
+                    status = "empty" if offset == 0 else "ok"
+                elif has_more:
+                    status = "paged"
+                elif page_full and next_offset >= result_limit:
+                    status = "saturated"
+                else:
+                    status = "ok"
+                detail = ""
+                if has_more:
+                    detail = f"page at offset {offset} complete; next offset {next_offset}"
+                elif status == "saturated":
+                    detail = "configured result cap reached; additional results may exist"
+                cap_note = ", more pages available" if has_more else (
+                    ", result cap reached" if status == "saturated" else ""
                 )
-                continue
-            new_here = 0
-            for _, row in df.iterrows():
-                job = _row_to_job(row)
-                if not (job.title and job.company):
-                    continue
-                if geo_on and not geo.in_scope(job, home):
-                    dropped_total += 1
-                    continue
-                seen_total += 1
-                if store.upsert_job(job):
-                    new_here += 1
-            new_total += new_here
-            saturated = len(df) >= int(s.get("results_wanted") or 0) > 0
-            status = "saturated" if saturated else "ok"
-            cap_note = ", result cap reached" if saturated else ""
-            print(f"  [{term}] {len(df)} results ({new_here} new{cap_note})")
-            store.log_run(f"scan:{label}:{term}", len(df), status)
-            store.set_source_health(
-                f"jobspy:{label}:{term}", provider="jobspy", slug=term,
-                status=status, item_count=len(df), attempts=1,
-                detail=("results_wanted cap reached; additional results may exist"
-                        if saturated else ""),
-            )
-        except Exception as e:  # noqa: BLE001 - keep scanning other terms
-            print(f"  [{term}] error: {e}")
-            store.log_run(f"scan:{label}:{term}", 0, "error")
-            store.set_source_health(
-                f"jobspy:{label}:{term}", provider="jobspy", slug=term,
-                status="error", item_count=0, attempts=1, detail=str(e),
-            )
-    return new_total, seen_total, dropped_total
+                print(f"  [{site}:{term}] {result_count} results "
+                      f"({new_here} new, offset {offset}{cap_note})")
+                store.log_run(action, result_count, status)
+                store.set_source_health(
+                    source, provider="jobspy", slug=term,
+                    status=status, item_count=result_count, attempts=1,
+                    detail=detail,
+                )
+            except Exception as e:  # noqa: BLE001 - keep scanning other terms
+                cursors[cursor_key] = offset
+                _save_cursors(store, cursors)
+                pages_remaining = True
+                print(f"  [{site}:{term}] error at offset {offset}: {e}")
+                store.log_run(action, 0, "error")
+                store.set_source_health(
+                    source, provider="jobspy", slug=term,
+                    status="error", item_count=0, attempts=1, detail=str(e),
+                )
+    return new_total, seen_total, dropped_total, pages_remaining
 
 
 def _val(row, *names, default=None):
@@ -232,7 +345,7 @@ def _row_to_job(row) -> Job:
         remote_scope=derive_remote_scope(location, title, is_remote),
         raw_is_remote=(bool(raw_remote) if raw_remote is not None else None),
         url=str(_val(row, "job_url", "job_url_direct", default="") or ""),
-        description=str(_val(row, "description", default="") or ""),
+        description=_strip_html(str(_val(row, "description", default="") or "")),
         salary_min=_num(_val(row, "min_amount")),
         salary_max=_num(_val(row, "max_amount")),
         salary_interval=str(_val(row, "interval", default="") or ""),

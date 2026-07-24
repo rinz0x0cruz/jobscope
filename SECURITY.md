@@ -1,8 +1,9 @@
 # Security & Privacy
 
 jobscope is a **local-first** tool: it reads your Gmail (read-only) to track job applications,
-stores everything in a local SQLite database, and can publish a **redacted** dashboard to GitHub
-Pages. This document describes what data it holds, how it's protected, and how to harden your setup.
+stores everything in SQLite, and can publish a **redacted** dashboard to GitHub Pages. An explicit
+hosted mode can move the private control plane and full data directory to one protected persistent
+volume. This document describes what data it holds, how it's protected, and how to harden your setup.
 
 ## What data jobscope holds, and where
 
@@ -12,13 +13,29 @@ Pages. This document describes what data it holds, how it's protected, and how t
 | Scraped jobs, scores, rationale | `data/jobscope.db` | gitignored |
 | Referral contacts (names, public profile links) | `data/jobscope.db` | public-data leads only |
 | Application funnel + email events (recruiter name/domain, subject) | `data/jobscope.db` | see *Data minimization* |
-| Campaign ranks, recipients, drafts, approvals, schedules, suppressions | `data/jobscope.db` | local-only; never added to dashboard payloads |
-| Secrets (Gmail app password, API keys) | OS keychain **or** `.env` | never in `config.yaml`, never committed |
+| Campaign ranks, recipients, drafts, approvals, schedules, provenance/thread IDs, suppressions | `data/jobscope.db` or an opted-in private hosted volume | never added to Pages or cloud-refresh snapshots |
+| Secrets (Gmail app password, API keys) | OS keychain, `.env`, or hosted secret manager | never in `config.yaml`, never committed |
 | Published dashboard | `gh-pages` branch → GitHub Pages | empty locked shell + encrypted full payload (see *Publication*) |
 | Cloud refresh database | private `data` branch | current + last-known-good JSDB v1 AES-GCM ciphertext; campaign tables stripped and vacuumed |
+| Optional hosted control plane | one private persistent volume | full SQLite/profile state is plaintext while the service runs; the provider becomes part of the trust boundary |
 
-Everything under `data/`, plus `.env` and `config.*`, is **gitignored** and never leaves your
-machine — except the redacted dashboard you explicitly publish.
+In the default local mode, everything under `data/`, plus `.env` and `config.*`, is **gitignored**
+and never leaves your machine except through the explicit encrypted publication/refresh paths.
+Opting into hosted mode deliberately moves the full `data/` state to the configured private volume.
+
+## Private hosted control plane
+
+Hosted mode is not safe on a directly public origin. It binds externally only after explicit
+`--hosted` selection and requires `JOBSCOPE_PUBLIC_ORIGIN` to be one HTTPS origin with no path.
+Every supported request except the non-sensitive `/healthz` probe must carry
+`Cf-Access-Jwt-Assertion`; unsafe API calls must also have that exact Origin and the existing
+per-process Jobscope token.
+
+The header check assumes `cloudflared` has **Protect with Access** enabled and validates the JWT
+before proxying. The Railway service must have no generated/public domain, and Cloudflare Access
+must deny by default. A header without those network controls is forgeable and is not authentication.
+Run one application replica because SQLite and refresh state remain single-writer. Keep AI, SMTP,
+and campaign ticking disabled during the empty canary and initial data cutover.
 
 ## Secrets
 
@@ -84,12 +101,17 @@ machine — except the redacted dashboard you explicitly publish.
   save fail closed, retain one validated fallback generation, validate SQLite before use, and use
   a guarded `force-with-lease` update. See [OPERATIONS.md](OPERATIONS.md) for recovery and rotation.
 - Campaign tables are intentionally excluded from the empty shell, encrypted dashboard payload, and the
-  encrypted cloud SQLite copy. Campaign APIs exist only on loopback `jobscope serve`; GitHub Pages and
-  Actions never expose or send campaign mail. Campaign recovery therefore requires a local database backup.
+  encrypted cloud SQLite copy. Outreach APIs exist only in the private control plane (loopback by default,
+  or explicit Access-protected hosted mode); GitHub Pages and Actions never expose or send campaign mail.
+  Campaign recovery therefore requires a full local database or hosted-volume backup.
+- `GET /api/engagements` is token/origin guarded and derives an allowlisted correspondence view at read time.
+  It emits recipient/subject/state/timestamps/follow-up counts and summaries only for retained inbound snippets.
+  It cannot emit campaign bodies, résumé paths/hashes, approval hashes, suppression internals, or raw
+  message/thread/reply IDs. Static Pages and cloud-safe snapshots never receive this projection.
 
 ## Recruiter outreach (opt-in, individually approved)
 
-`jobscope outreach <job_id>` handles one role. Local Campaigns can pace several companies, but every message
+`jobscope outreach <job_id>` handles one role. Private Outreach batches can pace several companies, but every message
 still requires its own explicit approval and immutable content hash:
 
 - **Preview by default.** It renders the recipient + email + attachment and sends nothing unless you
@@ -105,14 +127,27 @@ still requires its own explicit approval and immutable content hash:
 - **Deduped + cooldown + opt-out.** One outreach per company (recorded on the application), a
   configurable `cooldown_days`, `do_not_contact`, application-history exclusion, and local opt-out suppressions
   are all rechecked before a campaign send.
+- **Follow-ups preserve identity.** Cold follow-ups are addressed only to the original cold recipient and
+  carry the original thread identity. Application follow-ups reuse and lock a prior outreach recipient when
+  one exists; otherwise they require a verified recruiter/company contact. A newer application action,
+  response, terminal status, suppression, or changed source invalidates approval or blocks sending.
 - **No bulk approval.** Campaign edits clear approval. The scheduler sends one due approved target per run and
   also enforces the configured local window, daily cap, and minimum spacing. It has no force-send option.
 - **Durable reply correlation.** Campaign mail carries a stable Message-ID. Read-only IMAP sync matches
-  `In-Reply-To` first and confirmed-domain/post-send time second. Generic replies and opt-outs are classified
-  deterministically; opt-out bodies need not be retained for suppression to work.
+  the immediate `In-Reply-To` parent first and confirmed-domain/post-send time second. Follow-up mail also
+  carries `References`; generic replies and opt-outs are classified deterministically, and opt-out bodies
+  need not be retained for suppression to work.
 - **Unknown delivery fails closed.** SMTP acceptance cannot be atomically committed with SQLite. Once
   `sendmail` starts, an exception becomes `delivery_unknown`, never an automatic retry. The user must inspect
-  Sent mail and explicitly resolve the attempt. Error records contain only safe exception type/code metadata.
+  Sent mail and explicitly resolve the attempt. A process that dies after atomically claiming a send leaves
+  `sending`; after 15 minutes the next scheduler tick moves that stale claim to `delivery_unknown` for the same
+  manual resolution, never an automatic retry. Error records contain only safe exception type/code metadata.
+- **Generated documents isolate untrusted content.** Job, company, résumé, news, and optional model text is
+  HTML-escaped before Markdown rendering. The PDF browser disables JavaScript, aborts subresource requests,
+  and receives a deny-by-default CSP, so a listing cannot execute script or fetch remote pixels beside résumé PII.
+- **JobSpy descriptions avoid its Markdown converter.** Discovery requests HTML and immediately reduces it to
+  plain text with Jobscope's script/style-stripping normalizer. The upstream Markdownify dependency remains
+  installed for JobSpy compatibility but its vulnerable heading-conversion path is not invoked by Jobscope.
 - **Quorum is advisory.** If explicitly enabled, Quorum may rewrite a draft or break an ordinary inbox-label
   tie. It never controls ranking, recipient validity, approval, sending, reply correlation, or suppression.
   Campaign reply and opt-out labels cannot be overwritten by the model path.
@@ -142,6 +177,7 @@ Intentionally out of scope for now, to stay portable and dependency-light:
 
 ## Reporting a vulnerability
 
-This is a personal, local-first tool with no Internet-facing backend. Its optional HTTP control plane binds
-only to loopback and requires a per-process token plus same-origin checks. If you find a security issue, please
-open a GitHub issue (omit any secret values) or contact the maintainer privately.
+This is a personal, local-first tool. Its default HTTP control plane binds only to loopback and requires a
+per-process token plus same-origin checks. Optional hosted mode adds a private Tunnel/Access boundary but no
+public origin. If you find a security issue, open a GitHub issue without secret values or contact the
+maintainer privately.

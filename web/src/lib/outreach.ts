@@ -52,7 +52,7 @@ export interface CompanyOutreach {
 const api = (path: string) => `${location.origin}/${path}`
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
 
-// Probe the local serve API once; resolve directly to null on public/static hosts.
+// Probe the control plane once on loopback or in the explicit hosted build.
 let tokenProbe: Promise<string | null> | null = null
 let dashboardProbe: Promise<DashboardData> | null = null
 
@@ -62,7 +62,8 @@ export function resetLocalServeToken(): void {
 }
 
 export function localServeToken(): Promise<string | null> {
-  if (!LOOPBACK_HOSTS.has(location.hostname.toLowerCase())) {
+  const hostedBuild = import.meta.env.VITE_JOBSCOPE_HOSTED === '1'
+  if (!hostedBuild && !LOOPBACK_HOSTS.has(location.hostname.toLowerCase())) {
     return Promise.resolve(null)
   }
   if (!tokenProbe) {
@@ -74,10 +75,29 @@ export function localServeToken(): Promise<string | null> {
   return tokenProbe
 }
 
+export async function controlPlaneFetch(
+  path: string,
+  token: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const request = (currentToken: string) => {
+    const headers = new Headers(init.headers)
+    headers.set('X-Refresh-Token', currentToken)
+    return fetch(api(path), { ...init, headers })
+  }
+  const cachedToken = tokenProbe ? await tokenProbe : null
+  const currentToken = cachedToken || token
+  const response = await request(currentToken)
+  if (response.status !== 403) return response
+  resetLocalServeToken()
+  const freshToken = await localServeToken()
+  return freshToken && freshToken !== currentToken ? request(freshToken) : response
+}
+
 export async function outreachPreview(jobId: string, token: string, to?: string, followup?: boolean): Promise<OutreachPreview> {
-  const r = await fetch(api('api/outreach'), {
+  const r = await controlPlaneFetch('api/outreach', token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ job_id: jobId, ...(to ? { to } : {}), ...(followup ? { followup: true } : {}) }),
   })
   return (await r.json()) as OutreachPreview
@@ -88,9 +108,9 @@ export async function outreachSend(
   token: string,
   payload: { to: string; subject: string; body: string; force?: boolean },
 ): Promise<OutreachSendResult> {
-  const r = await fetch(api('api/outreach'), {
+  const r = await controlPlaneFetch('api/outreach', token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ job_id: jobId, send: true, ...payload }),
   })
   return (await r.json()) as OutreachSendResult
@@ -115,9 +135,9 @@ export async function applicationUpdate(
   token: string,
   fields: OfferFields,
 ): Promise<ApplicationUpdateResult> {
-  const r = await fetch(api('api/application/update'), {
+  const r = await controlPlaneFetch('api/application/update', token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ job_id: jobId, ...fields }),
   })
   return (await r.json()) as ApplicationUpdateResult
@@ -139,8 +159,7 @@ export interface ProfileUploadResult extends ProfileUseResult {
 export function localDashboard(token: string, refresh = false): Promise<DashboardData> {
   if (refresh) dashboardProbe = null
   if (!dashboardProbe) {
-    dashboardProbe = fetch(api('api/dashboard'), {
-      headers: { 'X-Refresh-Token': token },
+    dashboardProbe = controlPlaneFetch('api/dashboard', token, {
       cache: 'no-store',
     }).then(async (response) => {
       const result = await response.json() as { ok?: boolean; error?: string; data?: DashboardData }
@@ -175,9 +194,9 @@ function fileAsBase64(file: File): Promise<string> {
 }
 
 export async function profileUse(name: string, token: string): Promise<ProfileUseResult> {
-  const r = await fetch(api('api/profile/use'), {
+  const r = await controlPlaneFetch('api/profile/use', token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   })
   return (await r.json()) as ProfileUseResult
@@ -188,18 +207,18 @@ export async function profileUpdate(
   token: string,
   intent: ProfileIntentUpdate,
 ): Promise<ProfileUseResult> {
-  const r = await fetch(api('api/profile'), {
+  const r = await controlPlaneFetch('api/profile', token, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, ...intent }),
   })
   return (await r.json()) as ProfileUseResult
 }
 
 export async function profileReset(name: string, token: string): Promise<ProfileUseResult> {
-  const r = await fetch(api('api/profile/reset'), {
+  const r = await controlPlaneFetch('api/profile/reset', token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   })
   return (await r.json()) as ProfileUseResult
@@ -211,9 +230,9 @@ export async function profileUpload(
   token: string,
 ): Promise<ProfileUploadResult> {
   const contentBase64 = await fileAsBase64(file)
-  const r = await fetch(api('api/resume/upload'), {
+  const r = await controlPlaneFetch('api/resume/upload', token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name,
       filename: file.name,
@@ -230,9 +249,9 @@ export async function companyOutreachPreview(
   token: string,
   opts?: { url?: string; to?: string },
 ): Promise<CompanyOutreach> {
-  const r = await fetch(api('api/company-outreach'), {
+  const r = await controlPlaneFetch('api/company-outreach', token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       company,
       ...(opts?.url ? { url: opts.url } : {}),
@@ -247,9 +266,9 @@ export async function companyOutreachSend(
   token: string,
   payload: { to: string; subject: string; body: string; url?: string; force?: boolean },
 ): Promise<OutreachSendResult> {
-  const r = await fetch(api('api/company-outreach'), {
+  const r = await controlPlaneFetch('api/company-outreach', token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ company, send: true, ...payload }),
   })
   return (await r.json()) as OutreachSendResult

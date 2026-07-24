@@ -45,26 +45,42 @@ def test_snapshot_validator_cli_reports_failure(tmp_path, capsys):
 def test_cloud_safe_snapshot_vacuums_local_campaign_data(tmp_path):
     source = tmp_path / "local.db"
     destination = tmp_path / "cloud.db"
-    marker = "private-recipient-canary@example.test"
+    markers = (
+        "private-recipient-canary@example.test",
+        "private-application-canary",
+        "private-source-target-canary",
+        "private-parent-message-canary@example.test",
+        "private-root-message-canary@example.test",
+    )
     with Store(str(source)) as store:
-        campaign = store.create_outreach_campaign("Private campaign", 1)
+        campaign = store.create_outreach_campaign(
+            "Private follow-up campaign", 1, purpose="followup",
+        )
         target = store.upsert_outreach_campaign_target(
-            campaign["id"], "Private Co", "private co", rank_score=80,
+            campaign["id"], "Private Co", "private co",
+            application_job_id=markers[1], source_target_id=markers[2],
+            parent_message_id=markers[3], root_message_id=markers[4],
+            followup_number=1, rank_score=80,
         )
         store.set_outreach_campaign_draft(
-            target["id"], selected_email=marker,
+            target["id"], selected_email=markers[0],
             subject="Private subject canary", body="Private body canary",
         )
-        store.add_outreach_suppression("email", marker, reason="private reason canary")
+        store.add_outreach_suppression(
+            "email", markers[0], reason="private reason canary",
+        )
 
     create_cloud_safe_snapshot(source, destination)
 
     with sqlite3.connect(destination) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
         for table in (
             "outreach_campaigns", "outreach_campaign_targets", "outreach_campaign_runs",
             "outreach_suppressions",
         ):
             assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
-    assert marker.encode() not in destination.read_bytes()
+    snapshot_bytes = destination.read_bytes()
+    for marker in markers:
+        assert marker.encode() not in snapshot_bytes
     with sqlite3.connect(source) as connection:
         assert connection.execute("SELECT COUNT(*) FROM outreach_campaigns").fetchone()[0] == 1

@@ -9,7 +9,7 @@ import type {
   ReviewState,
 } from './schema'
 import { companyNameKey } from './companies'
-import { localServeToken } from './outreach'
+import { controlPlaneFetch, localServeToken } from './outreach'
 
 export const MONITORING_QUEUE_KEY = 'jobscope-monitoring-actions'
 export const MONITORING_QUEUE_EVENT = 'jobscope:monitoring-queue'
@@ -20,7 +20,6 @@ export type MonitoringAction =
   | { type: 'monitor.scan'; monitor_id: string }
   | { type: 'monitor.contacts'; monitor_id: string }
   | { type: 'review.set'; job_id: string; state: ReviewState }
-  | { type: 'application.restore'; job_id: string }
 
 export interface ScanDecisionFunnel {
   board: number
@@ -81,13 +80,8 @@ export interface CompanyResolution {
   results: Array<{ id: string; title: string; location: string; url: string; score: number; tier: string; rationale: string }>
 }
 
-function api(path: string): string {
-  return `${location.origin}/${path}`
-}
-
 function actionKey(action: MonitoringAction): string {
   if (action.type === 'review.set') return `review:${action.job_id}`
-  if (action.type === 'application.restore') return `application:${action.job_id}:restore`
   if (action.type === 'monitor.upsert') return `monitor-company:${action.company.trim().toLowerCase()}`
   return `monitor:${action.monitor_id}:${action.type}`
 }
@@ -101,7 +95,11 @@ export function collapseMonitoringActions(actions: MonitoringAction[]): Monitori
 export function queuedMonitoringActions(): MonitoringAction[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(MONITORING_QUEUE_KEY) || '[]')
-    return Array.isArray(parsed) ? parsed as MonitoringAction[] : []
+    return Array.isArray(parsed)
+      ? parsed.filter((action) => (
+          !action || typeof action !== 'object' || action.type !== 'application.restore'
+        )) as MonitoringAction[]
+      : []
   } catch {
     return []
   }
@@ -142,9 +140,9 @@ export async function submitMonitoringActions(actions: MonitoringAction[]): Prom
     writeQueue(queued)
     return { ok: true, mode: 'queued', queued: queued.length }
   }
-  const response = await fetch(api('api/monitoring/actions'), {
+  const response = await controlPlaneFetch('api/monitoring/actions', token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ actions: collapsed }),
   })
   const payload = await response.json() as Omit<MonitoringActionResult, 'mode' | 'queued'>
@@ -160,9 +158,9 @@ export async function resolveCompany(
 ): Promise<CompanyResolution | null> {
   const token = await localServeToken()
   if (!token) return null
-  const response = await fetch(api('api/companies/resolve'), {
+  const response = await controlPlaneFetch('api/companies/resolve', token, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ company, careers_url: careersUrl }),
   })
   const payload = await response.json() as CompanyResolution
@@ -200,11 +198,8 @@ function queuedCompany(action: Extract<MonitoringAction, { type: 'monitor.upsert
 export function projectMonitoringActions(data: DashboardData, actions: MonitoringAction[]): DashboardData {
   let companies = [...data.companies]
   let reviews = [...data.reviews]
-  let applications = [...(data.applications ?? [])]
-  let activityAudit = {
-    ...data.activity_audit,
-    recoverable_applications: [...data.activity_audit.recoverable_applications],
-  }
+  const applications = [...(data.applications ?? [])]
+  const activityAudit = data.activity_audit
   for (const action of collapseMonitoringActions(actions)) {
     if (action.type === 'review.set') {
       const existing = reviews.find((review) => review.job_id === action.job_id)
@@ -222,31 +217,6 @@ export function projectMonitoringActions(data: DashboardData, actions: Monitorin
             first_seen: new Date().toISOString(),
             reviewed_at: action.state === 'pending' ? '' : new Date().toISOString(),
           }]
-    } else if (action.type === 'application.restore') {
-      const recoverable = activityAudit.recoverable_applications.find(
-        (application) => application.job_id === action.job_id,
-      )
-      if (recoverable && !applications.some((application) => application.job_id === action.job_id)) {
-        applications = [...applications, {
-          job_id: recoverable.job_id,
-          company: recoverable.company,
-          title: recoverable.title,
-          status: recoverable.status,
-          applied_at: '',
-          updated: recoverable.tombstoned_at,
-          source: recoverable.source,
-          interview_at: '',
-          salary_offered: '',
-          offer_accepted: '',
-          timeline: [],
-        }]
-      }
-      activityAudit = {
-        ...activityAudit,
-        recoverable_applications: activityAudit.recoverable_applications.filter(
-          (application) => application.job_id !== action.job_id,
-        ),
-      }
     } else if (action.type === 'monitor.status') {
       const target = companies.find((company) => company.id === action.monitor_id)
       const targetKey = companyNameKey(target?.company ?? '')
@@ -272,7 +242,7 @@ export function projectMonitoringActions(data: DashboardData, actions: Monitorin
             careers_url: action.careers_url || company.careers_url,
             provider: action.provider || company.provider,
             slug: action.slug || company.slug,
-            status: action.status || 'active',
+            status: action.status || (company.status === 'removed' ? 'active' : company.status),
             lifecycle: 'watching',
             added_from: company.added_from.includes('user')
               ? company.added_from

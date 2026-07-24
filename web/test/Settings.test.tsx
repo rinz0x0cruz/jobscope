@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Settings } from '@/features/settings'
 import type { SettingsProps } from '@/features/settings'
 import { ScoreFormatProvider } from '@/hooks/ScoreFormatProvider'
@@ -10,7 +10,7 @@ const profile: Profile = {
   seniority: 'Senior',
   years_experience: 8,
   search_terms: ['Security Engineer', 'AppSec'],
-  locations: ['Remote', 'Berlin'],
+  locations: ['India'],
   remote: true,
   top_skills: ['Python', 'Threat Modeling'],
   name: 'security-consulting',
@@ -52,9 +52,27 @@ describe('Settings lens', () => {
   it('shows the résumé profile summary', () => {
     renderSettings()
     expect(screen.getByRole('heading', { name: 'Résumé' })).toBeInTheDocument()
+    const card = screen.getByRole('region', { name: 'Active search profile' })
     expect(screen.getAllByText('security-consulting')).toHaveLength(2)
-    expect(screen.getByText('Security Engineer')).toBeInTheDocument()
-    expect(screen.getByText('Threat Modeling')).toBeInTheDocument()
+    expect(within(card).getByText('Security Engineer')).toBeInTheDocument()
+    expect(within(card).getByText('Threat Modeling')).toBeInTheDocument()
+    expect(within(card).getByText('Active ranking profile')).toBeInTheDocument()
+    expect(within(card).getByText('Preferred job regions')).toBeInTheDocument()
+  })
+
+  it('normalizes legacy city locations without country-name collisions', () => {
+    renderSettings({
+      profile: {
+        ...profile,
+        locations: ['Indianapolis, United States', 'London, UK', 'Berlin, Germany'],
+      },
+      serveToken: 'local-token',
+    })
+
+    expect(screen.getByRole('checkbox', { name: 'India' })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'United States' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'United Kingdom' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'Germany' })).toBeChecked()
   })
 
   it('updates the editor when fresher runtime profile data arrives', async () => {
@@ -171,7 +189,7 @@ describe('Settings lens', () => {
     const edited = {
       ...profile,
       search_terms: ['Detection Engineer', 'Threat Researcher'],
-      locations: ['India'],
+      locations: ['Germany'],
       remote: false,
     }
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -186,10 +204,9 @@ describe('Settings lens', () => {
     fireEvent.change(await screen.findByLabelText('Target roles'), {
       target: { value: 'Detection Engineer\nThreat Researcher' },
     })
-    fireEvent.change(screen.getByLabelText('Profile locations'), {
-      target: { value: 'India' },
-    })
-    fireEvent.click(screen.getByLabelText('Include remote roles'))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'India' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Germany' }))
+    fireEvent.click(screen.getByLabelText('Include worldwide remote roles'))
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
 
     await waitFor(() => expect(onProfileChange).toHaveBeenCalledWith(edited))
@@ -199,10 +216,36 @@ describe('Settings lens', () => {
     expect(JSON.parse(String((call?.[1] as RequestInit).body))).toEqual({
       name: profile.name,
       search_terms: ['Detection Engineer', 'Threat Researcher'],
-      locations: ['India'],
+      locations: ['Germany'],
       remote: false,
     })
     expect(edited.top_skills).toEqual(profile.top_skills)
+    vi.unstubAllGlobals()
+  })
+
+  it('allows remote-only intent and blocks a completely empty search', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, profile: { ...profile, locations: [] } }),
+    }) as Response)
+    vi.stubGlobal('fetch', fetchMock)
+    renderSettings({ serveToken: 'local-token' })
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'India' }))
+    const remote = screen.getByLabelText('Include worldwide remote roles')
+    const save = screen.getByRole('button', { name: 'Save profile' })
+    expect(save).toBeEnabled()
+    fireEvent.click(remote)
+    expect(save).toBeDisabled()
+    fireEvent.click(remote)
+    fireEvent.click(save)
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const call = fetchMock.mock.calls.find(([, init]) => (init as RequestInit)?.method === 'PUT')
+    expect(JSON.parse(String((call?.[1] as RequestInit).body))).toMatchObject({
+      locations: [],
+      remote: true,
+    })
     vi.unstubAllGlobals()
   })
 

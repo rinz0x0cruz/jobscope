@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from typing import Optional
 
 
 def run(store, fmt: str = "json", out: Optional[str] = None) -> int:
     jobs = store.jobs(order_by_score=True)
     out = out or f"data/export.{fmt}"
+    parent = os.path.dirname(os.path.abspath(out))
+    os.makedirs(parent, exist_ok=True)
     if fmt == "json":
         with open(out, "w", encoding="utf-8") as fh:
             json.dump([j.to_dict() for j in jobs], fh, indent=2)

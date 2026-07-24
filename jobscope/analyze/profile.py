@@ -1,7 +1,7 @@
-"""Search profile: an editable, résumé-derived statement of what to look for.
+"""Search profile: editable fetch intent backed by résumé-derived role facts.
 
 `resume import` seeds ``data/profiles/<name>.yaml`` from your parsed résumé
-(target roles from titles + a skills-to-role map, locations, remote preference).
+(target roles from titles + a skills-to-role map, configured job markets, remote preference).
 Local Settings or direct YAML edits can change search intent, and ``jobscope scan``
 fetches from the active profile. config.search stays the fallback when none exists.
 
@@ -43,7 +43,26 @@ _ROLE_HINTS: list[tuple[tuple[str, ...], str]] = [
 
 _MAX_TERMS = 7
 _MAX_EDITED_TERMS = 20
-_MAX_LOCATIONS = 10
+
+_JOB_MARKET_COUNTRIES = {
+    "india": ("India", "India"),
+    "singapore": ("Singapore", "Singapore"),
+    "japan": ("Japan", "Japan"),
+    "australia": ("Australia", "Australia"),
+    "united kingdom": ("United Kingdom", "UK"),
+    "uk": ("United Kingdom", "UK"),
+    "germany": ("Germany", "Germany"),
+    "france": ("France", "France"),
+    "netherlands": ("Netherlands", "Netherlands"),
+    "ireland": ("Ireland", "Ireland"),
+    "united states": ("United States", "USA"),
+    "usa": ("United States", "USA"),
+    "us": ("United States", "USA"),
+    "canada": ("Canada", "Canada"),
+    "united arab emirates": ("United Arab Emirates", "United Arab Emirates"),
+    "uae": ("United Arab Emirates", "United Arab Emirates"),
+}
+_MAX_LOCATIONS = len({market[0] for market in _JOB_MARKET_COUNTRIES.values()})
 
 
 def _data_dir(cfg: dict) -> str:
@@ -109,15 +128,38 @@ def _derive_terms(resume: Resume) -> list[str]:
     return terms
 
 
-def _derive_locations(resume: Resume, cfg: dict) -> list[str]:
+def _job_market(value: str) -> tuple[str, str] | None:
+    normalized = " ".join(str(value or "").split()).strip().casefold()
+    if not normalized or normalized == "remote":
+        return None
+    exact = _JOB_MARKET_COUNTRIES.get(normalized)
+    if exact:
+        return exact
+    for key, market in _JOB_MARKET_COUNTRIES.items():
+        if re.search(rf"(?<!\w){re.escape(key)}(?!\w)", normalized):
+            return market
+    return None
+
+
+def _derive_locations(_resume: Resume, cfg: dict) -> list[str]:
     search = cfg.get("search", {}) or {}
     locs: list[str] = []
-    if search.get("is_remote", True):
-        locs.append("Remote")
-    if resume.location:
-        locs.append(resume.location)
+    for configured in search.get("profiles") or []:
+        value = str((configured or {}).get("location") or "").strip()
+        if value and value.casefold() != "remote":
+            market = _job_market(value)
+            locs.append(market[0] if market else value)
     if not locs:
-        locs.append(search.get("location", "Remote"))
+        value = str(search.get("location") or "").strip()
+        if value and value.casefold() != "remote":
+            market = _job_market(value)
+            locs.append(market[0] if market else value)
+    if not locs:
+        fallback = str(
+            search.get("home_country") or search.get("country_indeed") or "India"
+        ).strip()
+        market = _job_market(fallback)
+        locs.append(market[0] if market else fallback)
     return list(dict.fromkeys(locs))  # dedupe, keep order
 
 
@@ -139,7 +181,7 @@ def write_profile(path: str, prof: dict) -> str:
     header = (
         f'# jobscope search profile "{prof.get("resume", "default")}".\n'
         "# `jobscope scan` fetches jobs from the ACTIVE profile. Edit search_terms /\n"
-        "# locations / remote below, then re-run scan. Keep several profiles side by side\n"
+        "# preferred job markets / remote below, then re-run scan. Keep profiles side by side\n"
         "# and switch with `jobscope profile use <name>` (`profile list` to see them).\n"
         "# Regenerate with `profile build --force`. top_skills/seniority mirror your\n"
         "# résumé for reference -- matching reads the résumé itself, not this file.\n\n")
@@ -167,7 +209,9 @@ def update_profile(cfg: dict, name: str, *, search_terms, locations, remote) -> 
     if current is None:
         raise ValueError(f"no profile named '{normalized}'")
 
-    def clean_list(value, label: str, *, limit: int, max_length: int) -> list[str]:
+    def clean_list(
+        value, label: str, *, limit: int, max_length: int, required: bool = True,
+    ) -> list[str]:
         if not isinstance(value, list):
             raise ValueError(f"{label} must be a list")
         cleaned: list[str] = []
@@ -184,7 +228,7 @@ def update_profile(cfg: dict, name: str, *, search_terms, locations, remote) -> 
             if key not in seen:
                 seen.add(key)
                 cleaned.append(item)
-        if not cleaned:
+        if required and not cleaned:
             raise ValueError(f"{label} must contain at least one entry")
         if len(cleaned) > limit:
             raise ValueError(f"{label} supports at most {limit} entries")
@@ -192,14 +236,23 @@ def update_profile(cfg: dict, name: str, *, search_terms, locations, remote) -> 
 
     if not isinstance(remote, bool):
         raise ValueError("remote must be true or false")
+    location_values = clean_list(
+        locations, "locations", limit=_MAX_LOCATIONS, max_length=100,
+        required=not remote,
+    )
+    cleaned_locations: list[str] = []
+    for location in location_values:
+        market = _job_market(location)
+        if market is None:
+            raise ValueError(f"unsupported job market: {location}")
+        if market[0] not in cleaned_locations:
+            cleaned_locations.append(market[0])
     updated = {
         **current,
         "search_terms": clean_list(
             search_terms, "search_terms", limit=_MAX_EDITED_TERMS, max_length=80,
         ),
-        "locations": clean_list(
-            locations, "locations", limit=_MAX_LOCATIONS, max_length=100,
-        ),
+        "locations": cleaned_locations,
         "remote": remote,
     }
     write_profile(_profile_file(cfg, normalized), updated)
@@ -332,11 +385,34 @@ def apply_to_search(search: dict, prof: dict) -> dict:
     terms = [t for t in (prof.get("search_terms") or []) if str(t).strip()]
     if terms:
         s["terms"] = terms
-    locations = [loc for loc in (prof.get("locations") or []) if str(loc).strip()]
-    if locations:
-        s["profiles"] = [{"name": loc, "location": loc} for loc in locations]
-    if "remote" in prof:
-        s["is_remote"] = bool(prof["remote"])
+    locations = [str(loc).strip() for loc in (prof.get("locations") or []) if str(loc).strip()]
+    remote = bool(prof.get("remote", s.get("is_remote", True)))
+    profiles: list[dict] = []
+    base_home = str(s.get("home_country") or "India")
+    base_country = str(s.get("country_indeed") or base_home)
+    if remote:
+        profiles.append({
+            "name": "Remote", "location": "Remote",
+            "home_country": base_home, "country_indeed": base_country,
+        })
+    seen: set[str] = set()
+    for location in locations:
+        if location.casefold() == "remote":
+            continue
+        market = _job_market(location)
+        name = market[0] if market else location
+        if name.casefold() in seen:
+            continue
+        seen.add(name.casefold())
+        profiles.append({
+            "name": name,
+            "location": name,
+            "home_country": market[0] if market else base_home,
+            "country_indeed": market[1] if market else base_country,
+        })
+    if profiles:
+        s["profiles"] = profiles
+    s["is_remote"] = remote
     return s
 
 
@@ -349,7 +425,8 @@ def render(prof: dict, path: str) -> str:
         f"    résumé: {prof.get('resume', '?')}   seniority: {prof.get('seniority') or '?'}"
         f"   ~{years:g}y",
         f"    search terms ({len(terms)}): {', '.join(terms) or '(none)'}",
-        f"    locations: {', '.join(locs) or '(none)'}   remote: {prof.get('remote', True)}",
+        f"    preferred job markets: {', '.join(locs) or '(none)'}"
+        f"   worldwide remote: {prof.get('remote', True)}",
         "    edit this file, then `jobscope scan` fetches jobs from it.",
     ])
 

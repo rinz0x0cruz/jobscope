@@ -24,15 +24,22 @@ a { color: #111; text-decoration: none; }
 .contact { color: #333; font-size: 9.6pt; margin-bottom: 4px; }
 """
 
+_CSP = (
+    "default-src 'none'; base-uri 'none'; connect-src 'none'; frame-src 'none'; "
+    "form-action 'none'; img-src data:; object-src 'none'; script-src 'none'; "
+    "style-src 'unsafe-inline'"
+)
+
 
 def markdown_to_html(md_text: str, title: str = "") -> str:
     try:
         import markdown
-        body = markdown.markdown(md_text, extensions=["extra", "sane_lists"])
+        body = markdown.markdown(_escape(md_text), extensions=["extra", "sane_lists"])
     except ImportError:
         body = "<pre>" + _escape(md_text) + "</pre>"
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<meta http-equiv='Content-Security-Policy' content=\"{_CSP}\">"
         f"<title>{_escape(title)}</title><style>{_CSS}</style></head>"
         f"<body>{body}</body></html>"
     )
@@ -62,7 +69,8 @@ def render_pdf(html: str, out_pdf: str) -> bool:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch()
-            page = browser.new_page()
+            page = browser.new_page(java_script_enabled=False)
+            page.route("**/*", lambda route: route.abort())
             page.set_content(html, wait_until="load")
             page.pdf(path=out_pdf, format="A4", print_background=True)
             browser.close()

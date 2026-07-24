@@ -637,6 +637,33 @@ def test_render_dedupe_collapses_cross_source_duplicates():
     assert {s["url"] for s in out[0]["sources"]} == {"u1", "u2"}
 
 
+def test_build_data_dedupes_before_expensive_job_projection(tmp_path, monkeypatch):
+    cfg = load_config(None)
+    cfg["output"]["db_path"] = str(tmp_path / "dedupe.db")
+    calls = []
+    monkeypatch.setattr(
+        "jobscope.analyze.coverage.deterministic_pct",
+        lambda _resume, job: calls.append(job.id) or 50.0,
+    )
+    with Store(cfg["output"]["db_path"]) as store:
+        store.save_resume(Resume(full_name="Jane", skills=["security"]))
+        for job in (
+            Job(source="linkedin", title="Security Engineer (Remote)", company="Acme",
+                url="u1", is_remote=True, score=90, tier="Strong"),
+            Job(source="greenhouse", title="Security Engineer", company="acme",
+                url="u2", is_remote=True, score=80, tier="Strong"),
+            Job(source="indeed", title="Senior Security Engineer", company="Acme",
+                url="u3", is_remote=True, score=70, tier="Good"),
+        ):
+            store.upsert_job(job.ensure_id())
+
+        data = render.build_data(cfg, store)
+
+    assert len(data["rows"]) == 2
+    assert len(calls) == 2
+    assert {source["url"] for source in data["rows"][0]["sources"]} == {"u1", "u2"}
+
+
 def test_render_remote_mismatch_ignores_hybrid_cloud():
     """#3: onsite/hybrid *work* phrasing on a remote-tagged role flags a mismatch,
     but 'hybrid cloud' (a tech term) must not, and non-remote roles never flag."""

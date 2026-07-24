@@ -55,6 +55,28 @@ describe('CommandPalette', () => {
     expect(screen.queryByText('Datadog')).not.toBeInTheDocument()
   })
 
+  it('jumps to a typed destination with Enter', () => {
+    const p = setup()
+    const input = screen.getByPlaceholderText('Search jobs or jump to…')
+    fireEvent.change(input, { target: { value: 'Analytics' } })
+
+    expect(screen.queryByText('Review')).not.toBeInTheDocument()
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(p.onNavigate).toHaveBeenCalledWith('analytics')
+    expect(p.onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('opens a fuzzy-matched job with Enter', () => {
+    const p = setup()
+    const input = screen.getByPlaceholderText('Search jobs or jump to…')
+    fireEvent.change(input, { target: { value: 'Stripe' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(p.onOpenJob).toHaveBeenCalledWith('a')
+    expect(p.onOpenChange).toHaveBeenCalledWith(false)
+  })
+
   it('runs the refresh action', () => {
     const p = setup()
     fireEvent.click(screen.getByText('Refresh · scan mail'))

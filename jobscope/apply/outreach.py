@@ -81,11 +81,17 @@ def _is_automated(addr: str) -> bool:
     return _is_ats_domain(dom)
 
 
+def valid_recipient(addr: str) -> bool:
+    """Whether an address is syntactically valid and safe for direct outreach."""
+    email = (addr or "").strip().lower()
+    return bool(_EMAIL_RE.fullmatch(email)) and not _is_automated(email)
+
+
 def valid_company_recipient(addr: str, domain: str) -> bool:
     """Whether an address is valid, non-automated, and on the confirmed domain."""
     email = (addr or "").strip().lower()
     confirmed = (domain or "").strip().lower()
-    if not confirmed or not _EMAIL_RE.fullmatch(email) or _is_automated(email):
+    if not confirmed or not valid_recipient(email):
         return False
     mail_domain = email.split("@", 1)[1]
     return mail_domain == confirmed or mail_domain.endswith("." + confirmed)
@@ -290,7 +296,8 @@ def resolve_target(cfg: dict, store, job, override: Optional[str] = None) -> Opt
 
 
 def build_draft(cfg: dict, store, resume, job, target: Target,
-                followup: bool = False) -> tuple[str, str]:
+                followup: bool = False,
+                followup_kind: str = "application") -> tuple[str, str]:
     """A short, tailored outreach email (deterministic; AI-rewritten if available).
 
     ``followup=True`` reframes it as a polite nudge on an application already sent
@@ -302,16 +309,29 @@ def build_draft(cfg: dict, store, resume, job, target: Target,
     sig = f"\n{resume.email}" if resume.email else ""
 
     if followup:
-        fu_subject = (f"Following up \u2014 {job.title} application" if job.title
-                      else f"Following up on my application \u2014 {name}")
-        fu_body = (
-            f"Hello,\n\n"
-            f"I recently applied for the {job.title or 'open'} role at "
-            f"{job.company or 'your team'} and wanted to follow up to reaffirm my interest. "
-            f"My background aligns well{(': ' + top) if top else ''}, and I'd welcome the "
-            f"chance to briefly discuss how I can contribute.\n\n"
-            f"Happy to share anything further. Thank you for your time,\n{name}{sig}"
-        ).strip()
+        if followup_kind == "cold":
+            fu_subject = (f"Following up \u2014 {job.title}" if job.title
+                          else f"Following up \u2014 {name}")
+            fu_body = (
+                f"Hello,\n\n"
+                f"I wanted to follow up on my earlier note about "
+                f"{job.title or 'cybersecurity opportunities'} at "
+                f"{job.company or 'your team'}. My background aligns well"
+                f"{(': ' + top) if top else ''}, and I'd still welcome a brief conversation "
+                f"if the team sees a potential fit.\n\n"
+                f"Thank you for your time,\n{name}{sig}"
+            ).strip()
+        else:
+            fu_subject = (f"Following up \u2014 {job.title} application" if job.title
+                          else f"Following up on my application \u2014 {name}")
+            fu_body = (
+                f"Hello,\n\n"
+                f"I recently applied for the {job.title or 'open'} role at "
+                f"{job.company or 'your team'} and wanted to follow up to reaffirm my interest. "
+                f"My background aligns well{(': ' + top) if top else ''}, and I'd welcome the "
+                f"chance to briefly discuss how I can contribute.\n\n"
+                f"Happy to share anything further. Thank you for your time,\n{name}{sig}"
+            ).strip()
         return fu_subject, fu_body
 
     deterministic = (
@@ -455,20 +475,25 @@ def api_preview(cfg: dict, store, job_id: str, *, to: Optional[str] = None,
     resume = store.get_named_resume(job.resume_base) if job.resume_base else store.get_resume()
     if resume is None:
         return {"ok": False, "error": "no résumé imported — run `resume import` first"}
-    target = resolve_target(cfg, store, job, override=to)
+    app = store.get_application(job.id) or {}
+    prior_recipient = app.get("outreach_to") or ""
+    target = resolve_target(
+        cfg, store, job, override=(to or (prior_recipient if followup else None)),
+    )
     if target is None:
         return {"ok": False, "error": "no contact found — enter an address to use", "needs_address": True,
                 "company": job.company, "title": job.title}
-    subject, body = build_draft(cfg, store, resume, job, target)
+    subject, body = build_draft(cfg, store, resume, job, target, followup=followup)
     resume_path = resume.source_path if resume.source_path and os.path.exists(resume.source_path) else ""
     oc = (cfg.get("apply", {}).get("outreach", {}) or {})
-    app = store.get_application(job.id) or {}
     return {
         "ok": True, "to": target.email, "source": target.source, "confidence": target.confidence,
         "note": target.note, "subject": subject, "body": body,
         "resume": os.path.basename(resume_path) if resume_path else "",
         "company": job.company, "title": job.title,
         "already_at": app.get("outreach_at") or "",
+        "recipient_locked": bool(followup and prior_recipient),
+        "followup": followup,
         "blocked": bool(_optout_hit(oc, job, target)),
         "sendable": bool(oc.get("enabled")) and bool(cfg.get("email", {}).get("enabled")),
     }

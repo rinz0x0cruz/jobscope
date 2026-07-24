@@ -149,7 +149,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [scrape.py](jobscope/ingest/scrape.py) | — | Cadence-gated broad JobSpy discovery; monitored sources are a separate mode | model, store | `run()`, `discovery_due()` |
+| [scrape.py](jobscope/ingest/scrape.py) | — | Cadence-gated JobSpy discovery with committed ten-result term/source cursors; monitored sources are a separate mode | model, store | `run()`, `discovery_due()` |
 | [ats.py](jobscope/ingest/ats.py) | — | Typed Greenhouse/Lever/Ashby plus curated Phenom resolution, career-URL parsing, bounded pagination, and board fetch | httpx, model | `resolve_board_result()`, `fetch_company_result()` |
 | [monitor.py](jobscope/ingest/monitor.py) | — | Seed/resolve/scan persistent company monitors; observable decision funnel, canonical skip reasons, health + fail-closed reconciliation | ats, review, store | `seed_monitors()`, `scan_active_monitors()` |
 | [inbox.py](jobscope/ingest/inbox.py) | 402 | Gmail IMAP sync (read-only, incremental) → weighted classify (+ optional quorum tie-break) → `mail_events`; drops transactional/OTP mail; `--reclassify` offline repair; recomputes the funnel after each sync | ats, config, model, store, mailrules, reconcile, (ai lazy) | `run()` |
@@ -190,7 +190,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | [tailor.py](jobscope/apply/tailor.py) | 198 | Per-job resume + cover tailoring (deterministic + AI/quorum rewrite grounded with full JD/news context) | ai, pdf, model, resume, store | `run()`, `analyze()` |
 | [outreach.py](jobscope/apply/outreach.py) | 423 | Resolve a recruiter/HR contact (site-verified) + draft a tailored résumé email; preview/send guardrails; structured `/api/outreach` helpers | ai, email, tailor, model, store, httpx | `run()`, `api_preview()`, `api_send()`, `discover_emails()` |
 | [company_rank.py](jobscope/apply/company_rank.py) | — | Deterministic India/cybersecurity company ranking with explicit security-title and profile-fit gates | companies, geo, store | `rank_companies()`, `is_security_role()` |
-| [campaigns.py](jobscope/apply/campaigns.py) | — | Local campaign orchestration: discover, draft, approve, pace one send, reconcile replies/opt-outs, and lock unknown SMTP outcomes | outreach, company_rank, model, store, email (lazy) | `create_campaign()`, `send_target()`, `sync_replies()`, `tick()` |
+| [campaigns.py](jobscope/apply/campaigns.py) | — | Private cold/follow-up orchestration plus a derived, privacy-safe engagement read model; discovers, drafts, approves, paces one send, reconciles replies/opt-outs, and locks unknown SMTP outcomes | outreach, company_rank, model, store, email/render (lazy) | `create_campaign()`, `create_followup_campaign()`, `engagement_activity()`, `send_target()`, `sync_replies()`, `tick()` |
 | [interview.py](jobscope/apply/interview.py) | 112 | Interview-prep sheet (fit + JD topics + STAR + brief + referrals + notes); `--note` append | model, coverage, referrals, (tailor lazy) | `prep_sheet()`, `run()` |
 | [referrals.py](jobscope/apply/referrals.py) | 136 | Network-activation digest + per-job referral view (leads + copy-ready draft) | store, (enrich.contacts lazy) | `pipeline_referrals()`, `paths_for()`, `run()` |
 | [track.py](jobscope/apply/track.py) | 114 | Application funnel, status, follow-up reminders | model, store | `run()`, `run_new()` |
@@ -202,8 +202,8 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 |--------|-----|----------------|------------------|-------------|
 | [render.py](jobscope/deliver/render.py) | — | Encrypted dashboard contract: jobs, applications, monitor summaries, reviews, profile, and outreach; public mode emits an empty shell | companies, store | `build_data()`, `emit_json()` |
 | [pdf.py](jobscope/deliver/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
-| [email.py](jobscope/deliver/email.py) | — | Optional SMTP delivery with stable Message-ID and explicit pre-send vs unknown-outcome errors | config | `send()`, `EmailDeliveryError` |
-| [serve.py](jobscope/deliver/serve.py) | — | Local control plane on 127.0.0.1: guarded live dashboard/profile/mutation/campaign APIs; refreshes SQLite without publication; optional CLI publication remains explicit | render, store, feature services (lazy) | `run()`, `perform_refresh()` |
+| [email.py](jobscope/deliver/email.py) | — | Optional SMTP delivery with stable Message-ID, RFC reply headers, and explicit pre-send vs unknown-outcome errors | config | `send()`, `EmailDeliveryError` |
+| [serve.py](jobscope/deliver/serve.py) | — | Live control plane: loopback-only by default; explicit hosted mode requires an HTTPS origin and validated Cloudflare Access header behind a private Tunnel. Guarded dashboard/profile/mutation/outreach APIs include `/api/engagements`, a read-only allowlisted projection that never enters Pages | render, store, feature services (lazy) | `run()`, `perform_refresh()` |
 | [exporter.py](jobscope/deliver/exporter.py) | 22 | Export ranked jobs to JSON/CSV | — | `run()` |
 
 Plus [schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) — the JSON-Schema
@@ -211,7 +211,7 @@ artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboar
 
 > **Note:** `render.py` is the JSON emitter. The **React app in `web/`** is the single dashboard — served
 > privately by `jobscope serve`, or as an empty Pages shell plus encrypted whole-site payload — and owns
-> Review, Companies, Pipeline, Applications, and Settings. The data-contract
+> Review, Companies, private Outreach, Applications, Analytics, and Settings. The data-contract
 > logic (`build_data`/`_job_record`/`_application_records`/`_enrich_summary`/`_overview_data`/`emit_json`)
 > is pinned by a JSON-Schema artifact + a contract test (§9); the legacy inline HTML `_TEMPLATE` has been
 > removed.
@@ -248,13 +248,14 @@ actions into `refresh.yml`'s bounded `mutations_json` input; the workflow restor
 the batch, scans, matches, saves the DB, verifies the artifact, and republishes.
 
 - **Data flow:** `data/index.ts` normalizes current or cached payloads → `App.tsx`/`AuthGate` unlocks →
-  `ShellV2` derives Review, Companies, Pipeline, and Applications models. `urlState.ts` owns
+  `ShellV2` derives Review, Companies, Applications, and read-only Analytics models. `urlState.ts` owns
   shareable view/bucket/filter state; `schema.ts` mirrors the Python contract (§10).
 - **Surfaces:** **Review** (monitored/discovery/saved/dismissed queue + persistent role reader), **Companies**
-  (portal health/list/detail), **Pipeline** (Sankey + outcome register), **Applications** (inbox/list/board/offers),
-  and **Settings** (first-class résumé replacement plus profile/sync/privacy controls). Applications owns
-  follow-up attention, recovery, and per-application activity. Desktop has five public destinations; mobile
-  keeps Review/Companies/Pipeline/Apps plus a More sheet for Settings.
+  (portal health/list/detail), private **Outreach** (cold/follow-up batches), **Applications**
+  (inbox/list/board/offers), read-only **Analytics** (separate application/outreach outcomes), and **Settings**
+  (first-class résumé replacement plus profile/sync/privacy controls). Applications owns records, attention,
+  and correspondence; Analytics owns conversion and timing. Desktop has five public destinations (six under
+  local serve); mobile keeps Review/Companies/Apps plus a More sheet for the remaining destinations.
 - **Whole-site unlock:** `lib/unlock.ts` fetches + AES-GCM-decrypts `site.enc.json`; `AuthGate` caches the
   normalized payload in sessionStorage and can clear it on lock.
 - **Chrome:** `AppShell` owns search, command palette, Refresh, theme, lock, queued-change Sync, responsive
@@ -344,6 +345,8 @@ A single `Store` **facade** over SQLite, composed from per-concern mixins (`base
 `enrichment`/`applications`/`mail`/`profile`/`meta`/`monitoring`/`outreach_campaigns`/
 `reconciliation_audit`) over one shared connection. Campaign targets persist exact approved outbound
 content, Message-ID, send/reply timestamps, suppression state, and explicit unknown-delivery attempts.
+Follow-up targets additionally persist application/source provenance, parent/root Message-IDs, follow-up
+number, and the original-recipient lock; all are local-only.
 `mail_events` remains the inbound source of truth; delivery history joins by `reply_event_id` instead
 of copying reply bodies into campaign rows.
 
@@ -356,7 +359,8 @@ Representative API: `upsert_job()`, `update_score()`, `update_ai_seniority()`, `
 `get_job()`, `save_enrichment()`, `get_enrichment()`, `save_contacts()`, `contacts_for()`,
 `set_application()`, `applications()`, `get_application()`, `upsert_mail_event()`, `mail_events()`,
 `upsert_company_monitor()`, `link_monitor_job()`, `ensure_job_review()`, `company_monitor_summaries()`,
-`create_outreach_campaign()`, `outreach_campaign_history()`,
+`create_outreach_campaign()`, `followup_source_ids()`, `followup_company_keys()`,
+`outreach_campaign_history()`,
 `ai_cache_get/put()`, `log_run()`.
 
 ---
@@ -371,12 +375,13 @@ startup fallback. Published builds bake an empty schema-valid shell and a pointe
 | Area | Files | Responsibility |
 |------|-------|----------------|
 | **Entry/auth** | [main.tsx](web/src/main.tsx), [router.tsx](web/src/router.tsx), [App.tsx](web/src/App.tsx), `app/AuthGate.tsx` | Mount, hash state, whole-site unlock/session cache |
-| **Shell** | `app/AppShell.tsx`, `app/ShellV2.tsx` | Six desktop views, five-slot mobile nav, shared search/commands, optimistic state |
+| **Shell** | `app/AppShell.tsx`, `app/ShellV2.tsx` | Five public/six local desktop views, four-slot mobile nav, shared search/commands, optimistic state |
 | **Contract** | [data/index.ts](web/src/data/index.ts), [lib/schema.ts](web/src/lib/schema.ts), [lib/unlock.ts](web/src/lib/unlock.ts), [lib/outreach.ts](web/src/lib/outreach.ts) | Normalize live local/legacy payloads and decrypt Pages data |
 | **Review** | `features/feed/FeedView.tsx`, [lib/feed.ts](web/src/lib/feed.ts) | Durable monitored/discovery/saved/dismissed queues and role actions |
 | **Companies** | `features/companies/CompaniesView.tsx`, [lib/companies.ts](web/src/lib/companies.ts) | Monitor list/detail, resolution, source health, per-company jobs |
 | **Actions/refresh** | [lib/companyActions.ts](web/src/lib/companyActions.ts), [lib/refresh.ts](web/src/lib/refresh.ts) | Local CSRF API or collapsed Pages queue; correlated workflow dispatch/poll |
-| **Applications** | `features/board/*`, `features/pipeline/*`, `components/JobDrawer.tsx` | Operational applications, Sankey, follow-up/recovery actions, per-application activity |
+| **Applications** | `features/board/*`, `components/JobDrawer.tsx` | Operational applications, offers, follow-up actions, per-application activity |
+| **Analytics** | `features/analytics/*`, `features/pipeline/*`, `lib/analytics.ts`, `lib/pipeline.ts` | Read-only application funnel/timing and privacy-safe outreach outcomes |
 
 ```mermaid
 flowchart LR
@@ -386,7 +391,7 @@ flowchart LR
   GuardedAPI --> Private
   Shell --> Review
   Shell --> Companies
-  Shell --> Pipeline
+  Shell --> Analytics
   Shell --> Applications
   Action[Save / dismiss / monitor] --> Local[Local CSRF API]
   Action --> Queue[Pages localStorage queue]

@@ -8,22 +8,22 @@ version = "0.1.0"
 description = "Resume-driven job scout, enricher, and application-prep tool (deterministic-first, AI-optional)."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "rinz0x0cruz" }]
 keywords = ["jobs", "resume", "job-search", "ats", "automation", "career"]
 dependencies = [
     "python-jobspy==1.1.80",
     "pyyaml==6.0.2",
-    "requests==2.32.3",
+    "requests==2.33.0",
     "feedparser==6.0.11",
     "yfinance==0.2.40",
     "playwright==1.40.0",
-    "pypdf==4.0.0",
-    "markdown==3.5",
+    "pypdf==6.14.2",
+    "markdown==3.8.1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==8.3.4", "ruff==0.12.4", "detect-secrets==1.5.0"]
+dev = ["pytest==9.0.3", "ruff==0.12.4", "detect-secrets==1.5.0"]
 # Optional OS-keychain storage for secrets (Windows Credential Manager / macOS
 # Keychain / Secret Service). The tool falls back to environment/.env without it.
 secure = ["keyring>=24"]

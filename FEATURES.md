@@ -32,7 +32,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | --- | --- |
 | `init` | Scaffolds `config.yaml` + `data/` dir. |
 | `resume import <path> --name <n>` | Parses `.md/.json/.pdf/.txt` into a structured resume and stores it under a name. Up to three named profiles are supported; local Settings can upload, replace, edit, reset, and switch them. |
-| `profile [build\|show] [--resume N] [--force]` | Builds/shows a named résumé-derived **search profile** (`data/profiles/<name>.yaml`): target roles, locations, and remote intent drive `scan`; résumé facts remain derived. `--force` explicitly regenerates intent. |
+| `profile [build\|show] [--resume N] [--force]` | Builds/shows a named **search profile** (`data/profiles/<name>.yaml`): target roles, preferred job markets, and worldwide-remote intent drive `scan`; résumé facts remain derived. |
 | `companies [seed\|list\|scan\|apply]` | Persistent explicit watchlist and official-portal scans. `seed` imports configured monitors and softly archives legacy application-only monitors; application/collected companies remain visible as **Known** until explicitly promoted. `apply` consumes the validated workflow action file. |
 | `scout <company>` | Ephemeral ATS resolution/ranked preview. The durable workflow is to monitor the company. |
 | `scan [--mode all\|monitored\|discovery]` | Monitored portals are primary; broad JobSpy discovery is secondary and cadence-gated (24h by default). |
@@ -44,9 +44,9 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `prep <job_id>` | Builds a review-ready application package folder (tailored resume/cover PDF, filled-answers, index, contacts) and marks status `prepared`. |
 | `apply <job_id> [--assist]` | Opens the posting URL for you to submit. `--assist` = headed Playwright autofill of a **public** ATS form that **stops before submit**. |
 | `outreach <job_id> [--to E] [--send] [--force]` | Drafts a tailored recruiter email + attaches your résumé and **previews it by default**. Resolves a contact deterministically: a real recruiter who emailed you (no-reply/ATS relays filtered out), a published HR/careers email **discovered on the employer's own site** (domain verified by fetching it + matching the company name), or a `careers@` role inbox on that verified domain — or `--to`. Sending is opt-in (`apply.outreach.enabled` + `email.*` + `--send`), **deduped per company** with a cooldown, and honors a do-not-contact list. |
-| `campaign [create\|list\|show\|discover\|draft\|approve\|start\|pause\|cancel\|delete\|skip\|send-approved\|replies\|tick\|ready]` | Local ranked recruiter campaigns. Selects N unique India-relevant cybersecurity companies, excludes all application history, records India/compensation/growth evidence, discovers one recruiter, and requires per-message approval. `tick` checks replies, then sends at most one due approved draft after rechecking every guard. `delete --campaign-id ID --yes` permanently removes only an unsent draft; delivery history is retained. |
+| `campaign [create\|followups\|list\|show\|discover\|draft\|approve\|start\|pause\|cancel\|delete\|skip\|send-approved\|replies\|tick\|ready]` | Local recruiter campaigns. `create` ranks N unique India-relevant cybersecurity companies and excludes application history. `followups` prepares due, company-deduplicated drafts for prior cold mail and still-pending applications; it never bulk-approves or sends. `tick` checks replies, then sends at most one due approved draft after rechecking every guard. `delete --campaign-id ID --yes` permanently removes only an unsent draft; delivery history is retained. |
 | `dashboard [--public] [--emit-web]` | Emits the private dashboard payload; `--public` writes an **empty schema-valid shell**. `--emit-web` mirrors private data for local development. Publish scripts ship only the empty shell plus encrypted `site.enc.json`. |
-| `serve [--port 8799] [--open]` | Serves the **live local workspace** on 127.0.0.1. The guarded API reads current SQLite data, edits profiles, applies mutations, and refreshes Gmail/matches without rebuilding or publishing. |
+| `serve [--port 8799] [--open] [--hosted]` | Serves the live workspace. The default binds only to 127.0.0.1. Explicit hosted mode binds externally but fails closed without an HTTPS public origin and a Cloudflare Access JWT supplied through a validating private Tunnel; it still uses one persistent SQLite writer. |
 | `refresh [--local-only] [--force]` | Runs the refresh pipeline. `--local-only` stops after SQLite sync/rescore; the compatibility default also publishes the encrypted Pages snapshot. |
 | `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E] [--include-spam] [--reclassify]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox; `--include-spam` also sweeps the `[Gmail]/Spam` folder this run (overrides `inbox.include_spam`), catching a real application email Gmail misfiled as spam; `--reclassify` is an **offline** repair — re-check stored mail with the current rules + rebuild the funnel (instance-split), with no Gmail sync. |
@@ -65,7 +65,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 
 ## Dashboard UX
 
-- **Company-first IA:** Review, Companies, local-only Campaigns, Pipeline, Applications, Settings. Review defaults
+- **Company-first IA:** Review, Companies, private-control-plane Outreach, Applications, Analytics, Settings. Review defaults
   to pending monitored matches; broad Discovery, Saved, and Dismissed never mix implicitly. Companies
   owns portal resolution, source health, scan/pause/remove, and per-company pending/saved roles.
 - **Local + encrypted Pages actions:** localhost uses loopback/CSRF APIs immediately. Static Pages stores
@@ -84,10 +84,12 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   `jobscope serve` — it resolves a contact, shows the tailored draft (editable To/Subject/Body), notes the résumé
   it will attach, and sends via the same guardrails as the CLI. Backed by a loopback, CSRF-guarded `/api/outreach`;
   hidden on the public static site (no backend to reach).
-- **Campaigns (local `serve`):** a dense ranked-target workspace creates N-company India cybersecurity
-  campaigns, shows factor evidence and contact source/confidence, and exposes one editable approval at a time.
+- **Outreach (private `serve`):** one animated, approval-first workspace switches between cold batches and
+  due follow-up queues from prior cold mail/applications. Follow-ups show source, due date, and whether
+  the recipient is locked to the original address; queue construction never approves or sends.
+  Cold campaigns show factor evidence and contact source/confidence. Both expose one editable approval at a time.
   Approval hashes the exact recipient/subject/body/attachment; edits clear it. There is no approve-all action.
-  Static Pages hides Campaigns navigation and a direct URL shows only the local-workspace requirement.
+  Static Pages hides Outreach navigation and a direct URL shows only the private-workspace requirement.
 - **Paced local scheduler:** `register-outreach-task.ps1` calls `campaign tick` hourly under the interactive
   user. Each invocation incrementally checks inbox replies, then can send one message maximum; default limits
   remain 2/day, 4 hours apart, 10:00–17:00 Asia/Kolkata. Configuration/keychain readiness is checked first.
@@ -110,22 +112,27 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Finder boundary:** Hunter and Apollo are optional and key-gated. Returned addresses are accepted only when
   syntactically valid, non-automated, non-ATS, and on the confirmed company domain; confidence/source remain
   visible and individual approval is mandatory. Role inboxes are never auto-selected for campaigns.
-- **Replies and opt-outs:** every outbound campaign email has a durable Message-ID. Inbox sync prefers exact
-  `In-Reply-To`, then confirmed-domain + post-send timing for new threads. Generic replies are retained even
+- **Replies and opt-outs:** every outbound campaign email has a durable Message-ID. Follow-ups carry RFC
+  `In-Reply-To`/`References` headers, and inbox sync prefers the immediate parent Message-ID before
+  confirmed-domain + post-send timing for new threads. Generic replies are retained even
   without application keywords; explicit opt-out language creates local email/domain suppressions before body
   snippets are discarded. Campaign target rows store state/timestamps/event IDs, not reply body copies.
 - **Unknown SMTP outcomes:** a disconnect after `sendmail` begins is not mislabeled failed or retried.
-  Campaigns locks it as delivery unknown until the user checks Sent mail and explicitly marks it sent or
+  Outreach locks it as delivery unknown until the user checks Sent mail and explicitly marks it sent or
   returns it to Draft for review/reapproval. Provider exception text is reduced to safe type/code metadata.
 - **Quorum boundary:** optional Quorum can improve generated drafts and arbitrate ordinary deterministic
   inbox-label ties. It cannot rank companies, select recipients, approve/send mail, match replies, or override
   deterministic `campaign_reply` / `campaign_optout` labels.
-- **Applications:** operational inbox/board/offers views, follow-up attention filter, reconciliation summary,
-  recoverable-application restore, and per-application chronological activity in the drawer.
+- **Applications:** operational inbox/board/offers views plus a private correspondence ledger. Application
+  rows retain inbound application-mail summaries and attach application follow-ups; cold outreach appears as
+  a separate thread grouped with its follow-ups and linked reply summary. Outbound bodies never render here.
+- **Analytics:** read-only Applications/Outreach modes keep their denominators separate. Application conversion,
+  timing, and attention reuse the stored pipeline; outreach rates count unique delivered root threads, exclude
+  unknown delivery, show cold vs application-follow-up cohorts, and suppress precision for small samples.
 - **Whole-site unlock:** the private payload includes jobs, descriptions, rationale, contacts, profile,
   monitors, reviews, and applications. Only its AES-256-GCM ciphertext and a tiny pointer are published.
 - **UX tests:** Vitest + Testing Library cover routing, Review/Companies actions, queue synchronization,
-  refresh de-duplication, models, readers, and application workflows.
+  refresh de-duplication, Analytics derivations, models, readers, and application workflows.
 
 ---
 
@@ -154,20 +161,23 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 
 ---
 
-## Search profile (résumé-driven fetch)
+## Search profile (preference-driven fetch)
 
 - `resume import` seeds `data/profiles/<name>.yaml` from your parsed résumé; `scan` fetches from it —
   so the search follows your résumé instead of a hand-typed keyword in `config.yaml`.
 - **Derivation (deterministic).** `search_terms` come from your résumé titles (seniority-stripped, so
   "Security Researcher Intern" → "Security Researcher") plus a skills→role map (appsec → Application Security
   Engineer; detection/SIEM → Detection Engineer; cloud-security/k8s/terraform → Cloud Security Engineer; …),
-  capped at six; `locations` = Remote + your résumé location; `remote` from config. `seniority`/`top_skills`
+  capped at seven; `locations` = configured/selected job markets (never the résumé address); `remote` from config. `seniority`/`top_skills`
   mirror the résumé for reference (matching still reads the résumé itself, not this file).
-- **Editable + safe.** Local Settings edits only target roles, locations, and remote intent. Résumé replacement
+- **Editable + safe.** Local Settings edits only target roles, preferred job markets, and remote intent. Résumé replacement
   preserves those edits; **Reset from résumé** or `profile build --force` regenerates explicitly. Skills,
   seniority, and experience remain résumé-derived facts. Named YAML files are gitignored.
-- **Drives `scan`.** The profile's `search_terms` become the scan terms and each `location` a per-location
-  search; `config.search` stays the fallback when no profile exists.
+- **Drives `scan`.** Each selected market becomes a country-correct JobSpy search and geographic scope;
+  worldwide remote is a separate search. `config.search` stays the fallback when no profile exists.
+- **Resumable pages.** Each term/source commits at most 10 jobs per invocation and checkpoints its next
+  JobSpy offset in SQLite. `results_wanted` remains the per-cycle cap; full or failed pages keep discovery
+  immediately due, while short pages complete independently. Stable job IDs make replay idempotent.
 
 ---
 
@@ -176,7 +186,8 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - Engine: JobSpy across `indeed`, `linkedin`, `google` (configurable). `zip_recruiter` omitted (Cloudflare 403).
 - **Search profiles:** `search.profiles` is a list of per-search overrides; each reuses the base `search`
   fields and overrides only what it lists (`location`, `is_remote`, `hours_old`, `country_indeed`,
-  `results_wanted`). One scan runs them all. Empty `profiles: []` = a single search from the base.
+  `results_wanted`). One scan runs one bounded page for every unfinished term/source. Empty `profiles: []`
+  = a single search from the base.
   - Use case: one `remote` profile (global, last 7 days) + one `onsite-local` profile (e.g. `India`,
     on-site, last 30 days) so both remote and on-site/hybrid roles are covered.
 - De-duplication is by canonical URL across all profiles (reposts update `last_seen`, never duplicate).

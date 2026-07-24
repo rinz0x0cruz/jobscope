@@ -3,16 +3,20 @@
 // `@/lib/board`) and reports card opens upward. No data fetching, no mutation.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlarmClock, ArrowRight, Clock, Mail, MapPin, RotateCcw } from 'lucide-react'
-import { Segmented, animate, prefersReducedMotion } from '@/ui'
+import { AlarmClock, ArchiveRestore, ArrowRight, Check, ChevronDown, Clock, Copy, Mail, MapPin, Reply, Send } from 'lucide-react'
+import { toast } from 'sonner'
+import { Segmented, animate, prefersReducedMotion, viewTransition } from '@/ui'
 import type { BoardCard, BoardColumn, BoardStage } from '@/lib/board'
+import type { EngagementThread } from '@/lib/campaigns'
 import type { ActivityAudit, Tier } from '@/lib/schema'
+import { WorkspaceHeader } from '@/ui'
 
 export interface BoardProps {
   columns: BoardColumn[]
   onOpen: (jobId: string) => void
   audit?: ActivityAudit
-  onRecover?: (jobId: string) => void
+  engagements?: EngagementThread[]
+  onOpenEngagement?: (engagementId: string) => void
 }
 
 function cx(...classes: Array<string | false | null | undefined>): string {
@@ -29,114 +33,119 @@ const TIER_COLOR: Record<Tier, string> = {
 }
 
 type BoardView = 'list' | 'columns' | 'offers'
-type ApplicationFilter = 'all' | BoardStage | 'attention'
+type RecordFilter = 'all' | 'applications' | 'cold' | 'attention'
+type StageFilter = 'all' | BoardStage
 
 /**
  * The Board surface: the applied pipeline as either a scannable table (default,
  * best for volume) or the stage-columned Kanban, toggled in the toolbar.
  */
-export function Board({ columns, onOpen, audit, onRecover }: BoardProps) {
+export function Board({
+  columns,
+  onOpen,
+  audit,
+  engagements = [],
+  onOpenEngagement,
+}: BoardProps) {
   const [view, setView] = useState<BoardView>('list')
-  const [filter, setFilter] = useState<ApplicationFilter>('all')
+  const [recordFilter, setRecordFilter] = useState<RecordFilter>('all')
+  const [stageFilter, setStageFilter] = useState<StageFilter>('all')
   const allCards = columns.flatMap((column) => column.cards)
-  const total = allCards.length
-  const attention = allCards.filter((card) => card.followup === 'due' || card.followup === 'ghosted')
+  const coldEngagements = engagements.filter((engagement) => engagement.kind === 'cold')
+  const applicationEngagements = new Map(
+    engagements
+      .filter((engagement) => engagement.kind === 'application' && engagement.application_job_id)
+      .map((engagement) => [engagement.application_job_id, engagement]),
+  )
+  const applicationAttention = allCards.filter((card) => card.followup === 'due' || card.followup === 'ghosted')
+  const coldAttention = coldEngagements.filter(needsEngagementAttention)
+  const attention = applicationAttention.length + coldAttention.length
+  const total = allCards.length + coldEngagements.length
   const visibleColumns = columns.map((column) => ({
     ...column,
     cards: column.cards.filter((card) => {
-      if (filter === 'all') return true
-      if (filter === 'attention') return card.followup === 'due' || card.followup === 'ghosted'
-      return card.stage === filter
+      if (recordFilter === 'cold') return false
+      if (recordFilter === 'attention' && card.followup !== 'due' && card.followup !== 'ghosted') return false
+      return stageFilter === 'all' || card.stage === stageFilter
     }),
   }))
-  const visibleTotal = visibleColumns.reduce((count, column) => count + column.cards.length, 0)
+  const visibleCold = coldEngagements.filter((engagement) => (
+    recordFilter === 'all' || recordFilter === 'cold' || (
+      recordFilter === 'attention' && needsEngagementAttention(engagement)
+    )
+  ))
+  const visibleApplicationTotal = visibleColumns.reduce((count, column) => count + column.cards.length, 0)
+  const visibleTotal = visibleApplicationTotal + (view === 'list' ? visibleCold.length : 0)
   // Roles with a recorded offer (offer stage, or comp/decision captured earlier),
   // gathered across stages for the side-by-side compare view.
   const offers = allCards
     .filter((c) => c.stage === 'offer' || c.salaryOffered || c.offerAccepted)
   const showOffers = view === 'offers' && offers.length > 0
   const latestReconciliation = audit?.recent_runs[0]
-  const recoverableCount = audit?.recoverable_applications.length ?? 0
+  const recoverableApplications = audit?.recoverable_applications ?? []
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col border-x border-line bg-panel">
-      <header className="shrink-0 border-b border-line px-5 py-5 sm:px-7">
-        <p className="text-[10px] font-semibold uppercase text-ink-3">Applications</p>
-        <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold text-ink">Application inbox</h2>
-            <p className="mt-1 text-[13px] text-ink-3">Track outcomes, spot stalled conversations, and reopen any role.</p>
-            {latestReconciliation && (
-              <p className="mt-1 text-[11px] text-ink-3" aria-label="Last reconciliation">
-                Last reconciliation · {latestReconciliation.applications_before} → {latestReconciliation.applications_after ?? '?'}
-                {recoverableCount > 0
-                  ? ` · ${recoverableCount} recoverable`
-                  : ''}
-              </p>
-            )}
+      <WorkspaceHeader
+        eyebrow="Progress"
+        title="Applications"
+        description="Submitted roles and recruiter conversations, ordered by the latest signal."
+        meta={latestReconciliation && <span aria-label="Last reconciliation">Last reconciliation · {latestReconciliation.applications_before} → {latestReconciliation.applications_after ?? '?'}</span>}
+        actions={(
+          <div className="border-l border-line pl-4 text-right">
+            <strong className="block font-mono text-2xl font-semibold text-ink">{total}</strong>
+            <span className="text-[11px] text-ink-3">{allCards.length} applications · {coldEngagements.length} cold</span>
           </div>
-          <strong className="font-mono text-2xl font-semibold text-ink">{total}</strong>
-        </div>
-      </header>
+        )}
+      />
 
-      {recoverableCount > 0 && onRecover && (
-        <section className="shrink-0 border-b border-line bg-inset/35 px-5 py-3 sm:px-7" aria-label="Recoverable applications">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-auto text-[12px] text-ink-2">
-              {recoverableCount} application{recoverableCount === 1 ? '' : 's'} available to restore
-            </span>
-            {audit?.recoverable_applications.map((application) => (
-              <button
-                key={application.job_id}
-                type="button"
-                onClick={() => {
-                  const identity = application.title || application.company || application.job_id
-                  if (window.confirm(`Restore ${identity}?`)) onRecover(application.job_id)
-                }}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line px-2.5 text-[11px] font-semibold text-ink hover:bg-panel"
-              >
-                <RotateCcw size={13} aria-hidden="true" /> Restore {application.title || application.company || 'application'}
-              </button>
-            ))}
-          </div>
-        </section>
+      {recoverableApplications.length > 0 && (
+        <ArchivedApplications applications={recoverableApplications} />
       )}
 
-      <div className="flex shrink-0 overflow-x-auto border-b border-line [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Application filters">
-        <SummaryFilter label="All" value={total} active={filter === 'all'} onClick={() => setFilter('all')} />
-        {columns.map((column) => (
-          <SummaryFilter
-            key={column.stage}
-            label={column.label}
-            value={column.cards.length}
-            color={column.color}
-            active={filter === column.stage}
-            onClick={() => setFilter(column.stage)}
-          />
-        ))}
+      <div className="sticky top-0 z-20 flex shrink-0 overflow-x-auto border-b border-line bg-panel [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Application filters">
+        <SummaryFilter label="All" value={total} active={recordFilter === 'all'} onClick={() => setRecordFilter('all')} />
+        <SummaryFilter label="Applications" value={allCards.length} active={recordFilter === 'applications'} onClick={() => setRecordFilter('applications')} />
+        <SummaryFilter label="Cold outreach" value={coldEngagements.length} color="var(--signal)" active={recordFilter === 'cold'} onClick={() => viewTransition(() => { setRecordFilter('cold'); setView('list') })} />
         <SummaryFilter
           label="Needs attention"
-          value={attention.length}
+          value={attention}
           color="var(--stretch)"
-          active={filter === 'attention'}
-          onClick={() => setFilter('attention')}
+          active={recordFilter === 'attention'}
+          onClick={() => setRecordFilter('attention')}
         />
       </div>
 
-      <div className="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-2 sm:px-7">
+      <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line bg-inset/35 px-4 py-2 sm:px-7">
         <p aria-label={`${visibleTotal} shown`} className="text-[12px] text-ink-3">
           <span className="font-medium text-ink">{visibleTotal}</span> shown
-          {attention.length > 0 && <span> · {attention.length} need follow-up</span>}
+          {attention > 0 && <span> · {attention} need attention</span>}
         </p>
-        <Segmented
-          ariaLabel="Board view"
-          value={view}
-          onChange={(v) => setView(v as BoardView)}
-          options={[
-            { value: 'list', label: 'List' },
-            { value: 'columns', label: 'Board' },
-            ...(offers.length ? [{ value: 'offers', label: 'Offers' }] : []),
-          ]}
-        />
+        <div className="flex items-center gap-2">
+          {recordFilter !== 'cold' && (
+            <select
+              aria-label="Application stage"
+              value={stageFilter}
+              onChange={(event) => setStageFilter(event.target.value as StageFilter)}
+              className="h-8 min-w-0 rounded-md border border-line bg-panel px-2 text-[11px] text-ink-2 outline-none focus:border-brand"
+            >
+              <option value="all">All stages</option>
+              {columns.map((column) => <option key={column.stage} value={column.stage}>{column.label}</option>)}
+            </select>
+          )}
+          <Segmented
+            ariaLabel="Board view"
+            value={view}
+            onChange={(value) => viewTransition(() => {
+              setView(value as BoardView)
+              if (value !== 'list') setRecordFilter('applications')
+            })}
+            options={[
+              { value: 'list', label: 'List' },
+              { value: 'columns', label: 'Board' },
+              ...(offers.length ? [{ value: 'offers', label: 'Offers' }] : []),
+            ]}
+          />
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -145,11 +154,90 @@ export function Board({ columns, onOpen, audit, onRecover }: BoardProps) {
         ) : view === 'columns' ? (
           <BoardColumns columns={visibleColumns} onOpen={onOpen} />
         ) : (
-          <ApplicationList columns={visibleColumns} onOpen={onOpen} />
+          <EngagementList
+            columns={visibleColumns}
+            engagements={visibleCold}
+            applicationEngagements={applicationEngagements}
+            onOpen={onOpen}
+            onOpenEngagement={onOpenEngagement}
+          />
         )}
       </div>
     </section>
   )
+}
+
+function ArchivedApplications({ applications }: { applications: ActivityAudit['recoverable_applications'] }) {
+  const [copied, setCopied] = useState('')
+  const identityCounts = new Map<string, number>()
+  applications.forEach((application) => {
+    const key = `${application.title.trim()}\u0000${application.company.trim()}`
+    identityCounts.set(key, (identityCounts.get(key) ?? 0) + 1)
+  })
+  const copyCommand = async (jobId: string, status: string) => {
+    const confirm = ['rejected', 'offer', 'withdrawn', 'closed'].includes(status) ? ' --yes' : ''
+    try {
+      await navigator.clipboard.writeText(
+        `python -m jobscope applications recover ${jobId}${confirm}`,
+      )
+      setCopied(jobId)
+      toast.success('Recovery command copied')
+    } catch {
+      toast.error('Could not copy recovery command')
+    }
+  }
+
+  return (
+    <details className="group shrink-0 border-b border-line bg-inset/25">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-4 text-[12px] text-ink-2 outline-none hover:bg-inset focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand sm:px-7 [&::-webkit-details-marker]:hidden">
+        <ArchiveRestore size={14} className="shrink-0 text-ink-3" aria-hidden="true" />
+        <span className="font-medium text-ink">Archived applications</span>
+        <span className="font-mono text-[11px] text-ink-3">{applications.length}</span>
+        <ChevronDown size={14} className="ml-auto shrink-0 transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <ul className="max-h-72 overflow-y-auto overscroll-contain border-t border-line bg-panel" aria-label="Archived applications">
+        {applications.map((application) => {
+          const title = application.title.trim() || 'Archived application'
+          const company = application.company.trim()
+          const reference = application.job_id.split(/[:#]/).filter(Boolean).at(-1) || application.job_id
+          const archived = formatArchivedDate(application.tombstoned_at)
+          const duplicate = (identityCounts.get(`${application.title.trim()}\u0000${company}`) ?? 0) > 1
+          const showReference = !company || duplicate
+          const identity = company
+            ? `${title} at ${company}${duplicate ? ` (${reference})` : ''}`
+            : `${title} ${reference}`
+          const isCopied = copied === application.job_id
+          return (
+            <li key={application.job_id} className="grid min-h-14 grid-cols-[minmax(0,1fr)_2.75rem] items-center border-b border-line px-4 last:border-b-0 sm:px-7">
+              <div className="min-w-0 py-2 pr-3">
+                <p className="truncate text-[12px] font-medium text-ink" title={title}>{title}</p>
+                <p className="mt-0.5 truncate text-[11px] text-ink-3" title={`${company || application.source || 'Unknown source'} · ${application.status} · ${archived} · ${application.job_id}`}>
+                  {company || application.source || 'Unknown source'} · {application.status || 'unknown status'} · {archived}
+                  {showReference && <span className="font-mono"> · {reference}</span>}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void copyCommand(application.job_id, application.status)}
+                aria-label={isCopied ? `Recovery command copied for ${identity}` : `Copy recovery command for ${identity}`}
+                title={isCopied ? 'Recovery command copied' : 'Copy recovery command'}
+                className="grid h-10 w-10 place-items-center rounded-md text-ink-3 outline-none hover:bg-inset hover:text-brand focus-visible:ring-2 focus-visible:ring-brand"
+              >
+                {isCopied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </details>
+  )
+}
+
+function formatArchivedDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'Date unavailable'
+    : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function SummaryFilter({
@@ -176,7 +264,7 @@ function SummaryFilter({
       }`}
     >
       {active && <span className="absolute inset-x-0 bottom-0 h-0.5" style={{ background: color }} aria-hidden="true" />}
-      <span className="block text-[10px] uppercase text-ink-3">{label}</span>
+      <span className="block text-[11px] font-semibold text-ink-3">{label}</span>
       <strong className="mt-0.5 block font-mono text-lg font-semibold" style={{ color: active ? color : 'var(--ink)' }}>
         {value}
       </strong>
@@ -311,48 +399,102 @@ interface TableRow extends BoardCard {
   stageColor: string
 }
 
+type UnifiedRow =
+  | { kind: 'application'; sortDate: string; card: TableRow; engagement?: EngagementThread }
+  | { kind: 'cold'; sortDate: string; engagement: EngagementThread }
+
 /** A scannable table of every application: company / role, stage, applied, signals.
  *  Fit/location live on the un-redacted match rows, which applied roles have
  *  aged out of, so they're intentionally omitted here (see the Kanban card for
  *  the richer per-role detail). */
-function ApplicationList({ columns, onOpen }: BoardProps) {
-  const rows: TableRow[] = columns.flatMap((col) =>
-    col.cards.map((c) => ({ ...c, stageLabel: col.label, stageColor: col.color })),
-  )
+function EngagementList({
+  columns,
+  engagements,
+  applicationEngagements,
+  onOpen,
+  onOpenEngagement,
+}: {
+  columns: BoardColumn[]
+  engagements: EngagementThread[]
+  applicationEngagements: Map<string, EngagementThread>
+  onOpen: (jobId: string) => void
+  onOpenEngagement?: (engagementId: string) => void
+}) {
+  const listRef = useRef<HTMLUListElement | null>(null)
+  const rows: UnifiedRow[] = [
+    ...columns.flatMap((column) => column.cards.map((card): UnifiedRow => ({
+      kind: 'application',
+      sortDate: card.updatedAt ?? card.appliedAt ?? '',
+      card: { ...card, stageLabel: column.label, stageColor: column.color },
+      engagement: applicationEngagements.get(card.id),
+    }))),
+    ...engagements.map((engagement): UnifiedRow => ({
+      kind: 'cold', sortDate: engagement.latest_activity_at, engagement,
+    })),
+  ].sort((left, right) => right.sortDate.localeCompare(left.sortDate))
+
+  useEffect(() => {
+    const items = listRef.current?.querySelectorAll('[data-engagement-row]') ?? []
+    items.forEach((item, index) => animate(item, [
+      { opacity: 0, transform: 'translateY(5px)' },
+      { opacity: 1, transform: 'translateY(0)' },
+    ], { duration: 200, delay: Math.min(index * 22, 220), easing: 'cubic-bezier(.2,0,0,1)', fill: 'backwards' }))
+  }, [rows.length])
+
   if (rows.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-        <p className="text-[14px] font-medium text-ink">No applications in this view</p>
-        <p className="mt-1 text-[12px] text-ink-3">Choose another stage or clear the attention filter.</p>
+        <p className="text-[14px] font-medium text-ink">No records in this view</p>
+        <p className="mt-1 text-[12px] text-ink-3">Choose another record type or clear the stage filter.</p>
       </div>
     )
   }
   return (
     <div className="h-full overflow-auto">
       <div className="sticky top-0 z-10 hidden grid-cols-[minmax(0,1.5fr)_8rem_7rem_minmax(9rem,.7fr)_1.5rem] border-b border-line bg-inset px-6 py-2 text-[10px] font-semibold uppercase text-ink-3 sm:grid">
-        <span>Role</span><span>Stage</span><span>Applied</span><span>Signals</span><span />
+        <span>Record</span><span>State</span><span>Started</span><span>Signals</span><span />
       </div>
-      <ul>
-        {rows.map((row) => (
-          <li key={row.id} className="border-b border-line last:border-b-0">
+      <ul ref={listRef}>
+        {rows.map((row) => row.kind === 'application' ? (
+          <li key={`application:${row.card.id}`} data-engagement-row className="border-b border-line last:border-b-0">
             <button
               type="button"
-              aria-label={`${row.company} — ${row.title}`}
-              onClick={() => onOpen(row.id)}
+              aria-label={`${row.card.company} — ${row.card.title}`}
+              onClick={() => onOpen(row.card.id)}
               className="group relative grid w-full gap-2 px-5 py-3 text-left outline-none transition-colors hover:bg-inset/60 focus-visible:bg-inset sm:grid-cols-[minmax(0,1.5fr)_8rem_7rem_minmax(9rem,.7fr)_1.5rem] sm:items-center sm:px-6"
             >
-              <span className="absolute inset-y-0 left-0 w-0.5" style={{ background: row.stageColor }} aria-hidden="true" />
+              <span className="absolute inset-y-0 left-0 w-0.5" style={{ background: row.card.stageColor }} aria-hidden="true" />
               <span className="min-w-0">
-                <span className="block truncate text-[14px] font-semibold text-ink">{row.title || row.company}</span>
-                {row.title && <span className="block truncate text-[12px] text-ink-3">{row.company}</span>}
+                <span className="block truncate text-[14px] font-semibold text-ink">{row.card.title || row.card.company}</span>
+                {row.card.title && <span className="block truncate text-[12px] text-ink-3">{row.card.company}</span>}
               </span>
-              <span className="text-[11px] font-medium" style={{ color: row.stageColor }}>{row.stageLabel}</span>
+              <span className="text-[11px] font-medium" style={{ color: row.card.stageColor }}>{row.card.stageLabel}</span>
               <span className="text-[12px] text-ink-2">
-                {row.daysSinceApplied != null
-                  ? row.daysSinceApplied === 0 ? 'today' : `${row.daysSinceApplied}d ago`
+                {row.card.daysSinceApplied != null
+                  ? row.card.daysSinceApplied === 0 ? 'today' : `${row.card.daysSinceApplied}d ago`
                   : '—'}
               </span>
-              <TableSignals card={row} />
+              <TableSignals card={row.card} engagement={row.engagement} />
+              <ArrowRight size={14} className="hidden text-ink-3 transition-transform group-hover:translate-x-0.5 sm:block" aria-hidden="true" />
+            </button>
+          </li>
+        ) : (
+          <li key={row.engagement.id} data-engagement-row className="border-b border-line last:border-b-0">
+            <button
+              type="button"
+              aria-label={`${row.engagement.company || 'Unknown company'} — Cold outreach`}
+              onClick={() => onOpenEngagement?.(row.engagement.id)}
+              className="group relative grid w-full gap-2 px-5 py-3 text-left outline-none transition-colors hover:bg-[color-mix(in_srgb,var(--signal)_6%,var(--inset))] focus-visible:bg-inset sm:grid-cols-[minmax(0,1.5fr)_8rem_7rem_minmax(9rem,.7fr)_1.5rem] sm:items-center sm:px-6"
+            >
+              <span className="absolute inset-y-0 left-0 w-0.5 bg-signal" aria-hidden="true" />
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase text-signal"><Send size={12} aria-hidden="true" /> Cold outreach</span>
+                <span className="mt-0.5 block truncate text-[14px] font-semibold text-ink">{row.engagement.company || 'Unknown company'}</span>
+                <span className="block truncate text-[11px] text-ink-3">{row.engagement.subject || row.engagement.recipient}</span>
+              </span>
+              <span className="text-[11px] font-medium text-signal">{formatEngagementState(row.engagement.state)}</span>
+              <span className="text-[12px] text-ink-2">{relativeDate(row.engagement.sent_at)}</span>
+              <EngagementSignals engagement={row.engagement} />
               <ArrowRight size={14} className="hidden text-ink-3 transition-transform group-hover:translate-x-0.5 sm:block" aria-hidden="true" />
             </button>
           </li>
@@ -363,7 +505,7 @@ function ApplicationList({ columns, onOpen }: BoardProps) {
 }
 
 /** Compact signal chips for a table row (follow-up / ghosted / HR contact / emails). */
-function TableSignals({ card }: { card: BoardCard }) {
+function TableSignals({ card, engagement }: { card: BoardCard; engagement?: EngagementThread }) {
   const items: ReactNode[] = []
   if (card.followup === 'due') {
     items.push(
@@ -397,8 +539,45 @@ function TableSignals({ card }: { card: BoardCard }) {
       </span>,
     )
   }
+  if (engagement?.outbound_count) {
+    items.push(
+      <span key="outreach-events" className="inline-flex items-center gap-1 text-signal">
+        <Send size={13} aria-hidden="true" />
+        {engagement.outbound_count} outreach
+      </span>,
+    )
+  }
   if (items.length === 0) return <span className="text-ink-3">—</span>
   return <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">{items}</div>
+}
+
+function EngagementSignals({ engagement }: { engagement: EngagementThread }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
+      {engagement.followup_count > 0 && <span className="inline-flex items-center gap-1 text-ink-2"><Send size={13} aria-hidden="true" />{engagement.followup_count} follow-up{engagement.followup_count === 1 ? '' : 's'}</span>}
+      {engagement.reply_count > 0
+        ? <span className="inline-flex items-center gap-1 text-strong"><Reply size={13} aria-hidden="true" />Replied</span>
+        : <span className="inline-flex items-center gap-1 text-ink-3"><Clock size={13} aria-hidden="true" />Awaiting reply</span>}
+    </div>
+  )
+}
+
+function needsEngagementAttention(engagement: EngagementThread): boolean {
+  if (engagement.state === 'delivery_unknown' || engagement.state === 'sending') return true
+  if (engagement.reply_count > 0 || engagement.state === 'opted_out') return false
+  const sent = Date.parse(engagement.sent_at)
+  return !Number.isNaN(sent) && Date.now() - sent >= 7 * 86_400_000
+}
+
+function relativeDate(value: string): string {
+  const timestamp = Date.parse(value)
+  if (Number.isNaN(timestamp)) return '—'
+  const days = Math.max(0, Math.floor((Date.now() - timestamp) / 86_400_000))
+  return days === 0 ? 'today' : `${days}d ago`
+}
+
+function formatEngagementState(state: string): string {
+  return (state || 'sent').replaceAll('_', ' ')
 }
 
 interface BoardCardButtonProps {

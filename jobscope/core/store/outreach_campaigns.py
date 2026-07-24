@@ -36,6 +36,9 @@ def _approval_hash(row: dict) -> str:
         "body": row.get("body") or "",
         "resume_path": row.get("resume_path") or "",
         "resume_sha256": row.get("resume_sha256") or "",
+        "parent_message_id": row.get("parent_message_id") or "",
+        "root_message_id": row.get("root_message_id") or "",
+        "followup_number": int(row.get("followup_number") or 0),
     }
     return hashlib.sha256(_json(approved).encode("utf-8")).hexdigest()
 
@@ -54,6 +57,8 @@ def _hydrate(row) -> Optional[dict]:
         if key in value:
             default = "[]" if key == "contacts_json" else "{}"
             value[key.removesuffix("_json")] = json.loads(value.pop(key) or default)
+    if "recipient_locked" in value:
+        value["recipient_locked"] = bool(value["recipient_locked"])
     return value
 
 
@@ -63,6 +68,7 @@ class OutreachCampaignsMixin:
         name: str,
         requested_count: int,
         *,
+        purpose: str = "cold",
         sector: str = "cybersecurity",
         region: str = "India",
         weights: Optional[dict] = None,
@@ -88,16 +94,18 @@ class OutreachCampaignsMixin:
             raise ValueError(
                 f"min_spacing_hours must be at least {MIN_CAMPAIGN_SPACING_HOURS:g}"
             )
+        if purpose not in {"cold", "followup"}:
+            raise ValueError("campaign purpose must be cold or followup")
         campaign_id = campaign_id or f"campaign:{uuid.uuid4().hex}"
         timestamp = now_iso()
         self.conn.execute(
             "INSERT INTO outreach_campaigns ("
-            "id, name, sector, region, requested_count, weights_json, criteria_json, "
+            "id, name, purpose, sector, region, requested_count, weights_json, criteria_json, "
             "resume_name, daily_limit, min_spacing_hours, timezone, send_window_start, "
             "send_window_end, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                campaign_id, (name or "Outreach campaign").strip(), sector, region,
+                campaign_id, (name or "Outreach campaign").strip(), purpose, sector, region,
                 requested_count, _json(weights or _DEFAULT_WEIGHTS), _json(criteria or {}),
                 resume_name, daily_limit, min_spacing_hours, timezone,
                 send_window_start, send_window_end, timestamp, timestamp,
@@ -168,6 +176,12 @@ class OutreachCampaignsMixin:
         company: str,
         company_key: str,
         *,
+        application_job_id: str = "",
+        source_target_id: str = "",
+        parent_message_id: str = "",
+        root_message_id: str = "",
+        followup_number: int = 0,
+        recipient_locked: bool = False,
         rank_score: float = 0,
         region_score: float = 0,
         compensation_score: float = 0,
@@ -180,18 +194,29 @@ class OutreachCampaignsMixin:
         target_id = _target_id(campaign_id, company_key)
         self.conn.execute(
             "INSERT INTO outreach_campaign_targets ("
-            "id, campaign_id, company_key, company, state, rank_score, region_score, "
+            "id, campaign_id, company_key, company, application_job_id, source_target_id, "
+            "parent_message_id, root_message_id, followup_number, recipient_locked, "
+            "state, rank_score, region_score, "
             "compensation_score, growth_score, evidence_coverage, evidence_json, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(campaign_id, company_key) DO UPDATE SET "
-            "company = excluded.company, rank_score = excluded.rank_score, "
+            "company = excluded.company, application_job_id = excluded.application_job_id, "
+            "source_target_id = excluded.source_target_id, "
+            "parent_message_id = excluded.parent_message_id, "
+            "root_message_id = excluded.root_message_id, "
+            "followup_number = excluded.followup_number, "
+            "recipient_locked = excluded.recipient_locked, rank_score = excluded.rank_score, "
             "region_score = excluded.region_score, "
             "compensation_score = excluded.compensation_score, "
             "growth_score = excluded.growth_score, "
             "evidence_coverage = excluded.evidence_coverage, "
             "evidence_json = excluded.evidence_json, updated_at = excluded.updated_at",
             (
-                target_id, campaign_id, company_key, company, state, rank_score,
+                target_id, campaign_id, company_key, company,
+                application_job_id, source_target_id,
+                parent_message_id.strip().strip("<>"),
+                (root_message_id or parent_message_id).strip().strip("<>"),
+                int(followup_number), int(recipient_locked), state, rank_score,
                 region_score, compensation_score, growth_score, evidence_coverage,
                 _json(evidence or {}), timestamp, timestamp,
             ),
@@ -220,6 +245,26 @@ class OutreachCampaignsMixin:
         ).fetchone()
         return _hydrate(row)
 
+    def followup_source_ids(self) -> tuple[set[str], set[str]]:
+        rows = self.conn.execute(
+            "SELECT t.application_job_id, t.source_target_id "
+            "FROM outreach_campaign_targets t "
+            "JOIN outreach_campaigns c ON c.id = t.campaign_id "
+            "WHERE c.purpose = 'followup' AND c.status <> 'cancelled'"
+        ).fetchall()
+        return (
+            {row["application_job_id"] for row in rows if row["application_job_id"]},
+            {row["source_target_id"] for row in rows if row["source_target_id"]},
+        )
+
+    def followup_company_keys(self) -> set[str]:
+        rows = self.conn.execute(
+            "SELECT DISTINCT t.company_key FROM outreach_campaign_targets t "
+            "JOIN outreach_campaigns c ON c.id = t.campaign_id "
+            "WHERE c.purpose = 'followup' AND c.status <> 'cancelled'"
+        ).fetchall()
+        return {row["company_key"] for row in rows if row["company_key"]}
+
     def set_outreach_campaign_draft(
         self,
         target_id: str,
@@ -235,6 +280,19 @@ class OutreachCampaignsMixin:
         selected_note: str = "",
     ) -> dict:
         """Save editable content and invalidate any approval for the old content."""
+        existing = self.get_outreach_campaign_target(target_id)
+        if existing is None:
+            raise KeyError(target_id)
+        if existing.get("recipient_locked"):
+            expected = ""
+            if existing.get("source_target_id"):
+                source = self.get_outreach_campaign_target(existing["source_target_id"])
+                expected = (source or {}).get("selected_email") or ""
+            if not expected and existing.get("application_job_id"):
+                application = self.get_application(existing["application_job_id"]) or {}
+                expected = application.get("outreach_to") or ""
+            if not expected or selected_email.strip().lower() != expected.strip().lower():
+                raise ValueError("follow-up recipient is locked to the original address")
         cursor = self.conn.execute(
             "UPDATE outreach_campaign_targets SET state = 'draft', domain = ?, "
             "contacts_json = ?, selected_email = ?, selected_source = ?, "
@@ -269,6 +327,7 @@ class OutreachCampaignsMixin:
             "selected_email = '', selected_source = '', selected_confidence = '', "
             "selected_note = '', subject = '', body = '', resume_path = '', "
             "resume_sha256 = '', approval_hash = '', approved_at = '', scheduled_at = '', "
+            "error_code = '', error_detail = '', "
             "updated_at = ? "
             "WHERE id = ? AND COALESCE(error_code, '') <> 'sending'",
             (state, domain, _json(contacts), now_iso(), target_id),
@@ -371,6 +430,20 @@ class OutreachCampaignsMixin:
         if cursor.rowcount != 1:
             raise ValueError("only a claimed target can enter delivery unknown")
         return self.get_outreach_campaign_target(target_id)
+
+    def mark_stale_outreach_campaign_sends_unknown(self, before: str) -> int:
+        """Fail closed after a process dies with a durable send claim."""
+        cursor = self.conn.execute(
+            "UPDATE outreach_campaign_targets SET error_code = 'delivery_unknown', "
+            "error_detail = ?, updated_at = ? WHERE state = 'approved' "
+            "AND error_code = 'sending' AND updated_at <= ?",
+            (
+                "send interrupted before its outcome was recorded; check Sent mail",
+                now_iso(), before,
+            ),
+        )
+        self.conn.commit()
+        return cursor.rowcount
 
     def resolve_outreach_campaign_delivery(
         self, target_id: str, outcome: str, resolved_at: str = "",
@@ -533,5 +606,25 @@ class OutreachCampaignsMixin:
             campaign_filter +
             " ORDER BY COALESCE(NULLIF(t.sent_at, ''), t.updated_at) DESC, t.id",
             params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def outreach_engagement_rows(self) -> list[dict]:
+        """Private read-model inputs for sent outreach and linked inbound replies."""
+        rows = self.conn.execute(
+            "SELECT t.id AS target_id, t.campaign_id, c.purpose, t.company, "
+            "t.application_job_id, t.source_target_id, t.followup_number, "
+            "t.selected_email AS recipient, t.subject, t.state, t.sent_at, "
+            "t.replied_at, t.reply_event_id, t.error_code, t.updated_at, "
+            "COALESCE(NULLIF(j.title, ''), a.title, '') AS title, "
+            "m.from_addr AS reply_from, m.subject AS reply_subject, "
+            "m.signal AS reply_signal, m.date AS reply_date, m.snippet AS reply_snippet "
+            "FROM outreach_campaign_targets t "
+            "JOIN outreach_campaigns c ON c.id = t.campaign_id "
+            "LEFT JOIN applications a ON a.job_id = t.application_job_id "
+            "LEFT JOIN jobs j ON j.id = t.application_job_id "
+            "LEFT JOIN mail_events m ON m.id = t.reply_event_id "
+            "WHERE t.sent_at <> '' OR t.error_code IN ('sending', 'delivery_unknown') "
+            "ORDER BY COALESCE(NULLIF(t.sent_at, ''), t.updated_at), t.id"
         ).fetchall()
         return [dict(row) for row in rows]

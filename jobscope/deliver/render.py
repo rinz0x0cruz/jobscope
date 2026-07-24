@@ -21,7 +21,7 @@ TIER_COLORS = {"Strong": "#16a34a", "Good": "#2563eb", "Stretch": "#d97706", "Sk
 
 
 def _profile_data(cfg: dict, store) -> dict | None:
-    """The résumé-derived search profile for the dashboard (shown behind the site
+    """The editable search profile for the dashboard (shown behind the site
     unlock, stripped from the public build): the active named YAML profile when it
     exists, else built on the fly from the stored résumé. ``None`` with no résumé.
     """
@@ -233,11 +233,14 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     except Exception:  # noqa: BLE001
         resumes = {}
     default_resume = next(iter(resumes.values()), None)
-    rows = _dedupe([
-        _job_record(j, enrichment.for_job(store, j), store, stale_days,
-                    resumes.get(j.resume_base) or default_resume)
-        for j in jobs
-    ])
+    rows = []
+    for job, sources in _dedupe_jobs(jobs):
+        row = _job_record(
+            job, enrichment.for_job(store, job), store, stale_days,
+            resumes.get(job.resume_base) or default_resume,
+        )
+        row["sources"] = sources
+        rows.append(row)
     overview = _overview_data(cfg, store)
     apps = _application_records(store)
     profile = _profile_data(cfg, store)
@@ -528,6 +531,32 @@ def _dedupe(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 canon["sources"].append(s)
                 seen.add(s["url"])
     return [groups[k] for k in order]
+
+
+def _dedupe_jobs(jobs) -> list[tuple[Any, list[dict[str, str]]]]:
+    """Collapse duplicates before expensive row projection.
+
+    Jobs arrive score-sorted, so the first item remains canonical just as it did
+    when ``_dedupe`` ran after projection. Only source links are merged.
+    """
+    groups: dict[tuple, tuple[Any, list[dict[str, str]], set[str]]] = {}
+    order: list[tuple] = []
+    for job in jobs:
+        location = ("Remote" if job.is_remote else job.location) or job.location
+        key = (
+            job.company.strip().lower(),
+            _norm_title(job.title),
+            (location or "").strip().lower(),
+        )
+        source = {"source": job.source, "url": job.url}
+        group = groups.get(key)
+        if group is None:
+            groups[key] = (job, [source], {job.url})
+            order.append(key)
+        elif job.url not in group[2]:
+            group[1].append(source)
+            group[2].add(job.url)
+    return [(groups[key][0], groups[key][1]) for key in order]
 
 
 def _job_record(job, enr: dict, store, stale_days: int = 45, resume=None) -> dict[str, Any]:

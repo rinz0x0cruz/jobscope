@@ -20,6 +20,7 @@ import os
 import secrets
 import tempfile
 import threading
+import time
 import webbrowser
 from dataclasses import asdict, dataclass
 from typing import Callable
@@ -29,18 +30,21 @@ from urllib.parse import parse_qs, urlparse
 # background worker. Writes are small dict.update() calls (atomic under the GIL);
 # _LOCK only guards the "is one already running?" decision in do_POST.
 _LOCK = threading.Lock()
+_MAX_API_REQUEST_BYTES = 256 * 1024
 _MAX_RESUME_BYTES = 5 * 1024 * 1024
 _MAX_RESUME_REQUEST_BYTES = 7 * 1024 * 1024
-_MAX_CAMPAIGN_REQUEST_BYTES = 256 * 1024
+_MAX_CAMPAIGN_REQUEST_BYTES = _MAX_API_REQUEST_BYTES
+_HOSTED_ACCESS_HEADER = "Cf-Access-Jwt-Assertion"
 _MAX_PROFILE_REQUEST_BYTES = 32 * 1024
 _RESUME_EXTENSIONS = frozenset({".md", ".txt", ".json", ".pdf"})
-_STATE: dict[str, str] = {
+_STATE: dict[str, object] = {
     "state": "idle",     # idle | running | done | skipped | error | busy
     "step": "",          # scan | inbox | match | render | publish | ...
     "message": "",
     "started": "",
     "finished": "",
     "last_date": "",     # YYYY-MM-DD of the last successful refresh
+    "stages": [],
 }
 
 
@@ -50,20 +54,24 @@ class StageResult:
     required: bool
     status: str
     detail: str = ""
+    duration_ms: int = 0
 
 
 def _run_stage(name: str, *, required: bool, action: Callable[[], object],
                nonzero_is_failure: bool = False) -> StageResult:
+    started = time.perf_counter()
     try:
         value = action()
         if nonzero_is_failure and value not in (0, None):
             raise RuntimeError(f"returned nonzero status {value}")
         detail = str(value) if value not in (None, 0, "") else ""
-        return StageResult(name, required, "ok", detail)
+        duration_ms = round((time.perf_counter() - started) * 1000)
+        return StageResult(name, required, "ok", detail, duration_ms)
     except Exception as exc:
         if required:
             raise RuntimeError(f"required stage '{name}' failed: {exc}") from exc
-        return StageResult(name, required, "degraded", str(exc)[:300])
+        duration_ms = round((time.perf_counter() - started) * 1000)
+        return StageResult(name, required, "degraded", str(exc)[:300], duration_ms)
 
 
 def _require_digest(result) -> int:
@@ -92,7 +100,23 @@ def _dist_dir(cfg: dict) -> str:
     return os.path.abspath(override) if override else os.path.join(_repo_root(), "web", "dist")
 
 
-def _build_server(cfg: dict, port: int):
+def _hosted_settings(hosted: bool) -> str:
+    if not hosted:
+        return ""
+    public_origin = os.environ.get("JOBSCOPE_PUBLIC_ORIGIN", "").strip().rstrip("/")
+    if not public_origin:
+        raise RuntimeError("JOBSCOPE_PUBLIC_ORIGIN is required in hosted mode")
+    parsed = urlparse(public_origin)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.path
+            or parsed.params or parsed.query or parsed.fragment
+            or parsed.username or parsed.password):
+        raise RuntimeError(
+            "JOBSCOPE_PUBLIC_ORIGIN must be an HTTPS origin without a path"
+        )
+    return public_origin
+
+
+def _build_server(cfg: dict, port: int, *, hosted: bool = False):
     """Build (but do not start) the SPA HTTP server with the refresh API wired
     in. Serves ``web/dist`` (building it once, un-redacted, if absent); the React
     shell owns Gmail/refresh controls. Returns ``(httpd, page, token,
@@ -100,6 +124,7 @@ def _build_server(cfg: dict, port: int):
     port."""
     from jobscope.core.store import Store
 
+    public_origin = _hosted_settings(hosted)
     directory = _dist_dir(cfg)
     serve_cfg = cfg.get("serve", {}) or {}
     refresh_on = bool(serve_cfg.get("refresh_enabled", True))
@@ -143,13 +168,23 @@ def _build_server(cfg: dict, port: int):
             self.end_headers()
             self.wfile.write(html)
 
+        def _tunnel_authorized(self) -> bool:
+            if not hosted:
+                return True
+            return bool(self.headers.get(_HOSTED_ACCESS_HEADER, ""))
+
         def _authorized(self) -> bool:
             # CSRF/loopback guard: reject any cross-origin caller (Origin whose
             # hostname is not a loopback address), and require the per-run token
             # that only the same-origin page can read via /api/token (a
             # cross-origin site cannot read that response).
             origin = self.headers.get("Origin")
-            if origin:
+            if hosted:
+                if self.command in {"POST", "PUT"} and origin != public_origin:
+                    return False
+                if origin and origin != public_origin:
+                    return False
+            elif origin:
                 hostname = origin.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].lower()
                 if hostname not in ("127.0.0.1", "localhost", "[::1]", "::1"):
                     return False
@@ -161,7 +196,10 @@ def _build_server(cfg: dict, port: int):
             except ValueError:
                 self._send_json(400, {"ok": False, "error": "invalid content length"})
                 return None
-            if length < 1:
+            if length < 0:
+                self._send_json(400, {"ok": False, "error": "invalid content length"})
+                return None
+            if length == 0:
                 return {}
             if length > max_bytes:
                 self._send_json(413, {"ok": False, "error": "request is too large"})
@@ -202,6 +240,21 @@ def _build_server(cfg: dict, port: int):
             except Exception as exc:  # noqa: BLE001 - surface bounded local API errors
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
+        def _engagements_get(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            try:
+                from jobscope.apply import campaigns
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    result = {"ok": True, "engagements": campaigns.engagement_activity(store)}
+                self._send_json(200, result)
+            except Exception:  # noqa: BLE001 - keep private storage details server-side
+                self._send_json(500, {
+                    "ok": False, "error": "could not load engagement activity",
+                })
+
         def _campaigns_post(self, *, create: bool) -> None:
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
@@ -214,18 +267,29 @@ def _build_server(cfg: dict, port: int):
                 from jobscope.core.store import Store
                 with Store(cfg["output"]["db_path"]) as store:
                     if create:
-                        allowed = {"name", "requested_count", "weights", "resume_name"}
+                        allowed = {
+                            "name", "requested_count", "weights", "resume_name", "purpose",
+                            "include_cold", "include_applications",
+                        }
                         unknown = set(data) - allowed
                         if unknown:
                             raise ValueError(f"unknown campaign field(s): {', '.join(sorted(unknown))}")
                         name = str(data.get("name") or "").strip()
                         if not name:
                             raise ValueError("campaign name required")
-                        result = campaigns.create_campaign(
-                            cfg, store, name, int(data.get("requested_count") or 0),
-                            weights=data.get("weights"),
-                            resume_name=str(data.get("resume_name") or ""),
-                        )
+                        if str(data.get("purpose") or "cold") == "followup":
+                            result = campaigns.create_followup_campaign(
+                                cfg, store, name, int(data.get("requested_count") or 0),
+                                resume_name=str(data.get("resume_name") or ""),
+                                include_cold=bool(data.get("include_cold", True)),
+                                include_applications=bool(data.get("include_applications", True)),
+                            )
+                        else:
+                            result = campaigns.create_campaign(
+                                cfg, store, name, int(data.get("requested_count") or 0),
+                                weights=data.get("weights"),
+                                resume_name=str(data.get("resume_name") or ""),
+                            )
                         response = {"ok": True, **result}
                     else:
                         action = str(data.get("action") or "").strip()
@@ -305,7 +369,7 @@ def _build_server(cfg: dict, port: int):
                         else:
                             response = campaigns.send_target(
                                 cfg, store, str(data.get("target_id") or ""),
-                                ignore_schedule=True,
+                                ignore_schedule=True, allow_inactive=True,
                             )
                 self._send_json(200, response)
             except KeyError:
@@ -319,11 +383,9 @@ def _build_server(cfg: dict, port: int):
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            try:
-                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
-            except ValueError:
-                data = {}
+            data = self._json_request(_MAX_API_REQUEST_BYTES)
+            if data is None:
+                return
             job_id = str(data.get("job_id") or "").strip()
             if not job_id:
                 self._send_json(400, {"ok": False, "error": "job_id required"})
@@ -348,11 +410,9 @@ def _build_server(cfg: dict, port: int):
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            try:
-                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
-            except ValueError:
-                data = {}
+            data = self._json_request(_MAX_API_REQUEST_BYTES)
+            if data is None:
+                return
             company = str(data.get("company") or "").strip()
             url = str(data.get("url") or "").strip()
             if not company and not url:
@@ -379,11 +439,9 @@ def _build_server(cfg: dict, port: int):
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            try:
-                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
-            except ValueError:
-                data = {}
+            data = self._json_request(_MAX_API_REQUEST_BYTES)
+            if data is None:
+                return
             job_id = str(data.get("job_id") or "").strip()
             if not job_id:
                 self._send_json(400, {"ok": False, "error": "job_id required"})
@@ -410,11 +468,9 @@ def _build_server(cfg: dict, port: int):
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            try:
-                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
-            except ValueError:
-                data = {}
+            data = self._json_request(_MAX_PROFILE_REQUEST_BYTES)
+            if data is None:
+                return
             name = str(data.get("name") or "").strip()
             if not name:
                 self._send_json(400, {"ok": False, "error": "name required"})
@@ -524,14 +580,8 @@ def _build_server(cfg: dict, port: int):
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            if length <= 0 or length > _MAX_RESUME_REQUEST_BYTES:
-                self._send_json(413, {"ok": False, "error": "resume upload is too large"})
-                return
-            try:
-                data = json.loads(self.rfile.read(length) or b"{}")
-            except ValueError:
-                self._send_json(400, {"ok": False, "error": "invalid JSON"})
+            data = self._json_request(_MAX_RESUME_REQUEST_BYTES)
+            if data is None:
                 return
             filename = os.path.basename(str(data.get("filename") or "").strip())
             requested_name = str(data.get("name") or "").strip()
@@ -621,11 +671,9 @@ def _build_server(cfg: dict, port: int):
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            try:
-                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
-            except ValueError:
-                data = {}
+            data = self._json_request(_MAX_API_REQUEST_BYTES)
+            if data is None:
+                return
             company = str(data.get("company") or "").strip()
             if not company:
                 self._send_json(400, {"ok": False, "error": "company required"})
@@ -648,11 +696,9 @@ def _build_server(cfg: dict, port: int):
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            try:
-                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
-            except ValueError:
-                data = {}
+            data = self._json_request(_MAX_API_REQUEST_BYTES)
+            if data is None:
+                return
             try:
                 from jobscope.apply import monitoring
                 from jobscope.core.store import Store
@@ -674,11 +720,9 @@ def _build_server(cfg: dict, port: int):
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            try:
-                data = json.loads(self.rfile.read(length) or b"{}") if length else {}
-            except ValueError:
-                data = {}
+            data = self._json_request(_MAX_API_REQUEST_BYTES)
+            if data is None:
+                return
             try:
                 from jobscope.apply import monitoring
                 from jobscope.core.store import Store
@@ -691,8 +735,21 @@ def _build_server(cfg: dict, port: int):
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
         # -- routes -------------------------------------------------------
+        def do_HEAD(self):  # noqa: N802 - http.server API
+            route = self.path.split("?", 1)[0].split("#", 1)[0]
+            if route != "/healthz" and not self._tunnel_authorized():
+                self.send_error(403)
+                return
+            super().do_HEAD()
+
         def do_GET(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0].split("#", 1)[0]
+            if route == "/healthz":
+                self._send_json(200, {"ok": True})
+                return
+            if not self._tunnel_authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
             if route == "/api/token":
                 self._send_json(200, {"token": token, "enabled": refresh_on})
                 return
@@ -704,6 +761,9 @@ def _build_server(cfg: dict, port: int):
                 return
             if route == "/api/dashboard":
                 self._dashboard_get()
+                return
+            if route == "/api/engagements":
+                self._engagements_get()
                 return
             if route in {"/api/campaigns", "/api/campaigns/detail"}:
                 self._campaigns_get()
@@ -720,6 +780,9 @@ def _build_server(cfg: dict, port: int):
 
         def do_POST(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0]
+            if not self._tunnel_authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
             if route == "/api/outreach":
                 self._outreach()
                 return
@@ -762,13 +825,9 @@ def _build_server(cfg: dict, port: int):
             if not self._authorized():
                 self._send_json(403, {"state": "error", "message": "forbidden"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            opts: dict = {}
-            if length:
-                try:
-                    opts = json.loads(self.rfile.read(length) or b"{}") or {}
-                except ValueError:
-                    opts = {}
+            opts = self._json_request(_MAX_API_REQUEST_BYTES)
+            if opts is None:
+                return
             force = bool(opts.get("force"))
             full_scan = bool(opts.get("full_scan"))
             with _LOCK:
@@ -776,13 +835,16 @@ def _build_server(cfg: dict, port: int):
                     self._send_json(200, {"state": "busy"})
                     return
                 _STATE.update(state="running", step="starting", message="Starting\u2026",
-                              started=_now(), finished="")
+                              started=_now(), finished="", stages=[])
             threading.Thread(target=_run_refresh, args=(cfg, force, full_scan),
                              daemon=True).start()
             self._send_json(200, {"state": "started"})
 
         def do_PUT(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0]
+            if not self._tunnel_authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
             if route == "/api/profile":
                 self._profile_update()
                 return
@@ -792,17 +854,21 @@ def _build_server(cfg: dict, port: int):
         allow_reuse_address = True
         daemon_threads = True
 
-    return Server(("127.0.0.1", port), Handler), "index.html", token, refresh_on
+    bind_host = "0.0.0.0" if hosted else "127.0.0.1"
+    return Server((bind_host, port), Handler), "index.html", token, refresh_on
 
 
-def run(cfg: dict, port: int = 8799, open_browser: bool = False) -> int:
-    httpd, page, _token, refresh_on = _build_server(cfg, port)
+def run(cfg: dict, port: int = 8799, open_browser: bool = False,
+        hosted: bool = False) -> int:
+    httpd, page, _token, refresh_on = _build_server(cfg, port, hosted=hosted)
     port = httpd.server_address[1]
     with httpd:
-        url = f"http://127.0.0.1:{port}/{page}"
+        url = ((os.environ.get("JOBSCOPE_PUBLIC_ORIGIN", "").strip().rstrip("/") + "/")
+               if hosted else f"http://127.0.0.1:{port}/{page}")
         print(f"  serving dashboard at {url}  (Ctrl+C to stop)")
         if refresh_on:
-            print("  local Gmail scan and profile upload APIs enabled")
+            scope = "hosted" if hosted else "local"
+            print(f"  {scope} Gmail scan and profile upload APIs enabled")
         if open_browser:
             webbrowser.open(url)
         try:
@@ -947,6 +1013,7 @@ def _run_refresh(cfg: dict, force: bool, full_scan: bool) -> None:
             cfg, force=force, full_scan=full_scan, publish_site=False, on_step=on_step,
         )
         _STATE.update(state=res["state"], step=res["state"], message=res["message"],
+                  stages=res.get("stages", []),
                       last_date=res.get("last_date") or _STATE.get("last_date", ""),
                       finished=_now())
     except Exception as exc:  # noqa: BLE001 - surface any failure to the UI

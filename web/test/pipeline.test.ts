@@ -82,6 +82,7 @@ describe('pipeline: timing (#28)', () => {
     ]
     const t = timing(apps)
     expect(t.replied).toBe(2)
+    expect(t.interviewed).toBe(2)
     expect(t.medianDaysToReply).toBe(4) // median of [6, 2]
     expect(t.medianDaysToInterview).toBe(6) // median of [10, 2]
   })
@@ -90,5 +91,6 @@ describe('pipeline: timing (#28)', () => {
     const t = timing([app({ applied_at: daysAgo(3), timeline: [ev(daysAgo(2), 'confirmation')] })])
     expect(t.medianDaysToReply).toBeNull()
     expect(t.medianDaysToInterview).toBeNull()
+    expect(t.interviewed).toBe(0)
   })
 })

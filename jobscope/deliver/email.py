@@ -32,7 +32,8 @@ def _safe_smtp_error(exc: Exception) -> str:
 
 def send(cfg: dict, subject: str, text: str, html: Optional[str] = None, *,
          to: Optional[str] = None, attachments: Optional[list[str]] = None,
-         message_id: str = "", raise_errors: bool = False) -> bool:
+         message_id: str = "", in_reply_to: str = "", references: str = "",
+         raise_errors: bool = False) -> bool:
     ec = cfg.get("email", {})
     if not ec.get("enabled"):
         return False
@@ -61,6 +62,14 @@ def send(cfg: dict, subject: str, text: str, html: Optional[str] = None, *,
     msg["To"] = recipient
     if message_id:
         msg["Message-ID"] = f"<{message_id.strip().strip('<>')}>"
+    if in_reply_to:
+        msg["In-Reply-To"] = f"<{in_reply_to.strip().strip('<>')}>"
+    if references:
+        msg["References"] = " ".join(
+            f"<{value.strip().strip('<>')}>"
+            for value in references.split()
+            if value.strip().strip("<>")
+        )
 
     delivery_started = False
     try:
