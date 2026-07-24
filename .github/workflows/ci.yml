@@ -128,11 +128,10 @@ jobs:
           cleanup
           start
           test -s "$data/jobscope.db"
-          python - "$data/jobscope.db" <<'PY'
+          docker exec --interactive jobscope-hosted python - <<'PY'
           import sqlite3
-          import sys
 
-          with sqlite3.connect(sys.argv[1]) as connection:
+          with sqlite3.connect("/data/jobscope.db") as connection:
               assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
               assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
           PY
