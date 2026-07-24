@@ -151,6 +151,15 @@ def test_real_interview_still_classifies_as_interview():
     ) == "interview"
 
 
+def test_interview_confirmation_with_confirmed_discussion_is_interview():
+    assert mailrules.classify_signal(
+        "joyce@cloudsek.com", "CloudSEK Interview Confirmation",
+        "Thanks for submitting your availability for the Customer Threat Advisor "
+        "position with CloudSEK. Your discussion has been confirmed for: "
+        "Date/Time: Jul 23, 2026 6:30pm. Interviewers: Nistul Raj. Google Meet."
+    ) == "interview"
+
+
 def test_classify_rejection_beats_interview():
     # A rejection email that also mentions "interview" must classify as rejection.
     assert mailrules.classify_signal(
@@ -448,6 +457,15 @@ def test_parse_company_from_direct_domain():
     assert company.lower() == "zscaler"
 
 
+def test_parse_company_uses_direct_domain_over_personal_sender_name():
+    company, role = mailrules.parse_company_role(
+        "Joyce Vennila", "cloudsek.com", "CloudSEK Interview Confirmation",
+        "Thanks for submitting your availability for the Customer Threat Advisor "
+        "position with CloudSEK. Your discussion has been confirmed.")
+    assert company == "CloudSEK"
+    assert role == "Customer Threat Advisor"
+
+
 def test_parse_company_prefers_display_over_domain_acronym():
     # A real display name ("Millennium Recruiting Team") beats a bare domain
     # acronym (careers.mlp.com) when the subject names no company.
@@ -709,6 +727,42 @@ def test_inbox_fetches_generic_subject_body_from_known_employer(monkeypatch):
         call[0] == "fetch" and "BODY.PEEK[]" in str(call[1])
         for call in FakeIMAP.instances[0].uid_calls
     )
+    store.close()
+
+
+def test_inbox_ingests_cloudsek_interview_as_separate_application(monkeypatch):
+    FakeIMAP.mailbox = {
+        1: _raw(
+            "Joyce Vennila <joyce@cloudsek.com>",
+            "CloudSEK Interview Confirmation",
+            "Dear Mohit, Thanks for submitting your availability for the Customer "
+            "Threat Advisor position with CloudSEK. Your discussion has been "
+            "confirmed for: Date/Time: Jul 23, 2026 6:30pm. Interviewers: Nistul "
+            "Raj. Google Meet.",
+            "<cloudsek-interview@cloudsek.com>",
+        ),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    cfg = _cfg(monkeypatch)
+    store = _store()
+    existing_id = inbox._synthetic_job_id("CloudSEK", "Technical Security Consultant")
+    store.set_application(Application(
+        job_id=existing_id, status="applied", company="CloudSEK",
+        title="Technical Security Consultant", source="inbox",
+    ))
+
+    assert inbox.run(cfg, store) == 0
+
+    events = store.mail_events()
+    assert len(events) == 1
+    assert events[0]["signal"] == "interview"
+    assert events[0]["company"] == "CloudSEK"
+    assert events[0]["role"] == "Customer Threat Advisor"
+    assert events[0]["job_id"] != existing_id
+    assert store.get_application(events[0]["job_id"])["status"] == "interview"
+    assert store.get_application(existing_id, include_tombstoned=True)["status"] == "applied"
     store.close()
 
 

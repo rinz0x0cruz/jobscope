@@ -396,6 +396,7 @@ def score_signals(subject: str, body: str) -> dict[str, int]:
 # the confirmation it is. (A curated subset of the weight-3 interview rules plus
 # the advancement cues, matched independently of the aggregate score.)
 _INTERVIEW_DIRECT: list[re.Pattern[str]] = [re.compile(p, re.I) for p in (
+    r"\binterview confirmation\b",
     r"\binterview\b.{0,25}(?:invitation|invite|request|is scheduled|is confirmed|is booked|scheduled for|confirmed for)",
     r"(?:invitation|invite|request) (?:to|for) (?:an? )?(?:\w+ ){0,2}interview",
     r"invit(?:e|ing) you (?:to|for) (?:an? )?(?:\w+ ){0,2}(?:interview|screen(?:ing)?)",
@@ -642,6 +643,12 @@ _ROLE_AT_COMPANY = re.compile(
     r"(?:the\s+|our\s+)?(?P<role>[A-Za-z0-9 ,+/&().-]{2,60}?)\s+"
     r"(?:role|position|opening|job|vacancy)?\s*(?:at|with|@)\s+(?P<company>[A-Za-z0-9 &.,'-]{2,50})",
     re.I)
+_AVAILABILITY_FOR_ROLE = re.compile(
+    r"\bavailability\s+for\s+(?:the\s+)?"
+    r"(?P<role>[A-Za-z0-9 ,+/&().-]{2,60}?)\s+"
+    r"(?:role|position|opening|job|vacancy)\s+(?:at|with|@)\s+"
+    r"(?P<company>[A-Za-z0-9][A-Za-z0-9 &'\u2019-]{1,49})(?=[.!?,\r\n]|$)",
+    re.I)
 _APPLICATION_TO = re.compile(
     r"(?:your\s+)?(?:application\s+(?:to|at|with)|appl(?:y|ied|ying)\s+(?:to|with))\s+"
     r"(?P<company>[A-Za-z0-9 &.,'-]{2,50}?)"
@@ -693,7 +700,7 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
     role = _requisition_role(subject, body)
     company = ""
 
-    m = _ROLE_AT_COMPANY.search(subject)
+    m = _ROLE_AT_COMPANY.search(subject) or _AVAILABILITY_FOR_ROLE.search(body or "")
     if m:
         role = role or _clean_role(m.group("role"))
         company = _pick(_strip_company_noise(m.group("company")))
