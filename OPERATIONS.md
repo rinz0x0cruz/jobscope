@@ -61,7 +61,10 @@ If the account has no Cloudflare-managed zone, use the zone-less edge in `cloudf
    for `workers.dev` and allow only the intended email identity.
 4. Copy that Access application's Audience tag into Railway as `JOBSCOPE_CF_ACCESS_AUD`, set
    `JOBSCOPE_CF_ACCESS_TEAM_DOMAIN`, and set `JOBSCOPE_PUBLIC_ORIGIN` to the `workers.dev` URL.
-5. Keep the Railway origin domain undocumented and rely on in-process JWT validation as the
+5. Add a **Service Auth** policy for the GitHub service token. Store its Client ID as the Worker's
+   `AUTOMATION_CLIENT_ID` secret; the Worker matches the signed JWT `common_name` and permits that
+   identity only under `/api/automation/*`.
+6. Keep the Railway origin domain undocumented and rely on in-process JWT validation as the
    mandatory bypass defense. The Worker also rejects missing assertions and strips Access cookies.
 
 Do not migrate real data yet. Start the immutable image with an empty volume, verify unauthenticated

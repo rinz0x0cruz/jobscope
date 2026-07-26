@@ -53,7 +53,9 @@ When no custom zone is available, `cloudflare/worker.mjs` is the only supported
 public edge. It runs at one Access-protected `workers.dev` route with preview URLs
 disabled, rejects requests that lack `Cf-Access-Jwt-Assertion`, strips the
 `CF_Authorization` cookie before proxying, and forwards the signed assertion to the
-origin. The Railway service may have a generated origin hostname, but every private
+origin. A configured automation service token is identified by its signed JWT
+`common_name`; the Worker rejects that identity outside `/api/automation/*` and strips
+the Client ID/Secret headers before proxying. The Railway service may have a generated origin hostname, but every private
 route still fails closed unless the assertion validates for the exact Access audience.
 
 ## Secrets

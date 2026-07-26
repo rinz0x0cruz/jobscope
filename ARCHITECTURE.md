@@ -212,8 +212,9 @@ artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboar
 The optional [cloudflare/worker.mjs](cloudflare/worker.mjs) edge provides one
 Access-protected `workers.dev` hostname when no custom zone exists. It contains no
 business logic or state: it rejects missing Access assertions, strips Access cookies,
-and proxies to the single Railway origin, where `serve.py` performs cryptographic JWT
-validation and all authorization.
+scopes the configured service-token identity to `/api/automation/*`, and proxies to the
+single Railway origin, where `serve.py` performs cryptographic JWT validation and all
+authorization.
 
 > **Note:** `render.py` is the JSON emitter. The **React app in `web/`** is the single dashboard — served
 > privately by `jobscope serve`, or as an empty Pages shell plus encrypted whole-site payload — and owns
