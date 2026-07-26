@@ -113,6 +113,7 @@ describe('refresh: scanNewMail dispatch (token path)', () => {
       generated: '2026-07-18T00:00:00', total: 0, rows: [],
       overview: { funnel: {}, gaps: [], considered: 0, targets: [] },
       applications: [], profile: null, applied_outreach: [], companies: [], reviews: [],
+      outreach_snapshot: { read_only: true, campaigns: [], details: [], engagements: [] },
       activity_audit: { recent_runs: [], selected_run_id: '', decisions: [], recoverable_applications: [] },
     }
     vi.stubGlobal('fetch', vi.fn(async (url: string, opts?: { method?: string }) => {

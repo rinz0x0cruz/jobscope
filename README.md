@@ -167,8 +167,11 @@ Jobscope records **delivery unknown**, locks the target out of automatic retries
 Check the provider's Sent folder, then choose **Confirmed in Sent** or **Confirmed not sent** in Outreach;
 the latter returns the message to Draft and requires a fresh approval before any retry.
 
-Campaign addresses, drafts, approvals, schedules, source provenance, thread identifiers, and logs stay in
-local SQLite. GitHub Pages and GitHub Actions do not expose or send campaign mail.
+Writable campaign state, draft bodies, approvals, résumé paths/hashes, raw message IDs,
+suppression internals, and send logs stay out of Pages. After passphrase unlock, Pages can
+show an allowlisted **read-only Outreach snapshot** (batch/target state, recipient, subject,
+schedule, and delivery/reply summary). GitHub Pages and GitHub Actions cannot approve,
+mutate, schedule, or send campaign mail.
 The private Applications ledger reads a separate, token-guarded engagement projection: it may show
 recipient, subject, send/reply dates, state, follow-up count, and a retained inbound snippet summary.
 It never exposes outbound bodies, résumé paths/hashes, approval hashes, or raw message/thread identifiers.

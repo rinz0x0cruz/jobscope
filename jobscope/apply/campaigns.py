@@ -1,4 +1,4 @@
-"""Local-only, individually approved recruiter outreach campaigns."""
+"""Individually approved campaigns with an encrypted read-only snapshot."""
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +14,7 @@ from jobscope.core.store.monitoring import normalize_company_key
 from jobscope.core.store.outreach_campaigns import MAX_CAMPAIGN_DAILY_LIMIT
 
 _STALE_SEND_CLAIM = timedelta(minutes=15)
+OUTREACH_SNAPSHOT_META_KEY = "campaign:snapshot:v1"
 
 
 def _utc(value: Optional[datetime] = None) -> datetime:
@@ -111,6 +112,67 @@ def list_campaigns(store) -> list[dict]:
             "delivered_count": delivered, "response_count": responses,
         })
     return result
+
+
+def outreach_snapshot(store) -> dict:
+    """Allowlisted read model for the passphrase-encrypted Pages payload."""
+    summaries = list_campaigns(store)
+    if not summaries:
+        cached = store.meta_get(OUTREACH_SNAPSHOT_META_KEY, "") or ""
+        if cached:
+            import json
+            try:
+                value = json.loads(cached)
+            except (TypeError, json.JSONDecodeError):
+                value = None
+            if isinstance(value, dict) and value.get("read_only") is True:
+                return value
+
+    campaign_keys = {
+        "id", "name", "purpose", "status", "sector", "region",
+        "requested_count", "weights", "criteria", "resume_name",
+        "daily_limit", "min_spacing_hours",
+        "timezone", "send_window_start", "send_window_end", "created_at",
+        "updated_at", "counts", "target_count", "delivered_count",
+        "response_count",
+    }
+    target_keys = {
+        "id", "campaign_id", "company", "state", "rank_score",
+        "region_score", "compensation_score", "growth_score",
+        "evidence_coverage", "evidence", "selected_email", "selected_source",
+        "selected_confidence", "subject", "approved_at", "scheduled_at",
+        "sent_at", "replied_at", "error_code", "created_at", "updated_at",
+        "followup_number", "recipient_locked",
+    }
+    history_keys = {
+        "target_id", "campaign_id", "company", "recipient", "subject",
+        "state", "sent_at", "replied_at", "reply_from", "reply_subject",
+        "reply_signal", "reply_date",
+    }
+    details = []
+    for summary in summaries:
+        detail = get_campaign_detail(store, summary["id"])
+        details.append({
+            "campaign_id": summary["id"],
+            "targets": [
+                {key: target.get(key) for key in target_keys}
+                for target in detail["targets"]
+            ],
+            "history": [
+                {key: item.get(key) for key in history_keys}
+                for item in detail["history"]
+            ],
+            "reply_tracking": detail["reply_tracking"],
+        })
+    return {
+        "read_only": True,
+        "campaigns": [
+            {key: summary.get(key) for key in campaign_keys}
+            for summary in summaries
+        ],
+        "details": details,
+        "engagements": engagement_activity(store),
+    }
 
 
 def engagement_activity(store) -> list[dict]:

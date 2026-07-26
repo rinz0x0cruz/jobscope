@@ -30,6 +30,8 @@ import {
   type CampaignDetailResult,
   type CampaignHistoryItem,
   type CampaignSummary,
+  type OutreachSnapshot,
+  type CampaignSnapshotTarget,
   type CampaignTarget,
 } from '@/lib/campaigns'
 
@@ -974,5 +976,94 @@ function FollowupFact({ label, value }: { label: string; value: string }) {
       <p className="text-[9px] font-semibold uppercase text-ink-3">{label}</p>
       <p className="mt-1 text-[12px] font-medium text-ink">{value}</p>
     </div>
+  )
+}
+
+export function CampaignsSnapshotView({
+  snapshot,
+  selectedId,
+  onSelect,
+}: {
+  snapshot: OutreachSnapshot
+  selectedId?: string
+  onSelect: (campaignId?: string) => void
+}) {
+  const selected = snapshot.campaigns.find((campaign) => campaign.id === selectedId)
+    ?? snapshot.campaigns[0]
+  const detail = snapshot.details.find((item) => item.campaign_id === selected?.id)
+  const approved = snapshot.campaigns.reduce(
+    (sum, campaign) => sum + (campaign.counts.approved ?? 0), 0,
+  )
+  const sent = snapshot.campaigns.reduce((sum, campaign) => sum + campaign.delivered_count, 0)
+  const replies = snapshot.campaigns.reduce((sum, campaign) => sum + campaign.response_count, 0)
+  return (
+    <section className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col border-x border-line bg-panel">
+      <WorkspaceHeader
+        eyebrow={<span className="flex items-center gap-1.5"><ShieldCheck size={13} aria-hidden="true" /> Read-only encrypted snapshot</span>}
+        title="Outreach"
+        description="Review campaign state and delivery history. Open the private control plane to make changes or send mail."
+        actions={(
+          <div className="flex gap-5 border-l border-line pl-4 text-right">
+            <Metric label="Batches" value={snapshot.campaigns.length} />
+            <Metric label="Approved" value={approved} />
+            <Metric label="Sent" value={sent} />
+            <Metric label="Replies" value={replies} />
+          </div>
+        )}
+        accent="brand"
+      />
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(250px,.48fr)_minmax(0,1.52fr)]">
+        <div className="min-h-0 overflow-auto border-r border-line">
+          {snapshot.campaigns.length ? (
+            <ul>{snapshot.campaigns.map((campaign) => (
+              <CampaignRow
+                key={campaign.id}
+                campaign={campaign}
+                selected={campaign.id === selected?.id}
+                onSelect={() => onSelect(campaign.id)}
+              />
+            ))}</ul>
+          ) : <EmptyCampaigns />}
+        </div>
+        <div className="min-h-0 overflow-auto">
+          {selected ? (
+            <div>
+              <header className="border-b border-line px-5 py-5 sm:px-7">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-xl font-semibold text-ink">{selected.name}</h3>
+                  <StateBadge state={selected.status} />
+                </div>
+                <p className="mt-1 text-[12px] text-ink-3">
+                  {selected.target_count} targets · updated {formatDate(selected.updated_at)}
+                </p>
+              </header>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[680px] border-collapse text-left">
+                  <thead className="bg-inset text-[9px] font-semibold uppercase text-ink-3">
+                    <tr><th className="px-5 py-2 sm:px-7">Company</th><th className="px-3 py-2">Recipient</th><th className="px-3 py-2">Subject</th><th className="px-3 py-2">Schedule</th><th className="px-3 py-2">State</th></tr>
+                  </thead>
+                  <tbody>{(detail?.targets ?? []).map((target) => (
+                    <SnapshotTargetRow key={target.id} target={target} />
+                  ))}</tbody>
+                </table>
+                {!detail?.targets.length && <p className="px-5 py-10 text-center text-[13px] text-ink-3">No targets in this campaign snapshot.</p>}
+              </div>
+            </div>
+          ) : <NoCampaign />}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function SnapshotTargetRow({ target }: { target: CampaignSnapshotTarget }) {
+  return (
+    <tr className="border-t border-line text-[11px]">
+      <td className="px-5 py-3 font-semibold text-ink sm:px-7">{target.company}</td>
+      <td className="max-w-48 truncate px-3 py-3 text-ink-2" title={target.selected_email}>{target.selected_email || 'Needs contact'}</td>
+      <td className="max-w-64 truncate px-3 py-3 text-ink-3" title={target.subject}>{target.subject || 'No draft subject'}</td>
+      <td className="px-3 py-3 text-ink-3">{target.scheduled_at ? formatDate(target.scheduled_at) : 'Unscheduled'}</td>
+      <td className="px-3 py-3"><StateBadge state={target.error_code || target.state} /></td>
+    </tr>
   )
 }

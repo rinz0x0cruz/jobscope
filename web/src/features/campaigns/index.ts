@@ -1,2 +1,2 @@
-export { CampaignsUnavailable, CampaignsView } from './CampaignsView'
+export { CampaignsSnapshotView, CampaignsUnavailable, CampaignsView } from './CampaignsView'
 export type { CampaignsViewProps } from './CampaignsView'

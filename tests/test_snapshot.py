@@ -42,7 +42,7 @@ def test_snapshot_validator_cli_reports_failure(tmp_path, capsys):
     assert "cannot read" in capsys.readouterr().err
 
 
-def test_cloud_safe_snapshot_vacuums_local_campaign_data(tmp_path):
+def test_cloud_safe_snapshot_keeps_only_allowlisted_campaign_snapshot(tmp_path):
     source = tmp_path / "local.db"
     destination = tmp_path / "cloud.db"
     markers = (
@@ -79,8 +79,24 @@ def test_cloud_safe_snapshot_vacuums_local_campaign_data(tmp_path):
             "outreach_suppressions",
         ):
             assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+        snapshot = connection.execute(
+            "SELECT value FROM meta WHERE key = 'campaign:snapshot:v1'",
+        ).fetchone()
+        assert snapshot is not None
+        assert markers[0] in snapshot[0]
+        assert "Private follow-up campaign" in snapshot[0]
+        assert "Private subject canary" in snapshot[0]
+        assert "Private body canary" not in snapshot[0]
     snapshot_bytes = destination.read_bytes()
-    for marker in markers:
+    for marker in markers[1:]:
         assert marker.encode() not in snapshot_bytes
     with sqlite3.connect(source) as connection:
         assert connection.execute("SELECT COUNT(*) FROM outreach_campaigns").fetchone()[0] == 1
+
+    next_generation = tmp_path / "cloud-next.db"
+    create_cloud_safe_snapshot(destination, next_generation)
+    with sqlite3.connect(next_generation) as connection:
+        carried = connection.execute(
+            "SELECT value FROM meta WHERE key = 'campaign:snapshot:v1'",
+        ).fetchone()
+        assert carried == snapshot

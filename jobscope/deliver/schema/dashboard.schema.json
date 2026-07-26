@@ -5,7 +5,7 @@
   "description": "Machine-readable mirror of render.build_data() (render.py). Single source of truth for the Python->TypeScript data contract (ARCHITECTURE.md section 9). Keep 1:1 with web/src/lib/schema.ts and tests/test_dashboard_json.py. Emitted by `jobscope dashboard --emit-json` to data/dashboard.json.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["generated", "total", "rows", "overview", "applications", "profile", "applied_outreach", "companies", "reviews", "activity_audit"],
+  "required": ["generated", "total", "rows", "overview", "applications", "profile", "applied_outreach", "companies", "reviews", "outreach_snapshot", "activity_audit"],
   "properties": {
     "generated": {"type": "string", "description": "ISO timestamp (now_iso())."},
     "total": {"type": "integer", "description": "len(rows)."},
@@ -35,11 +35,25 @@
       "description": "Durable review state and source provenance; empty ([]) for the public build.",
       "items": {"$ref": "#/definitions/JobReview"}
     },
+    "outreach_snapshot": {
+      "$ref": "#/definitions/OutreachSnapshot"
+    },
     "activity_audit": {
       "$ref": "#/definitions/ActivityAudit"
     }
   },
   "definitions": {
+    "OutreachSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read_only", "campaigns", "details", "engagements"],
+      "properties": {
+        "read_only": {"type": "boolean", "const": true},
+        "campaigns": {"type": "array", "items": {"type": "object"}},
+        "details": {"type": "array", "items": {"type": "object"}},
+        "engagements": {"type": "array", "items": {"type": "object"}}
+      }
+    },
     "ActivityAudit": {
       "type": "object",
       "additionalProperties": false,

@@ -177,6 +177,18 @@ def _empty_activity_audit() -> dict[str, Any]:
     }
 
 
+def _empty_outreach_snapshot() -> dict[str, Any]:
+    return {"read_only": True, "campaigns": [], "details": [], "engagements": []}
+
+
+def _outreach_snapshot_data(store) -> dict[str, Any]:
+    try:
+        from jobscope.apply.campaigns import outreach_snapshot
+        return outreach_snapshot(store)
+    except Exception:  # noqa: BLE001 - optional read model must not break dashboard
+        return _empty_outreach_snapshot()
+
+
 def _activity_audit_data(store) -> dict[str, Any]:
     """Bounded reconciliation summaries with no email content or addresses."""
     try:
@@ -220,6 +232,7 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
                 "overview": {"funnel": {}, "gaps": [], "considered": 0, "targets": []},
             "applications": [], "profile": None, "applied_outreach": [],
             "companies": [], "reviews": [],
+            "outreach_snapshot": _empty_outreach_snapshot(),
             "activity_audit": _empty_activity_audit()}
     jobs = store.jobs(order_by_score=True)
     # Skip-tier roles (off-target / too-senior / filtered) are hidden from the
@@ -247,11 +260,13 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     applied_outreach = _applied_outreach_data(store)
     companies = _companies_data(store)
     reviews = _reviews_data(store)
+    outreach_snapshot = _outreach_snapshot_data(store)
     activity_audit = _activity_audit_data(store)
     return {"generated": now_iso(), "total": len(rows), "rows": rows,
             "overview": overview, "applications": apps, "profile": profile,
             "applied_outreach": applied_outreach, "companies": companies,
-            "reviews": reviews, "activity_audit": activity_audit}
+            "reviews": reviews, "outreach_snapshot": outreach_snapshot,
+            "activity_audit": activity_audit}
 
 
 def _json_path(cfg: dict, public: bool) -> str:

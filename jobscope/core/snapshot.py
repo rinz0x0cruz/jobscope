@@ -1,7 +1,8 @@
-"""Validate cloud database snapshots and remove local-only campaign data."""
+"""Validate cloud snapshots and retain only the encrypted Outreach read model."""
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -57,7 +58,7 @@ def validate_sqlite_snapshot(path: str | Path) -> None:
 
 
 def create_cloud_safe_snapshot(source: str | Path, destination: str | Path) -> None:
-    """Copy a healthy DB while securely clearing campaign-local rows.
+    """Copy a healthy DB while replacing writable campaigns with a read model.
 
     SQLite backup produces a consistent destination even when the source uses a
     WAL. ``secure_delete`` plus ``VACUUM`` prevents deleted recipient/draft text
@@ -75,6 +76,17 @@ def create_cloud_safe_snapshot(source: str | Path, destination: str | Path) -> N
         with sqlite3.connect(source_uri, uri=True) as source_connection:
             with sqlite3.connect(destination_path) as destination_connection:
                 source_connection.backup(destination_connection)
+        from jobscope.apply.campaigns import (
+            OUTREACH_SNAPSHOT_META_KEY,
+            outreach_snapshot,
+        )
+        from jobscope.core.store import Store
+        with Store(str(destination_path)) as snapshot_store:
+            snapshot_store.meta_set(
+                OUTREACH_SNAPSHOT_META_KEY,
+                json.dumps(outreach_snapshot(snapshot_store), separators=(",", ":")),
+            )
+        with sqlite3.connect(destination_path) as destination_connection:
                 destination_connection.execute("PRAGMA journal_mode = DELETE")
                 destination_connection.execute("PRAGMA secure_delete = ON")
                 tables = {

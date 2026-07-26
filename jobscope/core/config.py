@@ -173,7 +173,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "max_age_days": 14,
                 "scheduled": False,
             },
-            # Local-only, individually approved cold-outreach campaigns. Ranking
+            # Locally writable, individually approved outreach campaigns. Ranking
             # and drafting are safe while outreach is disabled; SMTP still needs
             # both outreach.enabled and email.enabled.
             "campaign": {

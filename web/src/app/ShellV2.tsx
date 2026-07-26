@@ -4,7 +4,7 @@ import { AppShell } from '@/app/AppShell'
 import { Board } from '@/features/board'
 import { FeedView } from '@/features/feed'
 import { CompaniesView } from '@/features/companies'
-import { CampaignsUnavailable, CampaignsView } from '@/features/campaigns'
+import { CampaignsSnapshotView, CampaignsUnavailable, CampaignsView } from '@/features/campaigns'
 import { AnalyticsView, type AnalyticsMode } from '@/features/analytics'
 import { PipelinePreview } from '@/features/pipeline'
 import { Settings } from '@/features/settings'
@@ -61,12 +61,15 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
   const [pendingChanges, setPendingChanges] = useState(() => queuedMonitoringActions().length)
   const [scanFunnels, setScanFunnels] = useState<Record<string, ScanDecisionFunnel>>({})
   const [engagements, setEngagements] = useState<EngagementThread[]>([])
-  const accessibleEngagements = useMemo(
-    () => serveToken ? engagements : [],
-    [serveToken, engagements],
-  )
   const [workingData, setWorkingData] = useState(() =>
     projectMonitoringActions(data, queuedMonitoringActions()),
+  )
+  const outreachAvailable = Boolean(
+    serveToken || workingData?.outreach_snapshot?.campaigns.length,
+  )
+  const accessibleEngagements = useMemo(
+    () => serveToken ? engagements : workingData.outreach_snapshot.engagements,
+    [serveToken, engagements, workingData.outreach_snapshot.engagements],
   )
   const snapshotLock = mode === 'snapshot' ? onLock : undefined
   const mobileReader = useMediaQuery('(max-width: 1399px)')
@@ -223,7 +226,7 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
         return
       }
       if (event.key >= '1' && event.key <= '7') {
-        const order = serveToken ? LOCAL_VIEW_ORDER : PUBLIC_VIEW_ORDER
+        const order = outreachAvailable ? LOCAL_VIEW_ORDER : PUBLIC_VIEW_ORDER
         const next = order[Number(event.key) - 1]
         if (next) navigate(next)
       }
@@ -245,7 +248,7 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
         onLock={snapshotLock}
         pendingChanges={pendingChanges}
         onSyncChanges={() => void syncMonitoringQueue()}
-        campaignsAvailable={Boolean(serveToken)}
+        campaignsAvailable={outreachAvailable}
       >
         {view === 'review' ? (
           <div className="mx-auto grid h-full min-h-0 w-full max-w-[1600px] grid-cols-1 pb-16 lg:pb-0 min-[1400px]:grid-cols-[minmax(600px,1.08fr)_minmax(500px,.92fr)]">
@@ -311,6 +314,12 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
                 onSelect={(campaign) => onStateChange({ campaign })}
                 onOpenApplications={() => navigate('applications')}
               />
+            ) : workingData.outreach_snapshot.campaigns.length ? (
+              <CampaignsSnapshotView
+                snapshot={workingData.outreach_snapshot}
+                selectedId={state.campaign}
+                onSelect={(campaign) => onStateChange({ campaign })}
+              />
             ) : (
               <CampaignsUnavailable />
             )}
@@ -335,7 +344,7 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
               }, { replace: true })}
               applications={searchedData.applications ?? []}
               engagements={visibleEngagements}
-              outreachAvailable={Boolean(serveToken)}
+              outreachAvailable={outreachAvailable}
             />
           </div>
         ) : (

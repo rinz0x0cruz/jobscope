@@ -109,11 +109,12 @@ unexpected branch change fails instead of being overwritten. The ciphertext that
 successfully restored is retained as the next `jobscope.db.previous.enc`.
 
 Before encryption, `jobscope.core.snapshot --cloud-copy` creates a consistent SQLite
-backup, empties the local-only campaign, target, run, and suppression tables, enables
-secure deletion, and vacuums free pages. The encrypted `data` branch therefore cannot
-expose or restore recruiter-campaign recipients, drafts, approvals, schedules, or
-opt-outs, including follow-up source provenance and thread identifiers. The original
-local database is never modified by this redaction step.
+backup and writes an allowlisted read-only campaign projection to
+`meta.campaign:snapshot:v1`. It then empties campaign, target, run, and suppression
+tables, enables secure deletion, and vacuums free pages. The projection carries batch,
+recipient, subject, state, schedule, and delivery/reply summary only; it excludes bodies,
+approval/resume hashes, résumé paths, raw message IDs, suppression internals, and send
+controls. The original local database is never modified by this redaction step.
 
 Seed the branch once from a validated local database:
 

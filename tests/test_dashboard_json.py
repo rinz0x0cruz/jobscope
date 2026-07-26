@@ -127,6 +127,9 @@ def test_emit_json_public_is_empty():
         assert pub["rows"] == [] and pub["total"] == 0
         assert pub["applications"] == [] and pub["applied_outreach"] == []
         assert pub["companies"] == [] and pub["reviews"] == []
+        assert pub["outreach_snapshot"] == {
+            "read_only": True, "campaigns": [], "details": [], "engagements": [],
+        }
         assert pub["activity_audit"] == {
             "recent_runs": [], "selected_run_id": "", "decisions": [],
             "recoverable_applications": [],
@@ -184,6 +187,7 @@ _TOP_LEVEL = {
     "applied_outreach": list,
     "companies": list,
     "reviews": list,
+    "outreach_snapshot": dict,
     "activity_audit": dict,
 }
 
@@ -251,6 +255,10 @@ _JOB_REVIEW = {
 _ACTIVITY_AUDIT = {
     "recent_runs": list, "selected_run_id": str, "decisions": list,
     "recoverable_applications": list,
+}
+
+_OUTREACH_SNAPSHOT = {
+    "read_only": bool, "campaigns": list, "details": list, "engagements": list,
 }
 
 _RECONCILIATION_RUN = {
@@ -341,6 +349,7 @@ def _validate_contract(data):
         _require(company, _MONITORED_COMPANY, f"companies[{i}]")
     for i, review in enumerate(data["reviews"]):
         _require(review, _JOB_REVIEW, f"reviews[{i}]")
+    _require(data["outreach_snapshot"], _OUTREACH_SNAPSHOT, "outreach_snapshot")
     _require(data["activity_audit"], _ACTIVITY_AUDIT, "activity_audit")
     for i, run in enumerate(data["activity_audit"]["recent_runs"]):
         _require(run, _RECONCILIATION_RUN, f"activity_audit.recent_runs[{i}]")
@@ -592,6 +601,9 @@ def test_public_build_data_applications_empty():
         _validate_contract(data)
         assert data["applications"] == []
         assert data["companies"] == [] and data["reviews"] == []
+        assert data["outreach_snapshot"] == {
+            "read_only": True, "campaigns": [], "details": [], "engagements": [],
+        }
         store.close()
 
 
@@ -615,6 +627,7 @@ def test_dashboard_schema_artifact_matches_contract():
     assert set(defs["CompanyContact"]["required"]) == set(_COMPANY_CONTACT)
     assert set(defs["MonitoredCompany"]["required"]) == set(_MONITORED_COMPANY)
     assert set(defs["JobReview"]["required"]) == set(_JOB_REVIEW)
+    assert set(defs["OutreachSnapshot"]["required"]) == set(_OUTREACH_SNAPSHOT)
     assert set(defs["ActivityAudit"]["required"]) == set(_ACTIVITY_AUDIT)
     assert set(defs["ReconciliationRun"]["required"]) == set(_RECONCILIATION_RUN)
     assert set(defs["ReconciliationDecision"]["required"]) == set(_RECONCILIATION_DECISION)

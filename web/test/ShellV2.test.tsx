@@ -232,6 +232,37 @@ describe('ShellV2', () => {
     expect(campaignApi.listEngagements).not.toHaveBeenCalled()
   })
 
+  it('shows read-only Outreach from the encrypted snapshot without a serve token', () => {
+    render(
+      <ShellV2
+        data={dashboard({
+          outreach_snapshot: {
+            read_only: true,
+            campaigns: [{
+              id: 'campaign:one', name: 'India security outreach', purpose: 'cold',
+              status: 'draft', sector: 'cybersecurity', region: 'India', requested_count: 1,
+              weights: { region: 0.5, compensation: 0.3, growth: 0.2 }, criteria: {},
+              resume_name: 'research', daily_limit: 2, min_spacing_hours: 4,
+              timezone: 'Asia/Kolkata', send_window_start: '10:00', send_window_end: '17:00',
+              created_at: '2026-07-01T00:00:00Z', updated_at: '2026-07-01T00:00:00Z',
+              counts: { draft: 1 }, target_count: 1, delivered_count: 0, response_count: 0,
+            }],
+            details: [], engagements: [],
+          },
+        })}
+        state={searchSchema.parse({ view: 'campaigns' })}
+        onStateChange={vi.fn()}
+        onLock={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Outreach' })).toBeInTheDocument()
+    expect(screen.getByText('Read-only encrypted snapshot')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 3, name: 'India security outreach' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Create batch' })).not.toBeInTheDocument()
+    expect(campaignApi.listEngagements).not.toHaveBeenCalled()
+  })
+
   it('updates application state after saving offer details', async () => {
     outreachApi.localServeToken.mockResolvedValue('private-token')
     outreachApi.applicationUpdate.mockResolvedValue({

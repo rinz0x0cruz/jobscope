@@ -116,6 +116,7 @@ export function dashboard(over: Partial<DashboardData> = {}): DashboardData {
     applied_outreach: [],
     companies: [],
     reviews: [],
+    outreach_snapshot: { read_only: true, campaigns: [], details: [], engagements: [] },
     activity_audit: {
       recent_runs: [],
       selected_run_id: '',

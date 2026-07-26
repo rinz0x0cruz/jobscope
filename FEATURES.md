@@ -490,6 +490,9 @@ The React SPA in `web/` is served privately on localhost or unlocked from the en
 
 - The local dashboard is the canonical writable workspace. GitHub Pages is an encrypted read-only snapshot;
   workflows provide scheduled refresh/backup/publication rather than interactive request handling.
+- After unlock, Pages includes an allowlisted read-only Outreach projection. It never includes
+  draft bodies, approval/resume hashes, résumé paths, raw message IDs, suppression internals,
+  or mutation/send controls.
 - `dashboard --emit-json --public` emits an **empty schema-valid shell** to `data/dashboard.public.json`.
   It contains no jobs, companies, reviews, profile, applications, contacts, or search targets.
 - **Hosting:** the code repo is **public**; the published dashboard is the **Vite/React app** (`web/`),

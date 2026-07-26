@@ -61,7 +61,7 @@ jobs:
         shell: bash
         run: |
           fixture="$RUNNER_TEMP/dashboard.public.json"
-          node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({generated:"ci",total:0,rows:[],overview:{funnel:{},gaps:[],considered:0,targets:[]},applications:[],profile:null,applied_outreach:[]}))' "$fixture"
+          node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({generated:"ci",total:0,rows:[],overview:{funnel:{},gaps:[],considered:0,targets:[]},applications:[],profile:null,applied_outreach:[],outreach_snapshot:{read_only:true,campaigns:[],details:[],engagements:[]}}))' "$fixture"
           JOBSCOPE_DASHBOARD_JSON="$fixture" \
           JOBSCOPE_ENCRYPTED_JSON=none \
           npm run build

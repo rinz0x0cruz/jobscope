@@ -12,6 +12,9 @@ def _write_inputs(tmp_path):
         "overview": {"funnel": {}, "gaps": [], "considered": 0, "targets": []},
         "applications": [], "profile": None, "applied_outreach": [],
         "companies": [], "reviews": [],
+        "outreach_snapshot": {
+            "read_only": True, "campaigns": [], "details": [], "engagements": [],
+        },
         "activity_audit": {
             "recent_runs": [], "selected_run_id": "", "decisions": [],
             "recoverable_applications": [],

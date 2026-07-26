@@ -1,3 +1,5 @@
+import type { OutreachSnapshot } from './campaigns'
+
 // Typed mirror of the Python data contract emitted by
 // `jobscope dashboard --emit-json` (render.py: build_data / _job_record /
 // _overview_data / _application_records). Keep this 1:1 with the Python shapes.
@@ -299,6 +301,7 @@ export interface DashboardData {
   applied_outreach: AppliedCompany[]
   companies: MonitoredCompany[]
   reviews: JobReview[]
+  outreach_snapshot: OutreachSnapshot
   activity_audit: ActivityAudit
 }
 
@@ -323,6 +326,9 @@ export function normalizeDashboardData(data: DashboardData): DashboardData {
       }
     }),
     applications: data.applications ?? [],
+    outreach_snapshot: data.outreach_snapshot ?? {
+      read_only: true, campaigns: [], details: [], engagements: [],
+    },
     activity_audit: {
       recent_runs: legacy.activity_audit?.recent_runs ?? [],
       selected_run_id: legacy.activity_audit?.selected_run_id ?? '',

@@ -184,6 +184,48 @@ export interface EngagementThread {
   events: EngagementEvent[]
 }
 
+export interface CampaignSnapshotTarget {
+  id: string
+  campaign_id: string
+  company: string
+  state: CampaignTargetState
+  rank_score: number
+  region_score: number
+  compensation_score: number
+  growth_score: number
+  evidence_coverage: number
+  evidence: CampaignEvidence
+  selected_email: string
+  selected_source: string
+  selected_confidence: string
+  subject: string
+  approved_at: string
+  scheduled_at: string
+  sent_at: string
+  replied_at: string
+  error_code: string
+  created_at: string
+  updated_at: string
+  followup_number: number
+  recipient_locked: boolean
+}
+
+export interface CampaignSnapshotDetail {
+  campaign_id: string
+  targets: CampaignSnapshotTarget[]
+  history: Array<Pick<CampaignHistoryItem,
+    'target_id' | 'campaign_id' | 'company' | 'recipient' | 'subject' | 'state' |
+    'sent_at' | 'replied_at' | 'reply_from' | 'reply_subject' | 'reply_signal' | 'reply_date'>>
+  reply_tracking: { last_checked_at: string; last_status: string }
+}
+
+export interface OutreachSnapshot {
+  read_only: true
+  campaigns: CampaignSummary[]
+  details: CampaignSnapshotDetail[]
+  engagements: EngagementThread[]
+}
+
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')

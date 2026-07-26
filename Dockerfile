@@ -4,7 +4,7 @@ WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
-RUN node -e 'require("fs").writeFileSync("/tmp/dashboard.json", JSON.stringify({generated:"container",total:0,rows:[],overview:{funnel:{},gaps:[],considered:0,targets:[]},applications:[],profile:null,applied_outreach:[],companies:[],reviews:[],activity_audit:{recent_runs:[],selected_run_id:"",decisions:[],recoverable_applications:[]}}))' \
+RUN node -e 'require("fs").writeFileSync("/tmp/dashboard.json", JSON.stringify({generated:"container",total:0,rows:[],overview:{funnel:{},gaps:[],considered:0,targets:[]},applications:[],profile:null,applied_outreach:[],companies:[],reviews:[],outreach_snapshot:{read_only:true,campaigns:[],details:[],engagements:[]},activity_audit:{recent_runs:[],selected_run_id:"",decisions:[],recoverable_applications:[]}}))' \
     && JOBSCOPE_DASHBOARD_JSON=/tmp/dashboard.json JOBSCOPE_ENCRYPTED_JSON=none VITE_JOBSCOPE_HOSTED=1 npm run build
 
 FROM python:3.12-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b

@@ -13,7 +13,8 @@ volume. This document describes what data it holds, how it's protected, and how 
 | Scraped jobs, scores, rationale | `data/jobscope.db` | gitignored |
 | Referral contacts (names, public profile links) | `data/jobscope.db` | public-data leads only |
 | Application funnel + email events (recruiter name/domain, subject) | `data/jobscope.db` | see *Data minimization* |
-| Campaign ranks, recipients, drafts, approvals, schedules, provenance/thread IDs, suppressions | `data/jobscope.db` or an opted-in private hosted volume | never added to Pages or cloud-refresh snapshots |
+| Campaign ranks, recipients, subjects, state, schedules, delivery/reply summary | local SQLite; allowlisted read-only projection in encrypted snapshots | visible only after passphrase unlock; no bodies or mutation controls |
+| Campaign draft bodies, approval/resume hashes, résumé paths, raw message IDs, suppressions | `data/jobscope.db` or an opted-in private hosted volume | never added to Pages or cloud-refresh snapshots |
 | Secrets (Gmail app password, API keys) | OS keychain, `.env`, or hosted secret manager | never in `config.yaml`, never committed |
 | Published dashboard | `gh-pages` branch → GitHub Pages | empty locked shell + encrypted full payload (see *Publication*) |
 | Cloud refresh database | private `data` branch | current + last-known-good JSDB v1 AES-GCM ciphertext; campaign tables stripped and vacuumed |
@@ -100,14 +101,17 @@ and campaign ticking disabled during the empty canary and initial data cutover.
 - The cloud SQLite snapshot is separately encrypted as versioned JSDB AES-256-GCM. Restore and
   save fail closed, retain one validated fallback generation, validate SQLite before use, and use
   a guarded `force-with-lease` update. See [OPERATIONS.md](OPERATIONS.md) for recovery and rotation.
-- Campaign tables are intentionally excluded from the empty shell, encrypted dashboard payload, and the
-  encrypted cloud SQLite copy. Outreach APIs exist only in the private control plane (loopback by default,
-  or explicit Access-protected hosted mode); GitHub Pages and Actions never expose or send campaign mail.
-  Campaign recovery therefore requires a full local database or hosted-volume backup.
+- Writable campaign tables are stripped and vacuumed from cloud SQLite. Before removal, Jobscope stores
+  one fixed-field read-only projection under `campaign:snapshot:v1`; scheduled refreshes carry that
+  projection forward and publish it only inside `site.enc.json`. Draft bodies, approval/resume hashes,
+  résumé paths, raw message IDs, suppression internals, and mutation controls are excluded. Outreach APIs
+  remain private-control-plane only; GitHub Pages and Actions never approve, mutate, schedule, or send mail.
+  Full campaign recovery still requires a local database or hosted-volume backup.
 - `GET /api/engagements` is token/origin guarded and derives an allowlisted correspondence view at read time.
   It emits recipient/subject/state/timestamps/follow-up counts and summaries only for retained inbound snippets.
   It cannot emit campaign bodies, résumé paths/hashes, approval hashes, suppression internals, or raw
-  message/thread/reply IDs. Static Pages and cloud-safe snapshots never receive this projection.
+  message/thread/reply IDs. The same fixed-field projection may appear only inside the passphrase-encrypted
+  Pages payload and encrypted cloud snapshot; the public shell remains empty.
 
 ## Recruiter outreach (opt-in, individually approved)
 

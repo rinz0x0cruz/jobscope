@@ -70,6 +70,7 @@ Set-Location $RepoRoot
 # Resolve the venv interpreter, falling back to PATH.
 $Py = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Py)) { $Py = "python" }
+$Uv = (Get-Command uv -ErrorAction Stop).Source
 $env:PYTHONPATH = "."
 
 # Whole-app auth: the public build ships NO data -- only the passphrase-encrypted blob
@@ -165,7 +166,7 @@ if ($Encrypted) {
     $plain = $env:JOBSCOPE_APPS_PASSPHRASE
     $bstr = [IntPtr]::Zero
     if ([string]::IsNullOrEmpty($plain)) {
-        $plain = (& $Py -c "import keyring,sys;from jobscope.core.config import KEYRING_SERVICE as s;v=keyring.get_password(s,'JOBSCOPE_APPS_PASSPHRASE');sys.stdout.write(v or '')" 2>$null)
+        $plain = (& $Uv -q run --no-project --with keyring python -c "import keyring,sys;v=keyring.get_password('jobscope','JOBSCOPE_APPS_PASSPHRASE');sys.stdout.write(v or '')" 2>$null)
     }
     if ([string]::IsNullOrEmpty($plain)) {
         $sec = Read-Host "Passphrase to encrypt your applications (8+ chars)" -AsSecureString
