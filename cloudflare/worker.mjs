@@ -1,5 +1,13 @@
 const ACCESS_HEADER = 'Cf-Access-Jwt-Assertion'
 
+function cookieValue(header, name) {
+  for (const part of (header || '').split(';')) {
+    const [key, ...value] = part.trim().split('=')
+    if (key === name && value.length) return value.join('=')
+  }
+  return ''
+}
+
 function originUrl(value, requestUrl) {
   try {
     const origin = new URL(value || '')
@@ -26,7 +34,9 @@ function denied(status, message) {
 
 export default {
   async fetch(request, env) {
-    if (!request.headers.get(ACCESS_HEADER)) return denied(403, 'forbidden')
+    const accessToken = request.headers.get(ACCESS_HEADER)
+      || cookieValue(request.headers.get('Cookie'), 'CF_Authorization')
+    if (!accessToken) return denied(403, 'forbidden')
     const origin = originUrl(env.ORIGIN_URL, request.url)
     if (!origin) return denied(503, 'private origin is not configured')
 
@@ -36,6 +46,7 @@ export default {
     const headers = new Headers(request.headers)
     headers.delete('Cookie')
     headers.delete('Host')
+    headers.set(ACCESS_HEADER, accessToken)
 
     const init = {
       method: request.method,

@@ -51,9 +51,8 @@ test('forwards authenticated requests and strips session cookies', async () => {
       new Request('https://jobscope-private.example.workers.dev/api/automation/tick?dry=1', {
         method: 'POST',
         headers: {
-          'Cf-Access-Jwt-Assertion': 'signed-access-token',
           'Content-Type': 'application/json',
-          'Cookie': 'CF_Authorization=private-session',
+          'Cookie': 'other=value; CF_Authorization=signed.access.token; theme=dark',
           'Origin': 'https://jobscope-private.example.workers.dev',
         },
         body: '{"probe":true}',
@@ -67,7 +66,7 @@ test('forwards authenticated requests and strips session cookies', async () => {
     assert.equal(response.headers.get('X-Origin'), 'jobscope')
     assert.equal(forwarded.url, 'https://railway-origin.example/api/automation/tick?dry=1')
     assert.equal(forwarded.method, 'POST')
-    assert.equal(forwarded.headers.get('Cf-Access-Jwt-Assertion'), 'signed-access-token')
+    assert.equal(forwarded.headers.get('Cf-Access-Jwt-Assertion'), 'signed.access.token')
     assert.equal(forwarded.headers.get('Cookie'), null)
     assert.equal(forwarded.headers.get('Origin'), 'https://jobscope-private.example.workers.dev')
     assert.equal(await forwarded.text(), '{"probe":true}')
