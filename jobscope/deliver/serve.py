@@ -37,6 +37,7 @@ _MAX_RESUME_REQUEST_BYTES = 7 * 1024 * 1024
 _MAX_CAMPAIGN_REQUEST_BYTES = _MAX_API_REQUEST_BYTES
 _HOSTED_ACCESS_HEADER = "Cf-Access-Jwt-Assertion"
 _AUTOMATION_HEADER = "X-Jobscope-Automation"
+_AUTOMATION_EDGE_HEADER = "X-Jobscope-Edge"
 _MAX_PROFILE_REQUEST_BYTES = 32 * 1024
 _RESUME_EXTENSIONS = frozenset({".md", ".txt", ".json", ".pdf"})
 _REFRESH_STATE_META_KEY = "serve:refresh_state:v1"
@@ -170,6 +171,23 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
     automation_token = os.environ.get("JOBSCOPE_AUTOMATION_TOKEN", "").strip()
     if automation_token and len(automation_token) < 32:
         raise RuntimeError("JOBSCOPE_AUTOMATION_TOKEN must contain at least 32 characters")
+    automation_origin = os.environ.get("JOBSCOPE_AUTOMATION_ORIGIN", "").strip().rstrip("/")
+    automation_edge_token = os.environ.get("JOBSCOPE_AUTOMATION_EDGE_TOKEN", "").strip()
+    if hosted and automation_token:
+        parsed_automation_origin = urlparse(automation_origin)
+        if (parsed_automation_origin.scheme != "https"
+                or not parsed_automation_origin.hostname
+                or parsed_automation_origin.path or parsed_automation_origin.params
+                or parsed_automation_origin.query or parsed_automation_origin.fragment
+            or parsed_automation_origin.username or parsed_automation_origin.password
+            or automation_origin == public_origin):
+            raise RuntimeError(
+                "JOBSCOPE_AUTOMATION_ORIGIN must be an HTTPS origin without a path"
+            )
+        if len(automation_edge_token) < 32:
+            raise RuntimeError(
+                "JOBSCOPE_AUTOMATION_EDGE_TOKEN must contain at least 32 characters"
+            )
 
     build_on_start = bool(serve_cfg.get("build_on_start", False))
     if build_on_start or not os.path.exists(os.path.join(directory, "index.html")):
@@ -248,10 +266,13 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
 
         def _automation_authorized(self) -> bool:
             supplied = self.headers.get(_AUTOMATION_HEADER, "")
+            supplied_edge = self.headers.get(_AUTOMATION_EDGE_HEADER, "")
             return bool(
-                hosted and automation_token and supplied
-                and self.headers.get("Origin") == public_origin
+                hosted and automation_token and supplied and automation_edge_token
+                and supplied_edge
+                and self.headers.get("Origin") == automation_origin
                 and secrets.compare_digest(supplied, automation_token)
+                and secrets.compare_digest(supplied_edge, automation_edge_token)
             )
 
         def _start_refresh(self, opts: dict) -> None:
@@ -931,15 +952,6 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
             if route == "/healthz":
                 self._send_json(200, {"ok": True})
                 return
-            if not self._tunnel_authorized():
-                self._send_json(403, {"ok": False, "error": "forbidden"})
-                return
-            if route == "/api/token":
-                self._send_json(200, {"token": token, "enabled": refresh_on})
-                return
-            if route == "/api/status":
-                self._send_json(200, dict(_STATE))
-                return
             if route == "/api/automation/status":
                 if not self._automation_authorized():
                     self._send_json(403, {"ok": False, "error": "forbidden"})
@@ -951,6 +963,15 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                     self._send_json(403, {"ok": False, "error": "forbidden"})
                 else:
                     self._automation_snapshot()
+                return
+            if not self._tunnel_authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            if route == "/api/token":
+                self._send_json(200, {"token": token, "enabled": refresh_on})
+                return
+            if route == "/api/status":
+                self._send_json(200, dict(_STATE))
                 return
             if route == "/api/profile":
                 self._profile_get()
@@ -976,6 +997,28 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
 
         def do_POST(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0]
+            if route in {"/api/automation/refresh", "/api/automation/tick"}:
+                if not self._automation_authorized():
+                    self._send_json(403, {"ok": False, "error": "forbidden"})
+                    return
+                opts = self._json_request(_MAX_API_REQUEST_BYTES)
+                if opts is None:
+                    return
+                if route == "/api/automation/refresh":
+                    if not refresh_on:
+                        self._send_json(403, {
+                            "state": "error", "message": "refresh disabled",
+                        })
+                    else:
+                        self._start_refresh(opts)
+                    return
+                if opts:
+                    self._send_json(400, {
+                        "ok": False, "error": "automation tick accepts no options",
+                    })
+                    return
+                self._automation_tick()
+                return
             if not self._tunnel_authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
@@ -1011,28 +1054,6 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                 return
             if route == "/api/campaigns/action":
                 self._campaigns_post(create=False)
-                return
-            if route in {"/api/automation/refresh", "/api/automation/tick"}:
-                if not self._automation_authorized():
-                    self._send_json(403, {"ok": False, "error": "forbidden"})
-                    return
-                opts = self._json_request(_MAX_API_REQUEST_BYTES)
-                if opts is None:
-                    return
-                if route == "/api/automation/refresh":
-                    if not refresh_on:
-                        self._send_json(403, {
-                            "state": "error", "message": "refresh disabled",
-                        })
-                    else:
-                        self._start_refresh(opts)
-                    return
-                if opts:
-                    self._send_json(400, {
-                        "ok": False, "error": "automation tick accepts no options",
-                    })
-                    return
-                self._automation_tick()
                 return
             if route != "/api/refresh":
                 self.send_error(404)

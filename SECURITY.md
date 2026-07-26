@@ -41,21 +41,24 @@ Run one application replica because SQLite and refresh state remain single-write
 and campaign ticking disabled during the empty canary and initial data cutover.
 
 Hosted automation is optional and fails closed without a 32+ character
-`JOBSCOPE_AUTOMATION_TOKEN`, the exact public Origin, and the validated Access header. Give its
-Cloudflare service identity access only to `/api/automation/*`; those fixed routes can refresh,
+`JOBSCOPE_AUTOMATION_TOKEN`, a distinct 32+ character `JOBSCOPE_AUTOMATION_EDGE_TOKEN`, and the
+exact `JOBSCOPE_AUTOMATION_ORIGIN`. The free automation Worker accepts only four fixed routes,
+validates the GitHub-held token, strips untrusted forwarding headers, and adds the origin-only edge
+token. Those fixed routes can refresh,
 report status, run one paced tick, or return the already-encrypted Pages snapshot. Encryption uses
 the hosted `JOBSCOPE_APPS_PASSPHRASE`; GitHub Actions receives neither plaintext nor passphrase. They cannot
 accept campaign IDs, draft content, recipients, or generic campaign actions. Hosted builds deploy
 a self-destroying service worker, detect Access HTML/redirect responses, clear live state, and offer
 explicit Access logout. API and HTML responses remain `no-store` and deny framing.
 
-When no custom zone is available, `cloudflare/worker.mjs` is the only supported
-public edge. It runs at one Access-protected `workers.dev` route with preview URLs
+When no custom zone is available, `cloudflare/worker.mjs` is the browser edge. It runs at one
+Access-protected `workers.dev` route with preview URLs
 disabled, rejects requests that lack `Cf-Access-Jwt-Assertion`, strips the
 `CF_Authorization` cookie before proxying, and forwards the signed assertion to the
-origin. A configured automation service token is identified by its signed JWT
-`common_name`; the Worker rejects that identity outside `/api/automation/*` and strips
-the Client ID/Secret headers before proxying. The Railway service may have a generated origin hostname, but every private
+origin. The browser Worker rejects service-token JWTs unless an explicit client identity is
+configured; the no-card topology leaves that binding absent. The separate
+`cloudflare/automation-worker.mjs` edge never receives browser data and cannot proxy non-automation
+paths. The Railway service may have a generated origin hostname, but every private
 route still fails closed unless the assertion validates for the exact Access audience.
 
 ## Secrets

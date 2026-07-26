@@ -30,19 +30,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
-      JOBSCOPE_HOSTED_ORIGIN: ${{ vars['JOBSCOPE_HOSTED_ORIGIN'] }}
+      JOBSCOPE_AUTOMATION_ORIGIN: ${{ vars['JOBSCOPE_AUTOMATION_ORIGIN'] }}
       JOBSCOPE_AUTOMATION_TOKEN: ${{ secrets['JOBSCOPE_AUTOMATION_TOKEN'] }}
-      CF_ACCESS_CLIENT_ID: ${{ secrets['JOBSCOPE_CF_ACCESS_CLIENT_ID'] }}
-      CF_ACCESS_CLIENT_SECRET: ${{ secrets['JOBSCOPE_CF_ACCESS_CLIENT_SECRET'] }}
     steps:
       - name: Guard required configuration
         run: |
           set -euo pipefail
-          [ -n "$JOBSCOPE_HOSTED_ORIGIN" ] || { echo "::error::JOBSCOPE_HOSTED_ORIGIN is not configured"; exit 1; }
+          [ -n "$JOBSCOPE_AUTOMATION_ORIGIN" ] || { echo "::error::JOBSCOPE_AUTOMATION_ORIGIN is not configured"; exit 1; }
           [ -n "$JOBSCOPE_AUTOMATION_TOKEN" ] || { echo "::error::JOBSCOPE_AUTOMATION_TOKEN is not configured"; exit 1; }
-          [ -n "$CF_ACCESS_CLIENT_ID" ] || { echo "::error::JOBSCOPE_CF_ACCESS_CLIENT_ID is not configured"; exit 1; }
-          [ -n "$CF_ACCESS_CLIENT_SECRET" ] || { echo "::error::JOBSCOPE_CF_ACCESS_CLIENT_SECRET is not configured"; exit 1; }
-          case "$JOBSCOPE_HOSTED_ORIGIN" in https://*) ;; *) echo "::error::hosted origin must use HTTPS"; exit 1;; esac
+          case "$JOBSCOPE_AUTOMATION_ORIGIN" in https://*) ;; *) echo "::error::automation origin must use HTTPS"; exit 1;; esac
 
       - name: Run fixed hosted operation
         env:
@@ -51,15 +47,13 @@ jobs:
           FULL_SCAN: ${{ inputs.full_scan }}
         run: |
           set -euo pipefail
-          origin="${JOBSCOPE_HOSTED_ORIGIN%/}"
+          origin="${JOBSCOPE_AUTOMATION_ORIGIN%/}"
           response="$RUNNER_TEMP/hosted-response.json"
           status_file="$RUNNER_TEMP/hosted-status.json"
 
           api() {
             curl --silent --show-error --fail \
               --connect-timeout 10 --max-time 600 \
-              --header "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
-              --header "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
               --header "X-Jobscope-Automation: $JOBSCOPE_AUTOMATION_TOKEN" \
               --header "Origin: $origin" \
               "$@"

@@ -17,9 +17,8 @@ jobs:
     timeout-minutes: 20
     env:
       JOBSCOPE_HOSTED_ORIGIN: ${{ vars['JOBSCOPE_HOSTED_ORIGIN'] }}
+      JOBSCOPE_AUTOMATION_ORIGIN: ${{ vars['JOBSCOPE_AUTOMATION_ORIGIN'] }}
       JOBSCOPE_AUTOMATION_TOKEN: ${{ secrets['JOBSCOPE_AUTOMATION_TOKEN'] }}
-      CF_ACCESS_CLIENT_ID: ${{ secrets['JOBSCOPE_CF_ACCESS_CLIENT_ID'] }}
-      CF_ACCESS_CLIENT_SECRET: ${{ secrets['JOBSCOPE_CF_ACCESS_CLIENT_SECRET'] }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -37,10 +36,10 @@ jobs:
         run: |
           set -euo pipefail
           [ -n "$JOBSCOPE_HOSTED_ORIGIN" ] || { echo "::error::JOBSCOPE_HOSTED_ORIGIN is not configured"; exit 1; }
+          [ -n "$JOBSCOPE_AUTOMATION_ORIGIN" ] || { echo "::error::JOBSCOPE_AUTOMATION_ORIGIN is not configured"; exit 1; }
           [ -n "$JOBSCOPE_AUTOMATION_TOKEN" ] || { echo "::error::JOBSCOPE_AUTOMATION_TOKEN is not configured"; exit 1; }
-          [ -n "$CF_ACCESS_CLIENT_ID" ] || { echo "::error::JOBSCOPE_CF_ACCESS_CLIENT_ID is not configured"; exit 1; }
-          [ -n "$CF_ACCESS_CLIENT_SECRET" ] || { echo "::error::JOBSCOPE_CF_ACCESS_CLIENT_SECRET is not configured"; exit 1; }
           case "$JOBSCOPE_HOSTED_ORIGIN" in https://*) ;; *) echo "::error::hosted origin must use HTTPS"; exit 1;; esac
+          case "$JOBSCOPE_AUTOMATION_ORIGIN" in https://*) ;; *) echo "::error::automation origin must use HTTPS"; exit 1;; esac
 
       - name: Install locked dependencies
         run: |
@@ -50,13 +49,12 @@ jobs:
       - name: Fetch hosted encrypted snapshot
         run: |
           set -euo pipefail
-          origin="${JOBSCOPE_HOSTED_ORIGIN%/}"
+          origin="${JOBSCOPE_AUTOMATION_ORIGIN%/}"
+          private_origin="${JOBSCOPE_HOSTED_ORIGIN%/}"
           response="$RUNNER_TEMP/hosted-snapshot-response.json"
           encrypted="$RUNNER_TEMP/site.enc.json"
           curl --silent --show-error --fail \
             --connect-timeout 10 --max-time 120 \
-            --header "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
-            --header "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
             --header "X-Jobscope-Automation: $JOBSCOPE_AUTOMATION_TOKEN" \
             --header "Origin: $origin" \
             "$origin/api/automation/snapshot" > "$response"
@@ -80,7 +78,7 @@ jobs:
           PY
           rm -f "$response"
           echo "JOBSCOPE_PUBLISH_ENCRYPTED_JSON=$encrypted" >> "$GITHUB_ENV"
-          echo "VITE_JOBSCOPE_PRIVATE_ORIGIN=$origin" >> "$GITHUB_ENV"
+          echo "VITE_JOBSCOPE_PRIVATE_ORIGIN=$private_origin" >> "$GITHUB_ENV"
 
       - name: Configure authenticated Pages push
         env:

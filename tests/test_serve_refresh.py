@@ -630,9 +630,13 @@ def test_hosted_automation_is_secret_scoped_serialized_and_redacted(monkeypatch)
         cfg = _cfg(tmp)
         Store(cfg["output"]["db_path"]).close()
         public_origin = "https://jobs.example.com"
+        automation_origin = "https://automation.example.workers.dev"
         automation_token = "a" * 32
+        automation_edge_token = "e" * 32
         monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", public_origin)
         monkeypatch.setenv("JOBSCOPE_AUTOMATION_TOKEN", automation_token)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_ORIGIN", automation_origin)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_EDGE_TOKEN", automation_edge_token)
         monkeypatch.setenv("JOBSCOPE_APPS_PASSPHRASE", "hosted-test-passphrase")
         monkeypatch.setattr(serve, "_run_refresh", lambda *args, **kwargs: None)
         monkeypatch.setattr(campaigns, "tick", lambda *_args, **_kwargs: {
@@ -644,11 +648,10 @@ def test_hosted_automation_is_secret_scoped_serialized_and_redacted(monkeypatch)
         })
         httpd, port, _, thread = _serve_bg(cfg, hosted=True)
         base = f"http://127.0.0.1:{port}"
-        tunnel = {"Cf-Access-Jwt-Assertion": "validated-test-access-jwt"}
         authorized = {
-            **tunnel,
-            "Origin": public_origin,
+            "Origin": automation_origin,
             "X-Jobscope-Automation": automation_token,
+            "X-Jobscope-Edge": automation_edge_token,
             "Content-Type": "application/json",
         }
         try:
@@ -660,6 +663,11 @@ def test_hosted_automation_is_secret_scoped_serialized_and_redacted(monkeypatch)
             status, _ = _req(
                 "POST", base + "/api/automation/tick", data="{}",
                 headers={**authorized, "Origin": "https://evil.example"},
+            )
+            assert status == 403
+            status, _ = _req(
+                "POST", base + "/api/automation/tick", data="{}",
+                headers={**authorized, "X-Jobscope-Edge": "wrong"},
             )
             assert status == 403
 
@@ -715,6 +723,30 @@ def test_hosted_mode_rejects_short_automation_secret(monkeypatch):
         monkeypatch.setenv("JOBSCOPE_AUTOMATION_TOKEN", "too-short")
 
         with pytest.raises(RuntimeError, match="at least 32"):
+            serve._build_server(
+                cfg, 0, hosted=True, access_verifier=_TestAccessVerifier(),
+            )
+
+
+@pytest.mark.parametrize(("name", "value", "message"), [
+    ("JOBSCOPE_AUTOMATION_ORIGIN", "", "JOBSCOPE_AUTOMATION_ORIGIN"),
+    ("JOBSCOPE_AUTOMATION_ORIGIN", "http://automation.example", "JOBSCOPE_AUTOMATION_ORIGIN"),
+    ("JOBSCOPE_AUTOMATION_ORIGIN", "https://jobs.example.com", "JOBSCOPE_AUTOMATION_ORIGIN"),
+    ("JOBSCOPE_AUTOMATION_EDGE_TOKEN", "short", "JOBSCOPE_AUTOMATION_EDGE_TOKEN"),
+])
+def test_hosted_mode_rejects_incomplete_automation_edge(monkeypatch, name, value, message):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", "https://jobs.example.com")
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_TOKEN", "a" * 32)
+        monkeypatch.setenv(
+            "JOBSCOPE_AUTOMATION_ORIGIN", "https://automation.example.workers.dev",
+        )
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_EDGE_TOKEN", "e" * 32)
+        monkeypatch.setenv(name, value)
+
+        with pytest.raises(RuntimeError, match=message):
             serve._build_server(
                 cfg, 0, hosted=True, access_verifier=_TestAccessVerifier(),
             )

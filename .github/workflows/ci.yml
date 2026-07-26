@@ -60,6 +60,9 @@ jobs:
       - name: Hosted Worker contract
         working-directory: ${{ github.workspace }}
         run: node --test tests/hosted_worker.test.mjs
+      - name: Hosted automation Worker contract
+        working-directory: ${{ github.workspace }}
+        run: node --test tests/hosted_automation_worker.test.mjs
       - name: Build locked dashboard shell
         shell: bash
         run: |
@@ -83,7 +86,9 @@ jobs:
         env:
           IMAGE: jobscope-hosted:${{ github.sha }}
           PUBLIC_ORIGIN: https://jobs.example.test
+          AUTOMATION_ORIGIN: https://jobscope-automation.example.workers.dev
           AUTOMATION_TOKEN: ci-automation-token-32-characters-minimum
+          AUTOMATION_EDGE_TOKEN: ci-edge-token-32-characters-minimum
           ACCESS_TEAM_DOMAIN: https://ci.cloudflareaccess.com
           ACCESS_AUDIENCE: ci-audience
         run: |
@@ -112,6 +117,8 @@ jobs:
               --publish 127.0.0.1:8799:8799 \
               --env "JOBSCOPE_PUBLIC_ORIGIN=$PUBLIC_ORIGIN" \
               --env "JOBSCOPE_AUTOMATION_TOKEN=$AUTOMATION_TOKEN" \
+              --env "JOBSCOPE_AUTOMATION_ORIGIN=$AUTOMATION_ORIGIN" \
+              --env "JOBSCOPE_AUTOMATION_EDGE_TOKEN=$AUTOMATION_EDGE_TOKEN" \
               --env "JOBSCOPE_CF_ACCESS_TEAM_DOMAIN=$ACCESS_TEAM_DOMAIN" \
               --env "JOBSCOPE_CF_ACCESS_AUD=$ACCESS_AUDIENCE" \
               --volume "$data:/data" \
@@ -133,11 +140,20 @@ jobs:
             --header "Cf-Access-Jwt-Assertion: validated-ci-access-jwt" \
             http://127.0.0.1:8799/api/token)" = "403"
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
-            --dump-header "$RUNNER_TEMP/hosted-headers" \
-            --header "Cf-Access-Jwt-Assertion: validated-ci-access-jwt" \
             --header "X-Jobscope-Automation: $AUTOMATION_TOKEN" \
-            --header "Origin: $PUBLIC_ORIGIN" \
+            --header "Origin: $AUTOMATION_ORIGIN" \
             http://127.0.0.1:8799/api/automation/status)" = "403"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --header "X-Jobscope-Automation: $AUTOMATION_TOKEN" \
+            --header "X-Jobscope-Edge: $AUTOMATION_EDGE_TOKEN" \
+            --header "Origin: https://wrong.example" \
+            http://127.0.0.1:8799/api/automation/status)" = "403"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --dump-header "$RUNNER_TEMP/hosted-headers" \
+            --header "X-Jobscope-Automation: $AUTOMATION_TOKEN" \
+            --header "X-Jobscope-Edge: $AUTOMATION_EDGE_TOKEN" \
+            --header "Origin: $AUTOMATION_ORIGIN" \
+            http://127.0.0.1:8799/api/automation/status)" = "200"
           grep --ignore-case --quiet '^x-frame-options: DENY' "$RUNNER_TEMP/hosted-headers"
           docker exec jobscope-hosted cat /app/web/dist/sw.js > "$RUNNER_TEMP/hosted-sw.js"
           grep --quiet 'registration.unregister' "$RUNNER_TEMP/hosted-sw.js"

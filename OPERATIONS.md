@@ -37,7 +37,7 @@ Required topology:
 
 1. Let the green `container` CI job publish its already-smoke-tested image to GHCR. Configure exactly
    one Jobscope service from the immutable `ghcr.io/<owner>/jobscope@sha256:<digest>` reported in the
-   job summary, with no Railway public domain, and mount one volume at `/data`. For an image-source
+   job summary and mount one volume at `/data`. For an image-source
    service, mirror `railway.json`'s `/healthz`, 30-second timeout, and bounded on-failure restart settings.
 2. Put sanitized configuration at `/data/config.yaml` with `output.db_path: /data/jobscope.db`.
 3. Set only secret values in Railway variables. Keep `ai.enabled`, `email.enabled`, and
@@ -49,9 +49,8 @@ Required topology:
 4. Route a Cloudflare Tunnel hostname to the private service on port 8799. Enable **Protect with
    Access** so `cloudflared` validates the Access JWT and forwards `Cf-Access-Jwt-Assertion`.
 5. Set `JOBSCOPE_PUBLIC_ORIGIN` to that exact HTTPS origin. Access must deny by default and allow
-   only the intended identity. Create a separate service identity restricted to
-   `/api/automation/*`; store its client ID/secret only in GitHub Actions. `/healthz` is the only
-   application route that does not require the Access header.
+   only the intended identity. `/healthz` is the only application route that does not require the
+   Access header.
 
 If the account has no Cloudflare-managed zone, use the zone-less edge in `cloudflare/`:
 
@@ -61,11 +60,23 @@ If the account has no Cloudflare-managed zone, use the zone-less edge in `cloudf
    for `workers.dev` and allow only the intended email identity.
 4. Copy that Access application's Audience tag into Railway as `JOBSCOPE_CF_ACCESS_AUD`, set
    `JOBSCOPE_CF_ACCESS_TEAM_DOMAIN`, and set `JOBSCOPE_PUBLIC_ORIGIN` to the `workers.dev` URL.
-5. Add a **Service Auth** policy for the GitHub service token. Store its Client ID as the Worker's
-   `AUTOMATION_CLIENT_ID` secret; the Worker matches the signed JWT `common_name` and permits that
-   identity only under `/api/automation/*`.
-6. Keep the Railway origin domain undocumented and rely on in-process JWT validation as the
+5. Keep the Railway origin domain undocumented and rely on in-process JWT validation as the
    mandatory bypass defense. The Worker also rejects missing assertions and strips Access cookies.
+
+Use the separate free automation edge instead of a card-gated Access service token:
+
+1. Deploy `cloudflare/automation-worker.mjs` as `jobscope-automation` on its single `workers.dev`
+   route with preview URLs disabled. Do not enable Access on this route.
+2. Give the Worker three secrets: the Railway `ORIGIN_URL`, the existing 32+ character
+   `AUTOMATION_TOKEN` shared with GitHub, and a different random 32+ character `EDGE_TOKEN` shared
+   only with Railway.
+3. Set Railway `JOBSCOPE_AUTOMATION_ORIGIN` to the automation Worker origin and
+   `JOBSCOPE_AUTOMATION_EDGE_TOKEN` to the same edge token. Railway accepts automation only when
+   the caller supplies both tokens and the exact automation Origin.
+4. Configure GitHub variable `JOBSCOPE_AUTOMATION_ORIGIN` plus secret
+   `JOBSCOPE_AUTOMATION_TOKEN`. The Worker exposes only the four fixed `/api/automation/*` routes,
+   rejects every other route/method, strips caller-controlled edge and Access headers, and adds the
+   origin-only edge token. This path uses the normal Workers free allowance and requires no card.
 
 Do not migrate real data yet. Start the immutable image with an empty volume, verify unauthenticated
 requests are denied, sign in through Access, make a temporary profile change, restart the same image,
@@ -87,9 +98,9 @@ Cut over with one writer:
 4. Add Gmail credentials only after those checks pass. Run one manual refresh with SMTP/outreach still
    disabled and confirm the retained stage timings. Do not enable a hosted schedule while the old
    workflow can still write its independent database.
-5. Configure repository variable `JOBSCOPE_HOSTED_ORIGIN` plus secrets
-   `JOBSCOPE_AUTOMATION_TOKEN`, `JOBSCOPE_CF_ACCESS_CLIENT_ID`, and
-   `JOBSCOPE_CF_ACCESS_CLIENT_SECRET`. Run `hosted-ops.yml` manually with `refresh`; it calls only
+5. Configure repository variables `JOBSCOPE_HOSTED_ORIGIN` and `JOBSCOPE_AUTOMATION_ORIGIN` plus
+   the protected Actions value `JOBSCOPE_AUTOMATION_TOKEN`. Run `hosted-ops.yml` manually with
+   `refresh`; it calls only
    `/api/automation/refresh` and polls the exact durable run ID. Run `hosted-publish.yml` manually;
    it fetches only the hosted-encrypted snapshot, then reuses the shared empty-shell builder and
    artifact verifier. The workflow never receives the plaintext payload or passphrase. Add schedules

@@ -343,6 +343,12 @@ and enable Cloudflare Access on that route. The Worker requires the Access asser
 strips the Access cookie, and forwards the assertion to the Railway origin for full
 signature/issuer/audience verification.
 
+GitHub automation does not require a paid Access service token. Deploy the separate
+`cloudflare/automation-worker.mjs` on the Workers free allowance with preview URLs disabled. It
+accepts only the four fixed automation routes, validates the GitHub-held automation token, and adds
+a distinct Worker-to-Railway edge token. Railway requires both tokens and the exact automation
+Worker Origin; the browser workspace remains behind Access unchanged.
+
 GitHub Pages is an encrypted **read-only snapshot**, not the interactive backend.
 After unlock, Outreach can link to `VITE_JOBSCOPE_PRIVATE_ORIGIN`; mutations still run
 only in the Access-protected workspace. Actions remain useful for scheduled PC-off

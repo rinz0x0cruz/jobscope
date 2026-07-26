@@ -209,12 +209,15 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 Plus [schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) — the JSON-Schema
 artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboard_json.py](tests/test_dashboard_json.py).
 
-The optional [cloudflare/worker.mjs](cloudflare/worker.mjs) edge provides one
+The optional [cloudflare/worker.mjs](cloudflare/worker.mjs) browser edge provides one
 Access-protected `workers.dev` hostname when no custom zone exists. It contains no
 business logic or state: it rejects missing Access assertions, strips Access cookies,
-scopes the configured service-token identity to `/api/automation/*`, and proxies to the
-single Railway origin, where `serve.py` performs cryptographic JWT validation and all
-authorization.
+and proxies to the single Railway origin, where `serve.py` performs cryptographic JWT
+validation and all browser authorization. The separate
+[cloudflare/automation-worker.mjs](cloudflare/automation-worker.mjs) edge is an exact-route proxy
+for GitHub operations: it validates the shared automation token, adds a different origin-only
+token, and cannot forward browser or generic API routes. Railway requires both tokens and the exact
+automation Worker Origin.
 
 > **Note:** `render.py` is the JSON emitter. The **React app in `web/`** is the single dashboard — served
 > privately by `jobscope serve`, or as an empty Pages shell plus encrypted whole-site payload — and owns
