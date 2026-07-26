@@ -26,6 +26,7 @@ data/*
 
 # Playwright / browsers
 .cache/
+.wrangler/
 
 # Editors / OS
 .vscode/

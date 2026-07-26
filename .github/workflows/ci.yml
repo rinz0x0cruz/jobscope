@@ -57,6 +57,9 @@ jobs:
         run: npm run typecheck
       - name: UX tests (Vitest)
         run: npm test
+      - name: Hosted Worker contract
+        working-directory: ${{ github.workspace }}
+        run: node --test tests/hosted_worker.test.mjs
       - name: Build locked dashboard shell
         shell: bash
         run: |

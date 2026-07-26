@@ -53,6 +53,17 @@ Required topology:
    `/api/automation/*`; store its client ID/secret only in GitHub Actions. `/healthz` is the only
    application route that does not require the Access header.
 
+If the account has no Cloudflare-managed zone, use the zone-less edge in `cloudflare/`:
+
+1. Deploy `jobscope-private` to its single `workers.dev` route with `preview_urls: false`.
+2. Store the Railway service URL as the Worker's `ORIGIN_URL` secret.
+3. In Workers & Pages > jobscope-private > Settings > Domains & Routes, enable Cloudflare Access
+   for `workers.dev` and allow only the intended email identity.
+4. Copy that Access application's Audience tag into Railway as `JOBSCOPE_CF_ACCESS_AUD`, set
+   `JOBSCOPE_CF_ACCESS_TEAM_DOMAIN`, and set `JOBSCOPE_PUBLIC_ORIGIN` to the `workers.dev` URL.
+5. Keep the Railway origin domain undocumented and rely on in-process JWT validation as the
+   mandatory bypass defense. The Worker also rejects missing assertions and strips Access cookies.
+
 Do not migrate real data yet. Start the immutable image with an empty volume, verify unauthenticated
 requests are denied, sign in through Access, make a temporary profile change, restart the same image,
 and prove the change and `PRAGMA quick_check` survive. Confirm **Sign out** clears the live workspace,

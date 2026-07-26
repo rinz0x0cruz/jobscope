@@ -49,6 +49,13 @@ accept campaign IDs, draft content, recipients, or generic campaign actions. Hos
 a self-destroying service worker, detect Access HTML/redirect responses, clear live state, and offer
 explicit Access logout. API and HTML responses remain `no-store` and deny framing.
 
+When no custom zone is available, `cloudflare/worker.mjs` is the only supported
+public edge. It runs at one Access-protected `workers.dev` route with preview URLs
+disabled, rejects requests that lack `Cf-Access-Jwt-Assertion`, strips the
+`CF_Authorization` cookie before proxying, and forwards the signed assertion to the
+origin. The Railway service may have a generated origin hostname, but every private
+route still fails closed unless the assertion validates for the exact Access audience.
+
 ## Secrets
 
 - Secrets are referenced by **env-var name** in config (e.g. `password_env: JOBSCOPE_GMAIL_APP_PW`),

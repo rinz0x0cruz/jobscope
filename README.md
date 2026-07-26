@@ -337,6 +337,12 @@ or its passphrase. See
 [OPERATIONS.md](OPERATIONS.md#private-hosted-control-plane) before deploying it.
 No hosted instance, schedule, secret, or data migration is created automatically.
 
+Accounts without a Cloudflare-managed custom zone can deploy the zero-dependency
+`cloudflare/worker.mjs` proxy to one stable `workers.dev` route, disable preview URLs,
+and enable Cloudflare Access on that route. The Worker requires the Access assertion,
+strips the Access cookie, and forwards the assertion to the Railway origin for full
+signature/issuer/audience verification.
+
 GitHub Pages is an encrypted **read-only snapshot**, not the interactive backend.
 After unlock, Outreach can link to `VITE_JOBSCOPE_PRIVATE_ORIGIN`; mutations still run
 only in the Access-protected workspace. Actions remain useful for scheduled PC-off
