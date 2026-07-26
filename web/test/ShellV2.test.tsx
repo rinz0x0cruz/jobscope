@@ -260,6 +260,12 @@ describe('ShellV2', () => {
     expect(screen.getByText('Read-only encrypted snapshot')).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 3, name: 'India security outreach' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Create batch' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete draft' })).not.toBeInTheDocument()
+    expect(screen.getByText('Pages is view-only')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Open private workspace/ })).toHaveAttribute(
+      'href',
+      'http://127.0.0.1:8799/#/?view=campaigns&campaign=campaign%3Aone',
+    )
     expect(campaignApi.listEngagements).not.toHaveBeenCalled()
   })
 

@@ -996,6 +996,9 @@ export function CampaignsSnapshotView({
   )
   const sent = snapshot.campaigns.reduce((sum, campaign) => sum + campaign.delivered_count, 0)
   const replies = snapshot.campaigns.reduce((sum, campaign) => sum + campaign.response_count, 0)
+  const privateUrl = `http://127.0.0.1:8799/#/?view=campaigns${
+    selected ? `&campaign=${encodeURIComponent(selected.id)}` : ''
+  }`
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col border-x border-line bg-panel">
       <WorkspaceHeader
@@ -1012,6 +1015,19 @@ export function CampaignsSnapshotView({
         )}
         accent="brand"
       />
+      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-line bg-inset/35 px-4 py-3 sm:px-7">
+        <ShieldCheck size={15} className="shrink-0 text-brand" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[12px] font-semibold text-ink">Pages is view-only</p>
+          <p className="text-[11px] text-ink-3">Delete draft · Find recruiters · Approve · Start · Send next due</p>
+        </div>
+        <a
+          href={privateUrl}
+          className="inline-flex h-9 items-center gap-1.5 rounded-md border border-brand bg-panel px-3 text-[12px] font-semibold text-brand hover:bg-brand-weak"
+        >
+          Open private workspace <ArrowRight size={13} aria-hidden="true" />
+        </a>
+      </div>
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(250px,.48fr)_minmax(0,1.52fr)]">
         <div className="min-h-0 overflow-auto border-r border-line">
           {snapshot.campaigns.length ? (
