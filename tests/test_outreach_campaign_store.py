@@ -74,6 +74,35 @@ def test_delivery_unknown_requires_explicit_resolution():
     store.close()
 
 
+def test_unresolved_delivery_blocks_claiming_a_different_target():
+    store = _store()
+    campaign = store.create_outreach_campaign("Global delivery lease", 2)
+    targets = [
+        store.upsert_outreach_campaign_target(
+            campaign["id"], company, company.lower(), rank_score=80,
+        )
+        for company in ("Acme", "Beta")
+    ]
+    for target in targets:
+        store.set_outreach_campaign_draft(
+            target["id"], selected_email=f"recruiter@{target['company'].lower()}.example",
+            subject="Hello", body="Body",
+        )
+        store.approve_outreach_campaign_target(target["id"])
+
+    assert store.claim_outreach_campaign_target_send(targets[0]["id"], "one@example.com")
+    assert store.outreach_campaign_delivery_blocker() == "sending"
+    assert not store.claim_outreach_campaign_target_send(targets[1]["id"], "two@example.com")
+    store.mark_outreach_campaign_delivery_unknown(targets[0]["id"], "connection closed")
+    assert store.outreach_campaign_delivery_blocker() == "delivery_unknown"
+    assert not store.claim_outreach_campaign_target_send(targets[1]["id"], "two@example.com")
+
+    store.resolve_outreach_campaign_delivery(targets[0]["id"], "not_sent")
+    assert store.outreach_campaign_delivery_blocker() == ""
+    assert store.claim_outreach_campaign_target_send(targets[1]["id"], "two@example.com")
+    store.close()
+
+
 def test_stale_send_claim_becomes_delivery_unknown_without_retry():
     store = _store()
     campaign = store.create_outreach_campaign("Interrupted send", 1)

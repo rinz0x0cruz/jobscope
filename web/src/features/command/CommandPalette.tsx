@@ -31,6 +31,7 @@ export interface CommandPaletteProps {
   onRefresh: () => void
   onToggleTheme: () => void
   onLock?: () => void
+  lockLabel?: string
 }
 
 const LENSES: { section: ViewValue; label: string; Icon: LucideIcon }[] = [
@@ -54,6 +55,7 @@ export function CommandPalette({
   onRefresh,
   onToggleTheme,
   onLock,
+  lockLabel = 'Lock dashboard',
 }: CommandPaletteProps) {
   const [q, setQ] = useState('')
 
@@ -129,7 +131,7 @@ export function CommandPalette({
                 </Command.Item>}
                 {showLock && <Command.Item value="lock dashboard sign out" onSelect={() => run(onLock!)} className={ITEM}>
                   <Lock size={16} aria-hidden="true" className="text-ink-3" />
-                  <span>Lock dashboard</span>
+                  <span>{lockLabel}</span>
                 </Command.Item>}
               </Command.Group>}
 

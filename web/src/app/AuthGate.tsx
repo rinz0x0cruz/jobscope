@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { Compass, Lock } from 'lucide-react'
+import { Compass, Loader2, Lock, LogIn } from 'lucide-react'
 import type { DashboardData, EncRef } from '@/lib/schema'
 import { cacheUnlock, clearUnlock, readCachedUnlock, unlockDashboard } from '@/lib/unlock'
-import { localDashboard, localServeToken } from '@/lib/outreach'
+import {
+  HOSTED_SESSION_EXPIRED_EVENT,
+  localDashboard,
+  localServeToken,
+  resetLocalServeToken,
+} from '@/lib/outreach'
 import { Button, Input } from '@/ui'
 
 export interface AuthGateProps {
@@ -27,12 +32,15 @@ export interface AuthGateProps {
  * AES-256-GCM snapshot is unlocked in-browser (cached per-tab in sessionStorage).
  */
 export function AuthGate({ baked, encrypted, children }: AuthGateProps) {
+  const hostedBuild = import.meta.env.VITE_JOBSCOPE_HOSTED === '1'
   const openLocally = (baked.rows?.length ?? 0) > 0
   const [unlocked, setUnlocked] = useState<DashboardData | null>(() => readCachedUnlock())
   const [localSession, setLocalSession] = useState<{
     data: DashboardData
     token: string
   } | null>(null)
+  const [localProbeComplete, setLocalProbeComplete] = useState(false)
+  const [hostedExpired, setHostedExpired] = useState(false)
   const data = localSession?.data ?? (openLocally ? baked : unlocked)
   const source = localSession ? 'local' : (openLocally ? 'baked' : 'snapshot')
 
@@ -41,22 +49,72 @@ export function AuthGate({ baked, encrypted, children }: AuthGateProps) {
     void localServeToken()
       .then(async (token) => token ? { token, data: await localDashboard(token) } : null)
       .then((session) => {
-        if (active && session) setLocalSession(session)
+        if (active && session) {
+          setHostedExpired(false)
+          setLocalSession(session)
+        }
       })
       .catch(() => {
         // Static Pages and standalone builds intentionally have no local API.
       })
+      .finally(() => active && setLocalProbeComplete(true))
     return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    const expire = () => {
+      setLocalSession(null)
+      setHostedExpired(true)
+      setLocalProbeComplete(true)
+    }
+    window.addEventListener(HOSTED_SESSION_EXPIRED_EVENT, expire)
+    return () => window.removeEventListener(HOSTED_SESSION_EXPIRED_EVENT, expire)
   }, [])
 
   const lock = () => {
     clearUnlock()
     setUnlocked(null)
+    if (hostedBuild && localSession) {
+      resetLocalServeToken()
+      setLocalSession(null)
+      window.location.assign(`${window.location.origin}/cdn-cgi/access/logout`)
+    }
   }
 
   const localToken = localSession?.token ?? (source === 'snapshot' ? null : undefined)
   if (data) return <>{children(data, lock, source, localToken)}</>
+  if (hostedBuild) {
+    return <HostedSessionScreen pending={!localProbeComplete && !hostedExpired} />
+  }
   return <LockScreen encrypted={encrypted} onUnlock={setUnlocked} />
+}
+
+function HostedSessionScreen({ pending }: { pending: boolean }) {
+  return (
+    <main className="grid min-h-dvh place-items-center bg-paper px-5 text-ink">
+      <div className="w-full max-w-sm text-center">
+        <span className="mx-auto grid h-11 w-11 place-items-center rounded-md bg-brand text-white">
+          {pending
+            ? <Loader2 size={20} className="animate-spin" aria-hidden="true" />
+            : <Lock size={20} aria-hidden="true" />}
+        </span>
+        <h1 className="mt-4 font-display text-xl font-semibold">
+          {pending ? 'Connecting to your private workspace' : 'Private session required'}
+        </h1>
+        <p className="mt-2 text-sm text-ink-3">
+          {pending ? 'Checking your protected Jobscope session.' : 'Sign in through Cloudflare Access to continue.'}
+        </p>
+        {!pending && (
+          <a
+            href="/"
+            className="mt-5 inline-flex h-10 items-center gap-2 rounded-md bg-brand px-4 text-sm font-semibold text-white"
+          >
+            <LogIn size={16} aria-hidden="true" /> Sign in again
+          </a>
+        )}
+      </div>
+    </main>
+  )
 }
 
 function LockScreen({

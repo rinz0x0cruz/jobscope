@@ -325,14 +325,24 @@ and experience remain read-only facts.
 container entry point for the same single-user workspace. It is **not** a public
 server: hosted mode requires `JOBSCOPE_PUBLIC_ORIGIN`, a Cloudflare Access JWT on
 every non-health request, an origin reachable only through a validating Cloudflare
-Tunnel, one application replica, and a persistent `/data` volume. See
+Tunnel, `JOBSCOPE_CF_ACCESS_TEAM_DOMAIN` plus `JOBSCOPE_CF_ACCESS_AUD` for
+in-process JWT signature/issuer/audience validation, one application replica, and
+a persistent `/data` volume. Hosted builds
+self-remove the Pages service worker and expose an explicit Access sign-out. Optional
+automation requires a separate 32+ character `JOBSCOPE_AUTOMATION_TOKEN`; the
+manual-only `hosted-ops.yml` and `hosted-publish.yml` workflows use fixed-purpose
+routes rather than the browser campaign API. The private service encrypts the Pages
+snapshot before returning it; GitHub Actions never receives the plaintext dashboard
+or its passphrase. See
 [OPERATIONS.md](OPERATIONS.md#private-hosted-control-plane) before deploying it.
 No hosted instance, schedule, secret, or data migration is created automatically.
 
 GitHub Pages is an encrypted **read-only snapshot**, not the interactive backend.
-Actions remain useful for scheduled PC-off inbox scans, encrypted database backup,
-queued Pages mutations, and publication. Local Scan Gmail updates SQLite only;
-publication is an explicit script or `jobscope refresh` operation.
+After unlock, Outreach can link to `VITE_JOBSCOPE_PRIVATE_ORIGIN`; mutations still run
+only in the Access-protected workspace. Actions remain useful for scheduled PC-off
+inbox scans, encrypted database backup, queued Pages mutations, and publication. Local
+Scan Gmail updates SQLite only; publication is an explicit script or `jobscope refresh`
+operation.
 
 ## Publish to GitHub Pages (view on mobile)
 

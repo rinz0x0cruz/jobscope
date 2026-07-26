@@ -47,7 +47,7 @@ def _cfg(tmp):
 @pytest.fixture(autouse=True)
 def _reset_state():
     serve._STATE.update(state="idle", step="", message="", started="",
-                        finished="", last_date="", stages=[])
+                        finished="", last_date="", run_id="", stages=[])
     yield
 
 
@@ -194,13 +194,14 @@ def test_refresh_stage_reports_duration(monkeypatch):
     assert stage.duration_ms == 125
 
 
-def test_refresh_worker_preserves_stage_timings(monkeypatch):
+def test_refresh_worker_preserves_stage_timings(monkeypatch, tmp_path):
+    cfg = _cfg(str(tmp_path))
     monkeypatch.setattr(serve, "perform_refresh", lambda *_args, **_kwargs: {
         "state": "done", "message": "ok", "last_date": "2026-07-22",
         "stages": [{"name": "inbox", "duration_ms": 125}],
     })
 
-    serve._run_refresh({}, False, False)
+    serve._run_refresh(cfg, False, False)
 
     assert serve._STATE["stages"] == [{"name": "inbox", "duration_ms": 125}]
 
@@ -301,8 +302,16 @@ def test_digest_delivery_failure_completes_degraded(monkeypatch):
 
 # ---- endpoints / CSRF guard -------------------------------------------------
 
+class _TestAccessVerifier:
+    def verify(self, token):
+        return token == "validated-test-access-jwt"
+
+
 def _serve_bg(cfg, *, hosted=False):
-    httpd, page, token, _on = serve._build_server(cfg, 0, hosted=hosted)
+    httpd, page, token, _on = serve._build_server(
+        cfg, 0, hosted=hosted,
+        access_verifier=_TestAccessVerifier() if hosted else None,
+    )
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     return httpd, httpd.server_address[1], token, thread
@@ -500,7 +509,29 @@ def test_endpoints_and_csrf_guard(monkeypatch):
                                 headers={"X-Refresh-Token": token, "Origin": base,
                                          "Content-Type": "application/json"})
             assert status == 200 and body["state"] in ("started", "busy")
+            assert len(body["run_id"]) == 24
             assert serve._STATE["stages"] == []
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_server_marks_a_persisted_running_refresh_interrupted():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with Store(cfg["output"]["db_path"]) as store:
+            store.meta_set(serve._REFRESH_STATE_META_KEY, json.dumps({
+                "state": "running", "step": "inbox", "message": "Syncing",
+                "started": "2026-07-26T10:00:00Z", "finished": "",
+                "last_date": "", "run_id": "abc123", "stages": [],
+            }))
+        httpd, port, _, thread = _serve_bg(cfg)
+        try:
+            status, body = _req("GET", f"http://127.0.0.1:{port}/api/status")
+            assert status == 200
+            assert body["state"] == "error" and body["run_id"] == "abc123"
+            assert "interrupted" in body["message"]
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -512,6 +543,18 @@ def test_hosted_mode_fails_closed_without_required_environment(monkeypatch):
 
     with pytest.raises(RuntimeError, match="JOBSCOPE_PUBLIC_ORIGIN"):
         serve._build_server({}, 0, hosted=True)
+
+
+def test_hosted_mode_fails_closed_without_access_verification_config(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", "https://jobs.example.com")
+        monkeypatch.delenv("JOBSCOPE_CF_ACCESS_TEAM_DOMAIN", raising=False)
+        monkeypatch.delenv("JOBSCOPE_CF_ACCESS_AUD", raising=False)
+
+        with pytest.raises(RuntimeError, match="JOBSCOPE_CF_ACCESS_TEAM_DOMAIN"):
+            serve._build_server(cfg, 0, hosted=True)
 
 
 def test_serve_port_defaults_to_environment(monkeypatch):
@@ -574,6 +617,125 @@ def test_hosted_mode_requires_tunnel_token_and_exact_origin(monkeypatch):
                          "Origin": public_origin, "Content-Type": "application/json"},
             )
             assert status == 200 and body["state"] in ("started", "busy")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_hosted_automation_is_secret_scoped_serialized_and_redacted(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        from jobscope.apply import campaigns
+
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        public_origin = "https://jobs.example.com"
+        automation_token = "a" * 32
+        monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", public_origin)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_TOKEN", automation_token)
+        monkeypatch.setenv("JOBSCOPE_APPS_PASSPHRASE", "hosted-test-passphrase")
+        monkeypatch.setattr(serve, "_run_refresh", lambda *args, **kwargs: None)
+        monkeypatch.setattr(campaigns, "tick", lambda *_args, **_kwargs: {
+            "ok": True,
+            "sent": True,
+            "code": "sent",
+            "tracking": {"inbox_status": "ok", "replied": 1, "opted_out": 0},
+            "delivery": {"target": {"body": "PRIVATE-BODY", "selected_email": "private@example.com"}},
+        })
+        httpd, port, _, thread = _serve_bg(cfg, hosted=True)
+        base = f"http://127.0.0.1:{port}"
+        tunnel = {"Cf-Access-Jwt-Assertion": "validated-test-access-jwt"}
+        authorized = {
+            **tunnel,
+            "Origin": public_origin,
+            "X-Jobscope-Automation": automation_token,
+            "Content-Type": "application/json",
+        }
+        try:
+            status, _ = _req(
+                "POST", base + "/api/automation/tick", data="{}",
+                headers={**authorized, "X-Jobscope-Automation": "wrong"},
+            )
+            assert status == 403
+            status, _ = _req(
+                "POST", base + "/api/automation/tick", data="{}",
+                headers={**authorized, "Origin": "https://evil.example"},
+            )
+            assert status == 403
+
+            status, result = _req(
+                "POST", base + "/api/automation/tick", data="{}", headers=authorized,
+            )
+            assert status == 200
+            assert result == {
+                "ok": True, "sent": True, "code": "sent",
+                "tracking": {"inbox_status": "ok", "replied": 1, "opted_out": 0},
+            }
+            assert "PRIVATE" not in json.dumps(result)
+
+            serve._OPERATION_LOCK.acquire()
+            try:
+                status, result = _req(
+                    "POST", base + "/api/automation/tick", data="{}", headers=authorized,
+                )
+                assert status == 409 and result is None
+            finally:
+                serve._OPERATION_LOCK.release()
+
+            status, result = _req(
+                "POST", base + "/api/automation/refresh",
+                data=json.dumps({"force": True, "full_scan": False}), headers=authorized,
+            )
+            assert status == 200 and result["state"] == "started"
+            assert len(result["run_id"]) == 24
+
+            status, result = _req(
+                "GET", base + "/api/automation/status", headers=authorized,
+            )
+            assert status == 200 and result["run_id"] == serve._STATE["run_id"]
+
+            status, result = _req(
+                "GET", base + "/api/automation/snapshot", headers=authorized,
+            )
+            assert status == 200 and result["ok"] is True
+            assert set(result) == {"ok", "encrypted", "summary"}
+            assert set(result["encrypted"]) == {"v", "kdf", "iter", "salt", "iv", "ct"}
+            assert "data" not in result and "rows" not in result
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_hosted_mode_rejects_short_automation_secret(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", "https://jobs.example.com")
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_TOKEN", "too-short")
+
+        with pytest.raises(RuntimeError, match="at least 32"):
+            serve._build_server(
+                cfg, 0, hosted=True, access_verifier=_TestAccessVerifier(),
+            )
+
+
+def test_serve_adds_private_workspace_security_headers():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        httpd, port, _, thread = _serve_bg(cfg)
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as response:
+                assert response.headers["Content-Security-Policy"] == (
+                    "base-uri 'self'; frame-ancestors 'none'; object-src 'none'"
+                )
+                assert response.headers["Permissions-Policy"] == (
+                    "camera=(), geolocation=(), microphone=()"
+                )
+                assert response.headers["Referrer-Policy"] == "no-referrer"
+                assert response.headers["X-Content-Type-Options"] == "nosniff"
+                assert response.headers["X-Frame-Options"] == "DENY"
         finally:
             httpd.shutdown()
             httpd.server_close()

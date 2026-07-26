@@ -74,6 +74,20 @@ def test_campaign_api_is_local_token_guarded_and_rejects_unknown_fields(tmp_path
         assert code == 200 and tracking["ok"] is True
         assert tracking["inbox_status"] == "not_needed"
 
+        serve._OPERATION_LOCK.acquire()
+        try:
+            code, busy = _request(
+                "POST", base + "/api/campaigns/action", token=token,
+                body={"action": "check_replies", "fetch": True},
+            )
+            assert code == 200 and busy == {
+                "ok": False,
+                "code": "operation_busy",
+                "error": "another refresh or outreach operation is running",
+            }
+        finally:
+            serve._OPERATION_LOCK.release()
+
         code, rejected = _request(
             "POST", base + "/api/campaigns/action", token=token,
             body={"action": "approve", "target_id": "missing", "force": True},

@@ -14,6 +14,18 @@ describe('AppShell', () => {
     expect(screen.queryByRole('button', { name: 'Lock' })).not.toBeInTheDocument()
   })
 
+  it('uses the supplied hosted session action label', () => {
+    const onLock = vi.fn()
+    render(
+      <AppShell active="review" onNavigate={() => {}} search="" onSearch={() => {}} onLock={onLock} lockLabel="Sign out">
+        <div>Content</div>
+      </AppShell>,
+    )
+    const actions = screen.getAllByRole('button', { name: 'Sign out' })
+    fireEvent.click(actions[0])
+    expect(onLock).toHaveBeenCalledOnce()
+  })
+
   it('renders the five public sections and marks the active one', () => {
     render(
       <AppShell active="applications" onNavigate={() => {}} search="" onSearch={() => {}}>

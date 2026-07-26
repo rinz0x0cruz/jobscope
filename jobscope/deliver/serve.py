@@ -30,13 +30,16 @@ from urllib.parse import parse_qs, urlparse
 # background worker. Writes are small dict.update() calls (atomic under the GIL);
 # _LOCK only guards the "is one already running?" decision in do_POST.
 _LOCK = threading.Lock()
+_OPERATION_LOCK = threading.Lock()
 _MAX_API_REQUEST_BYTES = 256 * 1024
 _MAX_RESUME_BYTES = 5 * 1024 * 1024
 _MAX_RESUME_REQUEST_BYTES = 7 * 1024 * 1024
 _MAX_CAMPAIGN_REQUEST_BYTES = _MAX_API_REQUEST_BYTES
 _HOSTED_ACCESS_HEADER = "Cf-Access-Jwt-Assertion"
+_AUTOMATION_HEADER = "X-Jobscope-Automation"
 _MAX_PROFILE_REQUEST_BYTES = 32 * 1024
 _RESUME_EXTENSIONS = frozenset({".md", ".txt", ".json", ".pdf"})
+_REFRESH_STATE_META_KEY = "serve:refresh_state:v1"
 _STATE: dict[str, object] = {
     "state": "idle",     # idle | running | done | skipped | error | busy
     "step": "",          # scan | inbox | match | render | publish | ...
@@ -44,6 +47,7 @@ _STATE: dict[str, object] = {
     "started": "",
     "finished": "",
     "last_date": "",     # YYYY-MM-DD of the last successful refresh
+    "run_id": "",
     "stages": [],
 }
 
@@ -55,6 +59,38 @@ class StageResult:
     status: str
     detail: str = ""
     duration_ms: int = 0
+
+
+def _persist_refresh_state(cfg: dict) -> None:
+    from jobscope.core.store import Store
+    with Store(cfg["output"]["db_path"]) as store:
+        store.meta_set(_REFRESH_STATE_META_KEY, json.dumps(_STATE, ensure_ascii=True))
+
+
+def _restore_refresh_state(store) -> None:
+    state = {
+        "state": "idle", "step": "", "message": "", "started": "",
+        "finished": "", "last_date": store.meta_get("refresh:last_date", "") or "",
+        "run_id": "", "stages": [],
+    }
+    raw = store.meta_get(_REFRESH_STATE_META_KEY, "") or ""
+    try:
+        restored = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        restored = {}
+    if isinstance(restored, dict):
+        for key in state:
+            if key in restored:
+                state[key] = restored[key]
+    if state["state"] == "running":
+        state.update(
+            state="error", step="error",
+            message="Refresh was interrupted by a service restart; run it again.",
+            finished=_now(),
+        )
+        store.meta_set(_REFRESH_STATE_META_KEY, json.dumps(state, ensure_ascii=True))
+    _STATE.clear()
+    _STATE.update(state)
 
 
 def _run_stage(name: str, *, required: bool, action: Callable[[], object],
@@ -116,7 +152,7 @@ def _hosted_settings(hosted: bool) -> str:
     return public_origin
 
 
-def _build_server(cfg: dict, port: int, *, hosted: bool = False):
+def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier=None):
     """Build (but do not start) the SPA HTTP server with the refresh API wired
     in. Serves ``web/dist`` (building it once, un-redacted, if absent); the React
     shell owns Gmail/refresh controls. Returns ``(httpd, page, token,
@@ -125,16 +161,22 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False):
     from jobscope.core.store import Store
 
     public_origin = _hosted_settings(hosted)
+    if hosted and access_verifier is None:
+        from jobscope.deliver.access import AccessJWTVerifier
+        access_verifier = AccessJWTVerifier.from_environment()
     directory = _dist_dir(cfg)
     serve_cfg = cfg.get("serve", {}) or {}
     refresh_on = bool(serve_cfg.get("refresh_enabled", True))
+    automation_token = os.environ.get("JOBSCOPE_AUTOMATION_TOKEN", "").strip()
+    if automation_token and len(automation_token) < 32:
+        raise RuntimeError("JOBSCOPE_AUTOMATION_TOKEN must contain at least 32 characters")
 
     build_on_start = bool(serve_cfg.get("build_on_start", False))
     if build_on_start or not os.path.exists(os.path.join(directory, "index.html")):
         with Store(cfg["output"]["db_path"]) as store:
             _build_local_spa(cfg, store)
     with Store(cfg["output"]["db_path"]) as store:
-        _STATE["last_date"] = store.meta_get("refresh:last_date", "") or ""
+        _restore_refresh_state(store)
 
     token = secrets.token_hex(16)
     class Handler(http.server.SimpleHTTPRequestHandler):
@@ -143,6 +185,14 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False):
 
         def log_message(self, *args):  # keep the console quiet
             pass
+
+        def end_headers(self) -> None:
+            self.send_header("Content-Security-Policy", "base-uri 'self'; frame-ancestors 'none'; object-src 'none'")
+            self.send_header("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            super().end_headers()
 
         # -- helpers ------------------------------------------------------
         def _send_json(self, code: int, obj: dict) -> None:
@@ -171,7 +221,13 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False):
         def _tunnel_authorized(self) -> bool:
             if not hosted:
                 return True
-            return bool(self.headers.get(_HOSTED_ACCESS_HEADER, ""))
+            cached = getattr(self, "_access_authorized", None)
+            if cached is not None:
+                return bool(cached)
+            token_value = self.headers.get(_HOSTED_ACCESS_HEADER, "")
+            authorized = bool(access_verifier and access_verifier.verify(token_value))
+            self._access_authorized = authorized
+            return authorized
 
         def _authorized(self) -> bool:
             # CSRF/loopback guard: reject any cross-origin caller (Origin whose
@@ -189,6 +245,100 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False):
                 if hostname not in ("127.0.0.1", "localhost", "[::1]", "::1"):
                     return False
             return self.headers.get("X-Refresh-Token") == token
+
+        def _automation_authorized(self) -> bool:
+            supplied = self.headers.get(_AUTOMATION_HEADER, "")
+            return bool(
+                hosted and automation_token and supplied
+                and self.headers.get("Origin") == public_origin
+                and secrets.compare_digest(supplied, automation_token)
+            )
+
+        def _start_refresh(self, opts: dict) -> None:
+            unknown = set(opts) - {"force", "full_scan"}
+            if unknown:
+                self._send_json(400, {
+                    "state": "error",
+                    "message": f"unknown refresh option(s): {', '.join(sorted(unknown))}",
+                })
+                return
+            force = bool(opts.get("force"))
+            full_scan = bool(opts.get("full_scan"))
+            with _LOCK:
+                if _STATE["state"] == "running":
+                    self._send_json(200, {
+                        "state": "busy", "run_id": _STATE.get("run_id", ""),
+                    })
+                    return
+                run_id = secrets.token_hex(12)
+                _STATE.update(state="running", step="starting", message="Starting\u2026",
+                              started=_now(), finished="", run_id=run_id, stages=[])
+                _persist_refresh_state(cfg)
+            threading.Thread(target=_run_refresh, args=(cfg, force, full_scan, run_id),
+                             daemon=True).start()
+            self._send_json(200, {"state": "started", "run_id": run_id})
+
+        def _automation_tick(self) -> None:
+            if not _OPERATION_LOCK.acquire(blocking=False):
+                self._send_json(409, {
+                    "ok": False, "sent": False, "code": "operation_busy",
+                })
+                return
+            try:
+                from jobscope.apply import campaigns
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    result = campaigns.tick(cfg, store)
+                tracking = result.get("tracking") or {}
+                self._send_json(200, {
+                    "ok": bool(result.get("ok")),
+                    "sent": bool(result.get("sent")),
+                    "code": str(result.get("code") or ""),
+                    "tracking": {
+                        "inbox_status": str(tracking.get("inbox_status") or ""),
+                        "replied": int(tracking.get("replied") or 0),
+                        "opted_out": int(tracking.get("opted_out") or 0),
+                    },
+                })
+            finally:
+                _OPERATION_LOCK.release()
+
+        def _automation_snapshot(self) -> None:
+            if not _OPERATION_LOCK.acquire(blocking=False):
+                self._send_json(409, {"ok": False, "code": "operation_busy"})
+                return
+            try:
+                passphrase = _apps_passphrase()
+                if len(passphrase) < 8:
+                    self._send_json(503, {
+                        "ok": False,
+                        "error": "hosted snapshot encryption is not configured",
+                    })
+                    return
+                from jobscope.core.store import Store
+                from jobscope.deliver import render
+                from jobscope.deliver.site_crypto import encrypt_dashboard
+                with Store(cfg["output"]["db_path"]) as store:
+                    data = render.build_data(cfg, store, public=False)
+                encrypted = encrypt_dashboard(data, passphrase)
+                self._send_json(200, {
+                    "ok": True,
+                    "encrypted": encrypted,
+                    "summary": {
+                        "roles": len(data.get("rows") or []),
+                        "applications": len(data.get("applications") or []),
+                    },
+                })
+            finally:
+                _OPERATION_LOCK.release()
+
+        def _exclusive_operation(self, action: Callable[[], object]) -> tuple[bool, object]:
+            if not _OPERATION_LOCK.acquire(blocking=False):
+                return False, None
+            try:
+                return True, action()
+            finally:
+                _OPERATION_LOCK.release()
 
         def _json_request(self, max_bytes: int) -> dict | None:
             try:
@@ -312,11 +462,20 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False):
                         if unknown:
                             raise ValueError(f"unknown action field(s): {', '.join(sorted(unknown))}")
                         if action == "discover":
-                            target = campaigns.discover_target(
-                                cfg, store, str(data.get("target_id") or ""),
-                                force=bool(data.get("force")), fetch=bool(data.get("fetch", True)),
+                            acquired, target = self._exclusive_operation(
+                                lambda: campaigns.discover_target(
+                                    cfg, store, str(data.get("target_id") or ""),
+                                    force=bool(data.get("force")),
+                                    fetch=bool(data.get("fetch", True)),
+                                )
                             )
-                            response = {"ok": True, "target": target}
+                            response = (
+                                {"ok": True, "target": target}
+                                if acquired else {
+                                    "ok": False, "code": "operation_busy",
+                                    "error": "another refresh or outreach operation is running",
+                                }
+                            )
                         elif action == "draft":
                             target = campaigns.update_draft(
                                 cfg, store, str(data.get("target_id") or ""),
@@ -347,15 +506,27 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False):
                             )
                             response = {"ok": True, "target": target}
                         elif action == "discover_pending":
-                            response = campaigns.discover_pending_targets(
-                                cfg, store, str(data.get("campaign_id") or ""),
-                                limit=int(data.get("limit") or 5),
-                                fetch=bool(data.get("fetch", True)),
+                            acquired, result = self._exclusive_operation(
+                                lambda: campaigns.discover_pending_targets(
+                                    cfg, store, str(data.get("campaign_id") or ""),
+                                    limit=int(data.get("limit") or 5),
+                                    fetch=bool(data.get("fetch", True)),
+                                )
                             )
+                            response = result if acquired else {
+                                "ok": False, "code": "operation_busy",
+                                "error": "another refresh or outreach operation is running",
+                            }
                         elif action == "check_replies":
-                            response = campaigns.sync_replies(
-                                cfg, store, fetch=bool(data.get("fetch", True)),
+                            acquired, result = self._exclusive_operation(
+                                lambda: campaigns.sync_replies(
+                                    cfg, store, fetch=bool(data.get("fetch", True)),
+                                )
                             )
+                            response = result if acquired else {
+                                "ok": False, "code": "operation_busy",
+                                "error": "another refresh or outreach operation is running",
+                            }
                         elif action == "resolve_delivery":
                             target = campaigns.resolve_delivery(
                                 store, str(data.get("target_id") or ""),
@@ -363,14 +534,27 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False):
                             )
                             response = {"ok": True, "target": target}
                         elif action == "send_next":
-                            response = campaigns.send_next_approved(
-                                cfg, store, campaign_id=str(data.get("campaign_id") or ""),
+                            acquired, result = self._exclusive_operation(
+                                lambda: campaigns.send_next_approved(
+                                    cfg, store,
+                                    campaign_id=str(data.get("campaign_id") or ""),
+                                )
                             )
+                            response = result if acquired else {
+                                "ok": False, "sent": False, "code": "operation_busy",
+                                "error": "another refresh or outreach operation is running",
+                            }
                         else:
-                            response = campaigns.send_target(
-                                cfg, store, str(data.get("target_id") or ""),
-                                ignore_schedule=True, allow_inactive=True,
+                            acquired, result = self._exclusive_operation(
+                                lambda: campaigns.send_target(
+                                    cfg, store, str(data.get("target_id") or ""),
+                                    ignore_schedule=True, allow_inactive=True,
+                                )
                             )
+                            response = result if acquired else {
+                                "ok": False, "sent": False, "code": "operation_busy",
+                                "error": "another refresh or outreach operation is running",
+                            }
                 self._send_json(200, response)
             except KeyError:
                 self._send_json(404, {"ok": False, "error": "campaign or target not found"})
@@ -756,6 +940,18 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False):
             if route == "/api/status":
                 self._send_json(200, dict(_STATE))
                 return
+            if route == "/api/automation/status":
+                if not self._automation_authorized():
+                    self._send_json(403, {"ok": False, "error": "forbidden"})
+                else:
+                    self._send_json(200, dict(_STATE))
+                return
+            if route == "/api/automation/snapshot":
+                if not self._automation_authorized():
+                    self._send_json(403, {"ok": False, "error": "forbidden"})
+                else:
+                    self._automation_snapshot()
+                return
             if route == "/api/profile":
                 self._profile_get()
                 return
@@ -816,6 +1012,28 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False):
             if route == "/api/campaigns/action":
                 self._campaigns_post(create=False)
                 return
+            if route in {"/api/automation/refresh", "/api/automation/tick"}:
+                if not self._automation_authorized():
+                    self._send_json(403, {"ok": False, "error": "forbidden"})
+                    return
+                opts = self._json_request(_MAX_API_REQUEST_BYTES)
+                if opts is None:
+                    return
+                if route == "/api/automation/refresh":
+                    if not refresh_on:
+                        self._send_json(403, {
+                            "state": "error", "message": "refresh disabled",
+                        })
+                    else:
+                        self._start_refresh(opts)
+                    return
+                if opts:
+                    self._send_json(400, {
+                        "ok": False, "error": "automation tick accepts no options",
+                    })
+                    return
+                self._automation_tick()
+                return
             if route != "/api/refresh":
                 self.send_error(404)
                 return
@@ -828,17 +1046,7 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False):
             opts = self._json_request(_MAX_API_REQUEST_BYTES)
             if opts is None:
                 return
-            force = bool(opts.get("force"))
-            full_scan = bool(opts.get("full_scan"))
-            with _LOCK:
-                if _STATE["state"] == "running":
-                    self._send_json(200, {"state": "busy"})
-                    return
-                _STATE.update(state="running", step="starting", message="Starting\u2026",
-                              started=_now(), finished="", stages=[])
-            threading.Thread(target=_run_refresh, args=(cfg, force, full_scan),
-                             daemon=True).start()
-            self._send_json(200, {"state": "started"})
+            self._start_refresh(opts)
 
         def do_PUT(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0]
@@ -1002,23 +1210,27 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
             "degraded": degraded, "stages": [asdict(stage) for stage in stages]}
 
 
-def _run_refresh(cfg: dict, force: bool, full_scan: bool) -> None:
+def _run_refresh(cfg: dict, force: bool, full_scan: bool, run_id: str = "") -> None:
     """Server background worker: run :func:`perform_refresh`, mirroring progress
     and the outcome into the shared ``_STATE`` for /api/status polling."""
     def on_step(name: str, message: str) -> None:
         _STATE.update(step=name, message=message)
+        _persist_refresh_state(cfg)
 
     try:
-        res = perform_refresh(
-            cfg, force=force, full_scan=full_scan, publish_site=False, on_step=on_step,
-        )
+        with _OPERATION_LOCK:
+            res = perform_refresh(
+                cfg, force=force, full_scan=full_scan, publish_site=False, on_step=on_step,
+            )
         _STATE.update(state=res["state"], step=res["state"], message=res["message"],
                   stages=res.get("stages", []),
                       last_date=res.get("last_date") or _STATE.get("last_date", ""),
-                      finished=_now())
+                      finished=_now(), run_id=run_id or _STATE.get("run_id", ""))
     except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
         _STATE.update(state="error", step="error", message=str(exc)[:300],
-                      finished=_now())
+                      finished=_now(), run_id=run_id or _STATE.get("run_id", ""))
+    finally:
+        _persist_refresh_state(cfg)
 
 
 def _build_local_spa(cfg: dict, store) -> None:

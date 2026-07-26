@@ -100,6 +100,19 @@ def test_verify_artifact_writes_hashed_manifest(tmp_path):
     assert {"index.html", "assets/app.js", "site.enc.json"} <= set(saved["files"])
 
 
+def test_verify_artifact_accepts_ciphertext_only_hosted_input(tmp_path):
+    paths = _write_inputs(tmp_path)
+
+    manifest = verify_artifact(
+        public_path=paths["public"], full_path=None,
+        encrypted_path=paths["encrypted"], marker_path=paths["marker"],
+        dist_path=paths["dist"], source_commit="hosted123",
+    )
+
+    assert manifest["source_commit"] == "hosted123"
+    assert manifest["encrypted_payload_sha256"]
+
+
 def test_verify_artifact_rejects_nonempty_public_payload(tmp_path):
     paths = _write_inputs(tmp_path)
     public = json.loads(paths["public"].read_text("utf-8"))

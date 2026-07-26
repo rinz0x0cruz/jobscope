@@ -1,0 +1,94 @@
+name: hosted-publish
+run-name: Publish hosted snapshot
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: jobscope-hosted-operations
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      JOBSCOPE_HOSTED_ORIGIN: ${{ vars['JOBSCOPE_HOSTED_ORIGIN'] }}
+      JOBSCOPE_AUTOMATION_TOKEN: ${{ secrets['JOBSCOPE_AUTOMATION_TOKEN'] }}
+      CF_ACCESS_CLIENT_ID: ${{ secrets['JOBSCOPE_CF_ACCESS_CLIENT_ID'] }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets['JOBSCOPE_CF_ACCESS_CLIENT_SECRET'] }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Guard required configuration
+        run: |
+          set -euo pipefail
+          [ -n "$JOBSCOPE_HOSTED_ORIGIN" ] || { echo "::error::JOBSCOPE_HOSTED_ORIGIN is not configured"; exit 1; }
+          [ -n "$JOBSCOPE_AUTOMATION_TOKEN" ] || { echo "::error::JOBSCOPE_AUTOMATION_TOKEN is not configured"; exit 1; }
+          [ -n "$CF_ACCESS_CLIENT_ID" ] || { echo "::error::JOBSCOPE_CF_ACCESS_CLIENT_ID is not configured"; exit 1; }
+          [ -n "$CF_ACCESS_CLIENT_SECRET" ] || { echo "::error::JOBSCOPE_CF_ACCESS_CLIENT_SECRET is not configured"; exit 1; }
+          case "$JOBSCOPE_HOSTED_ORIGIN" in https://*) ;; *) echo "::error::hosted origin must use HTTPS"; exit 1;; esac
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --requirement requirements.lock
+          cd web && npm ci
+
+      - name: Fetch hosted encrypted snapshot
+        run: |
+          set -euo pipefail
+          origin="${JOBSCOPE_HOSTED_ORIGIN%/}"
+          response="$RUNNER_TEMP/hosted-snapshot-response.json"
+          encrypted="$RUNNER_TEMP/site.enc.json"
+          curl --silent --show-error --fail \
+            --connect-timeout 10 --max-time 120 \
+            --header "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            --header "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            --header "X-Jobscope-Automation: $JOBSCOPE_AUTOMATION_TOKEN" \
+            --header "Origin: $origin" \
+            "$origin/api/automation/snapshot" > "$response"
+          python - "$response" "$encrypted" <<'PY'
+          import json, sys
+          source, destination = sys.argv[1:]
+          value = json.load(open(source, encoding="utf-8"))
+          encrypted = value.get("encrypted")
+          if not value.get("ok") or not isinstance(encrypted, dict):
+              raise SystemExit("hosted encrypted snapshot response is invalid")
+          if encrypted.get("v") != 1 or encrypted.get("kdf") != "PBKDF2-SHA256":
+              raise SystemExit("hosted encrypted snapshot envelope is invalid")
+          if int(encrypted.get("iter") or 0) < 210000:
+              raise SystemExit("hosted encrypted snapshot iteration count is invalid")
+          if any(not isinstance(encrypted.get(field), str) or not encrypted[field] for field in ("salt", "iv", "ct")):
+              raise SystemExit("hosted encrypted snapshot is incomplete")
+          with open(destination, "w", encoding="utf-8") as handle:
+              json.dump(encrypted, handle, ensure_ascii=True, separators=(",", ":"))
+          summary = value.get("summary") or {}
+          print(f"hosted encrypted snapshot fetched: roles={int(summary.get('roles') or 0)} applications={int(summary.get('applications') or 0)}")
+          PY
+          rm -f "$response"
+          echo "JOBSCOPE_PUBLISH_ENCRYPTED_JSON=$encrypted" >> "$GITHUB_ENV"
+          echo "VITE_JOBSCOPE_PRIVATE_ORIGIN=$origin" >> "$GITHUB_ENV"
+
+      - name: Configure authenticated Pages push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Build, verify, and publish one encrypted artifact
+        env:
+          PYTHONPATH: "."
+          JOBSCOPE_PUBLISH_FORCE: "1"
+        run: bash scripts/publish.sh --encrypted --force

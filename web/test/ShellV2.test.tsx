@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ShellV2 } from '@/app/ShellV2'
 import { searchSchema } from '@/lib/urlState'
@@ -25,6 +25,7 @@ describe('ShellV2', () => {
     outreachApi.localServeToken.mockResolvedValue(null)
     outreachApi.applicationUpdate.mockResolvedValue({ ok: true })
   })
+  afterEach(() => vi.unstubAllEnvs())
   it('closes the current reader with Escape', () => {
     const job = jobRow({ id: 'selected', title: 'Security Engineer' })
     const onStateChange = vi.fn()
@@ -233,6 +234,7 @@ describe('ShellV2', () => {
   })
 
   it('shows read-only Outreach from the encrypted snapshot without a serve token', () => {
+    vi.stubEnv('VITE_JOBSCOPE_PRIVATE_ORIGIN', 'https://jobs.example.com/')
     render(
       <ShellV2
         data={dashboard({
@@ -264,7 +266,7 @@ describe('ShellV2', () => {
     expect(screen.getByText('Pages is view-only')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Open private workspace/ })).toHaveAttribute(
       'href',
-      'http://127.0.0.1:8799/#/?view=campaigns&campaign=campaign%3Aone',
+      'https://jobs.example.com/#/?view=campaigns&campaign=campaign%3Aone',
     )
     expect(campaignApi.listEngagements).not.toHaveBeenCalled()
   })

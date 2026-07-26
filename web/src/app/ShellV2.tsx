@@ -71,7 +71,10 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
     () => serveToken ? engagements : workingData.outreach_snapshot.engagements,
     [serveToken, engagements, workingData.outreach_snapshot.engagements],
   )
+  const hostedSession = mode === 'local' && import.meta.env.VITE_JOBSCOPE_HOSTED === '1'
   const snapshotLock = mode === 'snapshot' ? onLock : undefined
+  const sessionAction = snapshotLock || (hostedSession ? onLock : undefined)
+  const sessionActionLabel = hostedSession ? 'Sign out' : 'Lock'
   const mobileReader = useMediaQuery('(max-width: 1399px)')
   const view = activeView(state)
   const analyticsMode: AnalyticsMode = state.tab === 'outreach' ? 'outreach' : 'applications'
@@ -245,7 +248,8 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
         onOpenCommand={() => setCommandOpen(true)}
         onRefresh={refresh}
         onToggleTheme={toggleTheme}
-        onLock={snapshotLock}
+        onLock={sessionAction}
+        lockLabel={sessionActionLabel}
         pendingChanges={pendingChanges}
         onSyncChanges={() => void syncMonitoringQueue()}
         campaignsAvailable={outreachAvailable}
@@ -371,7 +375,8 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
         onOpenJob={open}
         onRefresh={refresh}
         onToggleTheme={toggleTheme}
-        onLock={snapshotLock}
+        onLock={sessionAction}
+        lockLabel={hostedSession ? 'Sign out' : 'Lock dashboard'}
       />
 
       <JobDrawer

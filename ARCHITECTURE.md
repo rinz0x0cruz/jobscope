@@ -200,10 +200,10 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [render.py](jobscope/deliver/render.py) | — | Encrypted dashboard contract: jobs, applications, monitor summaries, reviews, profile, and outreach; public mode emits an empty shell | companies, store | `build_data()`, `emit_json()` |
+| [render.py](jobscope/deliver/render.py) | — | Encrypted dashboard contract: jobs, applications, monitor summaries, reviews, profile, and outreach; public mode emits an empty shell | companies, store | `build_data()`, `empty_public_data()`, `write_public_shell()`, `emit_json()` |
 | [pdf.py](jobscope/deliver/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
 | [email.py](jobscope/deliver/email.py) | — | Optional SMTP delivery with stable Message-ID, RFC reply headers, and explicit pre-send vs unknown-outcome errors | config | `send()`, `EmailDeliveryError` |
-| [serve.py](jobscope/deliver/serve.py) | — | Live control plane: loopback-only by default; explicit hosted mode requires an HTTPS origin and validated Cloudflare Access header behind a private Tunnel. Guarded dashboard/profile/mutation/outreach APIs include `/api/engagements`, a read-only allowlisted projection that never enters Pages | render, store, feature services (lazy) | `run()`, `perform_refresh()` |
+| [serve.py](jobscope/deliver/serve.py) | — | Live control plane: loopback-only by default; hosted mode validates Cloudflare Access JWT signature/issuer/audience and exact Origin. Durable run-correlated refresh state and fixed-purpose secret-gated automation routes support hosted refresh, one paced tick, and server-encrypted snapshot publication | access, render, site_crypto, store, feature services (lazy) | `run()`, `perform_refresh()` |
 | [exporter.py](jobscope/deliver/exporter.py) | 22 | Export ranked jobs to JSON/CSV | — | `run()` |
 
 Plus [schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) — the JSON-Schema

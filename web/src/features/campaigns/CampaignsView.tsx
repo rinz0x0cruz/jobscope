@@ -42,6 +42,19 @@ export interface CampaignsViewProps {
   onOpenApplications: () => void
 }
 
+function privateWorkspaceOrigin(): string {
+  const fallback = 'http://127.0.0.1:8799'
+  try {
+    const value = new URL(import.meta.env.VITE_JOBSCOPE_PRIVATE_ORIGIN || fallback)
+    const loopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(value.hostname.toLowerCase())
+    if ((!loopback && value.protocol !== 'https:') || value.username || value.password) return fallback
+    if ((value.pathname && value.pathname !== '/') || value.search || value.hash) return fallback
+    return value.origin
+  } catch {
+    return fallback
+  }
+}
+
 export function CampaignsView({ token, selectedId, onSelect, onOpenApplications }: CampaignsViewProps) {
   const [campaigns, setCampaigns] = useState<CampaignSummary[]>([])
   const [detail, setDetail] = useState<CampaignDetailResult | null>(null)
@@ -60,6 +73,9 @@ export function CampaignsView({ token, selectedId, onSelect, onOpenApplications 
   const acceptCampaigns = useEffectEvent((values: CampaignSummary[]) => {
     setCampaigns(values)
     if (!selectedId && values[0]) onSelect(values[0].id)
+    else if (selectedId && !values.some((campaign) => campaign.id === selectedId)) {
+      onSelect(values[0]?.id)
+    }
   })
 
   useEffect(() => {
@@ -818,8 +834,9 @@ function messageForCode(code?: string): string {
     daily_limit: 'The daily campaign limit has been reached',
     minimum_spacing: 'The minimum spacing between emails has not elapsed',
     sending_disabled: 'Enable outreach and SMTP before sending',
-    send_in_progress: 'This approved email is already being sent',
-    delivery_unknown: 'Delivery outcome is unknown; check Sent mail before resolving it',
+    operation_busy: 'Another refresh or outreach operation is running',
+    send_in_progress: 'Another campaign email is already being sent',
+    delivery_unknown: 'A delivery outcome is unknown; check Sent mail before sending anything else',
     resume_changed: 'The approved résumé changed; review and approve this draft again',
     company_cooldown: 'This company is still in its outreach cooldown',
     nothing_due: 'No approved email is due',
@@ -996,7 +1013,7 @@ export function CampaignsSnapshotView({
   )
   const sent = snapshot.campaigns.reduce((sum, campaign) => sum + campaign.delivered_count, 0)
   const replies = snapshot.campaigns.reduce((sum, campaign) => sum + campaign.response_count, 0)
-  const privateUrl = `http://127.0.0.1:8799/#/?view=campaigns${
+  const privateUrl = `${privateWorkspaceOrigin()}/#/?view=campaigns${
     selected ? `&campaign=${encodeURIComponent(selected.id)}` : ''
   }`
   return (

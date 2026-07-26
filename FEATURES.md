@@ -89,10 +89,12 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   the recipient is locked to the original address; queue construction never approves or sends.
   Cold campaigns show factor evidence and contact source/confidence. Both expose one editable approval at a time.
   Approval hashes the exact recipient/subject/body/attachment; edits clear it. There is no approve-all action.
-  Static Pages hides Outreach navigation and a direct URL shows only the private-workspace requirement.
+  Static Pages exposes an allowlisted read-only encrypted snapshot and can deep-link the selected campaign
+  to a configured Access-protected private origin; it never receives mutation or SMTP controls.
 - **Paced local scheduler:** `register-outreach-task.ps1` calls `campaign tick` hourly under the interactive
   user. Each invocation incrementally checks inbox replies, then can send one message maximum; default limits
-  remain 2/day, 4 hours apart, 10:00–17:00 Asia/Kolkata. Configuration/keychain readiness is checked first.
+  remain 2/day, 4 hours apart, 10:00–17:00 Asia/Kolkata. A global SQLite claim serializes separate processes,
+  and unresolved outcomes halt every later send. Configuration/keychain/attachment readiness is checked first.
 - **Review workspace:** ranked monitored/discovery/saved/dismissed buckets, source-aware actions, preserved
   list position, desktop reader/pipeline split, and a full-screen mobile role reader.
 - **Market intelligence on cards:** structured posting pay is compared with compatible public compensation

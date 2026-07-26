@@ -347,7 +347,7 @@ def delete_draft_campaign(store, campaign_id: str) -> dict:
     }
 
 
-def sending_readiness(cfg: dict) -> dict:
+def sending_readiness(cfg: dict, store=None) -> dict:
     """Check unattended SMTP prerequisites without exposing secret values."""
     from jobscope.core.config import smtp_password
 
@@ -365,6 +365,28 @@ def sending_readiness(cfg: dict) -> dict:
         errors.append(
             f"no keychain/environment value for {email_cfg.get('password_env') or 'JOBSCOPE_SMTP_PASSWORD'}"
         )
+    if store is not None:
+        blocker = store.outreach_campaign_delivery_blocker()
+        if blocker:
+            errors.append(
+                "an outbound delivery is unresolved"
+                if blocker == "delivery_unknown"
+                else "an outbound delivery is in progress"
+            )
+        invalid_attachments = 0
+        for campaign in store.outreach_campaigns():
+            for target in store.outreach_campaign_targets(campaign["id"]):
+                if target.get("state") != "approved":
+                    continue
+                path = str(target.get("resume_path") or "")
+                expected = str(target.get("resume_sha256") or "")
+                if (not path or not expected or not os.path.isfile(path)
+                        or _file_sha256(path) != expected):
+                    invalid_attachments += 1
+        if invalid_attachments:
+            errors.append(
+                f"{invalid_attachments} approved target attachment(s) are missing or changed"
+            )
     return {"ok": not errors, "errors": errors}
 
 
@@ -1028,6 +1050,15 @@ def _outbound_message_id(cfg: dict, target: dict) -> str:
 def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = None,
                 ignore_schedule: bool = False, allow_inactive: bool = False) -> dict:
     current = _utc(now)
+    store.mark_stale_outreach_campaign_sends_unknown(
+        _iso(current - _STALE_SEND_CLAIM),
+    )
+    blocker = store.outreach_campaign_delivery_blocker()
+    if blocker:
+        return {
+            "ok": False, "sent": False,
+            "code": "delivery_unknown" if blocker == "delivery_unknown" else "send_in_progress",
+        }
     target = store.get_outreach_campaign_target(target_id)
     if target is None:
         raise KeyError(target_id)
@@ -1126,6 +1157,12 @@ def send_next_approved(cfg: dict, store, *, campaign_id: str = "",
     store.mark_stale_outreach_campaign_sends_unknown(
         _iso(current - _STALE_SEND_CLAIM),
     )
+    blocker = store.outreach_campaign_delivery_blocker()
+    if blocker:
+        return {
+            "ok": False, "sent": False,
+            "code": "delivery_unknown" if blocker == "delivery_unknown" else "send_in_progress",
+        }
     due = store.due_outreach_campaign_targets(_iso(current), campaign_id=campaign_id)
     if not due:
         return {"ok": True, "sent": False, "code": "nothing_due"}

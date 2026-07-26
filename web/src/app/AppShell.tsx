@@ -27,6 +27,7 @@ export interface AppShellProps {
   onRefresh?: () => void
   onToggleTheme?: () => void
   onLock?: () => void
+  lockLabel?: string
   pendingChanges?: number
   onSyncChanges?: () => void
   campaignsAvailable?: boolean
@@ -55,12 +56,14 @@ function DesktopSidebar({
   onNavigate,
   onToggleTheme,
   onLock,
+  lockLabel,
   campaignsAvailable,
 }: {
   active: ViewValue
   onNavigate: (view: ViewValue) => void
   onToggleTheme?: () => void
   onLock?: () => void
+  lockLabel: string
   campaignsAvailable: boolean
 }) {
   return (
@@ -126,7 +129,7 @@ function DesktopSidebar({
             onClick={onLock}
             className="flex h-10 items-center justify-center gap-2 rounded-md text-[11px] font-medium text-ink-2 hover:bg-inset hover:text-ink"
           >
-            <Lock size={15} aria-hidden="true" /> Lock
+            <Lock size={15} aria-hidden="true" /> {lockLabel}
           </button>}
         </div>
       </div>
@@ -198,6 +201,7 @@ export function AppShell({
   onRefresh,
   onToggleTheme,
   onLock,
+  lockLabel = 'Lock',
   pendingChanges = 0,
   onSyncChanges,
   campaignsAvailable = false,
@@ -210,6 +214,7 @@ export function AppShell({
         onNavigate={onNavigate}
         onToggleTheme={onToggleTheme}
         onLock={onLock}
+        lockLabel={lockLabel}
         campaignsAvailable={campaignsAvailable}
       />
 
@@ -278,7 +283,7 @@ export function AppShell({
             <IconButton label="Toggle theme" onClick={onToggleTheme} className="inline-flex lg:hidden">
               <SunMedium size={17} aria-hidden="true" />
             </IconButton>
-            {onLock && <IconButton label="Lock" onClick={onLock} className="lg:hidden">
+            {onLock && <IconButton label={lockLabel} onClick={onLock} className="lg:hidden">
               <Lock size={17} aria-hidden="true" />
             </IconButton>}
           </div>

@@ -153,6 +153,7 @@ export async function pullLatestData(): Promise<void> {
 async function updateAfterLocalRefresh(
   token: string,
   onData: (data: DashboardData) => void,
+  runId = '',
 ): Promise<void> {
   const deadline = Date.now() + 15 * 60 * 1000
   while (Date.now() < deadline) {
@@ -161,7 +162,15 @@ async function updateAfterLocalRefresh(
       cache: 'no-store',
     })
     if (!response.ok) throw new Error(`Refresh status HTTP ${response.status}`)
-    const status = await response.json() as { state?: string; message?: string; stages?: unknown }
+    const status = await response.json() as {
+      state?: string
+      message?: string
+      run_id?: string
+      stages?: unknown
+    }
+    if (runId && status.run_id !== runId) {
+      throw new Error('Refresh run changed before completion')
+    }
     if (status.state === 'done' || status.state === 'skipped') {
       onData(await localDashboard(token, true))
       if (status.state === 'skipped') {
@@ -212,12 +221,12 @@ export async function scanNewMail(onLocalData?: (data: DashboardData) => void): 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force: true, full_scan: false }),
       })
-      const payload = await response.json() as { state?: string; message?: string }
+      const payload = await response.json() as { state?: string; message?: string; run_id?: string }
       toast.dismiss(id)
       if (response.ok && ['started', 'busy'].includes(payload.state || '')) {
         toast.success(payload.state === 'busy' ? 'Gmail scan already running' : 'Gmail scan started')
         if (onLocalData) {
-          void updateAfterLocalRefresh(localToken, onLocalData).catch((error) => {
+          void updateAfterLocalRefresh(localToken, onLocalData, payload.run_id).catch((error) => {
             toast.error(error instanceof Error ? error.message : 'Could not reload local data')
           })
         }

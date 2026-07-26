@@ -41,16 +41,23 @@ Required topology:
    service, mirror `railway.json`'s `/healthz`, 30-second timeout, and bounded on-failure restart settings.
 2. Put sanitized configuration at `/data/config.yaml` with `output.db_path: /data/jobscope.db`.
 3. Set only secret values in Railway variables. Keep `ai.enabled`, `email.enabled`, and
-   `apply.outreach.enabled` false for the canary.
+   `apply.outreach.enabled` false for the canary. Generate a distinct 32+ character
+   `JOBSCOPE_AUTOMATION_TOKEN`; give the same value to the hosted service and GitHub Actions. Set
+   `JOBSCOPE_CF_ACCESS_TEAM_DOMAIN` to `https://<team>.cloudflareaccess.com`, set
+   `JOBSCOPE_CF_ACCESS_AUD` to the Access application's Audience tag, and store
+   `JOBSCOPE_APPS_PASSPHRASE` only in the hosted secret manager.
 4. Route a Cloudflare Tunnel hostname to the private service on port 8799. Enable **Protect with
    Access** so `cloudflared` validates the Access JWT and forwards `Cf-Access-Jwt-Assertion`.
 5. Set `JOBSCOPE_PUBLIC_ORIGIN` to that exact HTTPS origin. Access must deny by default and allow
-   only the intended identity. `/healthz` is the only route that does not require the Access header.
+   only the intended identity. Create a separate service identity restricted to
+   `/api/automation/*`; store its client ID/secret only in GitHub Actions. `/healthz` is the only
+   application route that does not require the Access header.
 
 Do not migrate real data yet. Start the immutable image with an empty volume, verify unauthenticated
 requests are denied, sign in through Access, make a temporary profile change, restart the same image,
-and prove the change and `PRAGMA quick_check` survive. The CI `container` job performs the equivalent
-image/volume/header smoke on Linux.
+and prove the change and `PRAGMA quick_check` survive. Confirm **Sign out** clears the live workspace,
+`sw.js` unregisters itself instead of precaching, and the security headers deny framing. The CI
+`container` job performs the equivalent image/volume/header/automation smoke on Linux.
 
 Cut over with one writer:
 
@@ -59,19 +66,32 @@ Cut over with one writer:
 2. Stop the empty canary. Back up the local full database and profiles, run
    `python -m jobscope.core.snapshot data/jobscope.db`, and record file hashes and table counts.
 3. Upload the validated database, `profiles/`, and sanitized config to `/data`; retain the local copy
-   untouched. Start the same tested image, then compare jobs, applications, mail events, reviews,
-   profiles, campaigns, and SQLite integrity.
+   untouched. Stored résumé source paths may be Windows-absolute: re-upload every named résumé through
+   hosted Settings so it lands under `/data/resumes`, then review and re-approve affected drafts. Run
+   `campaign ready`; it must report no missing/changed approved attachment. Start the same tested image,
+   then compare jobs, applications, mail events, reviews, profiles, campaigns, and SQLite integrity.
 4. Add Gmail credentials only after those checks pass. Run one manual refresh with SMTP/outreach still
    disabled and confirm the retained stage timings. Do not enable a hosted schedule while the old
    workflow can still write its independent database.
-5. After the provider environment and Access service credentials exist, replace the old cloud writer
-   with a manual, approval-gated trigger that calls `/api/token`, POSTs `/api/refresh` with the exact
-   Origin, and polls `/api/status`. Add the three-hour schedule only after the manual trigger passes.
+5. Configure repository variable `JOBSCOPE_HOSTED_ORIGIN` plus secrets
+   `JOBSCOPE_AUTOMATION_TOKEN`, `JOBSCOPE_CF_ACCESS_CLIENT_ID`, and
+   `JOBSCOPE_CF_ACCESS_CLIENT_SECRET`. Run `hosted-ops.yml` manually with `refresh`; it calls only
+   `/api/automation/refresh` and polls the exact durable run ID. Run `hosted-publish.yml` manually;
+   it fetches only the hosted-encrypted snapshot, then reuses the shared empty-shell builder and
+   artifact verifier. The workflow never receives the plaintext payload or passphrase. Add schedules
+   only after both manual workflows and the restore drill pass.
 
 Before declaring cutover complete, restore a Railway volume backup into a temporary service, run
 `PRAGMA quick_check`, and compare the recorded counts. Rollback disables hosted triggers, stops the
 hosted service, restores the untouched local backup, and re-enables the recorded previous workflow.
 Do not delete old snapshots or secrets until both scheduled refresh and restore evidence pass.
+
+The hosted workflows are intentionally `workflow_dispatch`-only. `hosted-ops.yml` has read-only
+repository permission and can invoke either refresh or one reply-check/send tick. `hosted-publish.yml`
+alone has `contents: write` so it can push one verified encrypted artifact to `gh-pages`. Both share
+one concurrency group. Never grant the automation service identity access to `/api/campaigns/action`.
+Any in-progress or unknown SMTP outcome halts all subsequent delivery across campaigns and processes;
+resolve it in the private workspace before running another tick.
 
 ## Cloud Refresh Invariants
 

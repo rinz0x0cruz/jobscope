@@ -110,7 +110,16 @@ $OldEmitDir = $env:JOBSCOPE_EMIT_DIR
 $OldDashboardJson = $env:JOBSCOPE_DASHBOARD_JSON
 $OldEncryptedJson = $env:JOBSCOPE_ENCRYPTED_JSON
 $OldBuildOutDir = $env:JOBSCOPE_BUILD_OUT_DIR
+$ExternalEncryptedJson = $env:JOBSCOPE_PUBLISH_ENCRYPTED_JSON
 $StageDir = $null
+
+if (-not [string]::IsNullOrWhiteSpace($ExternalEncryptedJson)) {
+    if (-not (Test-Path -LiteralPath $ExternalEncryptedJson -PathType Leaf)) {
+        throw "hosted encrypted payload not found: $ExternalEncryptedJson"
+    }
+    if ($Refresh) { throw "-Refresh cannot be combined with JOBSCOPE_PUBLISH_ENCRYPTED_JSON" }
+    $ExternalEncryptedJson = (Resolve-Path -LiteralPath $ExternalEncryptedJson).Path
+}
 
 Enter-PublishLock $LockDir
 try {
@@ -137,11 +146,17 @@ if ($Refresh) {
 }
 
 # 1. Emit the locked (empty) public payload and bake it into the web app.
-Write-Host "==> Emitting the locked (empty) public dashboard JSON (jobscope dashboard --emit-json --public)"
-& $Py -m jobscope dashboard --emit-json --public
-if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json --public failed (exit $LASTEXITCODE)" }
-
 $PublicJson = Join-Path $StageDir "data\dashboard.public.json"
+if ($ExternalEncryptedJson) {
+    Write-Host "==> Building the locked public shell for the hosted encrypted payload"
+    & $Py -c "from jobscope.deliver.render import write_public_shell; import sys; write_public_shell(sys.argv[1])" $PublicJson
+    if ($LASTEXITCODE -ne 0) { throw "building the public shell failed (exit $LASTEXITCODE)" }
+}
+else {
+    Write-Host "==> Emitting the locked (empty) public dashboard JSON (jobscope dashboard --emit-json --public)"
+    & $Py -m jobscope dashboard --emit-json --public
+    if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json --public failed (exit $LASTEXITCODE)" }
+}
 if (-not (Test-Path $PublicJson)) { throw "expected payload not found: $PublicJson" }
 
 # 1b. Optional: bake an end-to-end encrypted applications blob into the SPA so the
@@ -152,38 +167,38 @@ if (-not (Test-Path $PublicJson)) { throw "expected payload not found: $PublicJs
 #     only the encrypted blob is published -- so it is safe to host publicly.
 $EncMarker = Join-Path $StageDir "data\applications.encrypted.json"
 $SiteBlob  = Join-Path $StageDir "data\site.enc.json"
-$FullJson = Join-Path $StageDir "data\dashboard.json"
+$FullJson = ""
 if ($Encrypted) {
-    Write-Host "==> Emitting un-redacted data + encrypting the full dashboard for the SPA"
-    & $Py -m jobscope dashboard --emit-json   # -> data\dashboard.json (has applications; gitignored, local only)
-    if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json failed (exit $LASTEXITCODE)" }
-    if (-not (Test-Path $FullJson)) { throw "expected payload not found: $FullJson" }
+    if ($ExternalEncryptedJson) {
+        Write-Host "==> Using the hosted encrypted dashboard payload"
+        Copy-Item -LiteralPath $ExternalEncryptedJson -Destination $SiteBlob
+    }
+    else {
+        $FullJson = Join-Path $StageDir "data\dashboard.json"
+        Write-Host "==> Emitting un-redacted data + encrypting the full dashboard for the SPA"
+        & $Py -m jobscope dashboard --emit-json   # -> data\dashboard.json (has applications; gitignored, local only)
+        if ($LASTEXITCODE -ne 0) { throw "jobscope dashboard --emit-json failed (exit $LASTEXITCODE)" }
+        if (-not (Test-Path $FullJson)) { throw "expected payload not found: $FullJson" }
 
-    # Passphrase resolution: env var (unattended) -> OS keychain (jobscope secrets
-    # set JOBSCOPE_APPS_PASSPHRASE) -> hidden interactive prompt. Never echoed,
-    # logged, or committed. The keychain path lets a scheduled task publish the
-    # encrypted apps with no prompt (see scripts/register-publish-secure-task.ps1).
-    $plain = $env:JOBSCOPE_APPS_PASSPHRASE
-    $bstr = [IntPtr]::Zero
-    if ([string]::IsNullOrEmpty($plain)) {
-        $plain = (& $Uv -q run --no-project --with keyring python -c "import keyring,sys;v=keyring.get_password('jobscope','JOBSCOPE_APPS_PASSPHRASE');sys.stdout.write(v or '')" 2>$null)
-    }
-    if ([string]::IsNullOrEmpty($plain)) {
-        $sec = Read-Host "Passphrase to encrypt your applications (8+ chars)" -AsSecureString
-        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-        $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-    }
-    try {
-        # "-" skips the retired standalone page; write the heavy ciphertext blob
-        # that the SPA fetches lazily on unlock.
-        # 2>&1 so Node's status line doesn't trip PS 5.1's stop-on-native-stderr; the
-        # real exit code is still checked below.
-        $plain | node (Join-Path $RepoRoot "scripts\build-secure-apps.mjs") $FullJson (Join-Path $RepoRoot "scripts\apps-template.html") "-" $SiteBlob 2>&1 | ForEach-Object { Write-Host "  $_" }
-        if ($LASTEXITCODE -ne 0) { throw "encrypting the dashboard blob failed (exit $LASTEXITCODE)" }
-    }
-    finally {
-        if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-        Remove-Variable plain -ErrorAction SilentlyContinue
+        # Passphrase resolution: env var (unattended) -> OS keychain -> hidden prompt.
+        $plain = $env:JOBSCOPE_APPS_PASSPHRASE
+        $bstr = [IntPtr]::Zero
+        if ([string]::IsNullOrEmpty($plain)) {
+            $plain = (& $Uv -q run --no-project --with keyring python -c "import keyring,sys;v=keyring.get_password('jobscope','JOBSCOPE_APPS_PASSPHRASE');sys.stdout.write(v or '')" 2>$null)
+        }
+        if ([string]::IsNullOrEmpty($plain)) {
+            $sec = Read-Host "Passphrase to encrypt your applications (8+ chars)" -AsSecureString
+            $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+            $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        }
+        try {
+            $plain | node (Join-Path $RepoRoot "scripts\build-secure-apps.mjs") $FullJson (Join-Path $RepoRoot "scripts\apps-template.html") "-" $SiteBlob 2>&1 | ForEach-Object { Write-Host "  $_" }
+            if ($LASTEXITCODE -ne 0) { throw "encrypting the dashboard blob failed (exit $LASTEXITCODE)" }
+        }
+        finally {
+            if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+            Remove-Variable plain -ErrorAction SilentlyContinue
+        }
     }
     # Bake only a tiny pointer to the lazily-fetched blob (keeps the public bundle lean).
     Set-Content -Path $EncMarker -Value '{"v":1,"url":"site.enc.json"}' -Encoding utf8 -NoNewline
@@ -225,13 +240,16 @@ if ($Encrypted -and (Test-Path $SiteBlob)) {
 $SourceCommit = (git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw "git rev-parse HEAD failed (exit $LASTEXITCODE)" }
 Write-Host "==> Validating isolated publication artifact"
-& $Py -m jobscope.deliver.publish_artifact `
-    --public $PublicJson `
-    --full $FullJson `
-    --encrypted $SiteBlob `
-    --marker $EncMarker `
-    --dist $Dist `
-    --source-commit $SourceCommit
+$VerifyArgs = @(
+    "-m", "jobscope.deliver.publish_artifact",
+    "--public", $PublicJson,
+    "--encrypted", $SiteBlob,
+    "--marker", $EncMarker,
+    "--dist", $Dist,
+    "--source-commit", $SourceCommit
+)
+if ($FullJson) { $VerifyArgs += @("--full", $FullJson) }
+& $Py @VerifyArgs
 if ($LASTEXITCODE -ne 0) { throw "publication artifact validation failed (exit $LASTEXITCODE)" }
 
 if ($VerifyOnly) {

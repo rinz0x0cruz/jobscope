@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from jobscope.deliver.site_crypto import encrypt_dashboard
+
 import pytest
 
 
@@ -105,3 +107,36 @@ def test_node_dashboard_envelope_matches_browser_contract(tmp_path):
     assert envelope["kdf"] == "PBKDF2-SHA256"
     assert envelope["iter"] == 210000
     assert all(envelope[key] for key in ("salt", "iv", "ct"))
+
+
+def test_python_dashboard_envelope_decrypts_with_node_browser_contract(tmp_path):
+    payload = {
+        "generated": "2026-07-26T00:00:00Z",
+        "rows": [{"id": "job-1", "title": "Security Engineer"}],
+        "applications": [],
+    }
+    envelope = encrypt_dashboard(
+        payload,
+        "browser-compatible-passphrase",
+        salt=b"0123456789abcdef",
+        iv=b"0123456789ab",
+    )
+    encrypted = tmp_path / "site.enc.json"
+    encrypted.write_text(json.dumps(envelope), encoding="utf-8")
+    script = """
+const fs=require('node:fs'),crypto=require('node:crypto');
+const b=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));
+const salt=Buffer.from(b.salt,'base64'),iv=Buffer.from(b.iv,'base64'),all=Buffer.from(b.ct,'base64');
+const key=crypto.pbkdf2Sync(Buffer.from(process.argv[2],'utf8'),salt,b.iter,32,'sha256');
+const decipher=crypto.createDecipheriv('aes-256-gcm',key,iv);
+decipher.setAuthTag(all.subarray(all.length-16));
+process.stdout.write(Buffer.concat([decipher.update(all.subarray(0,-16)),decipher.final()]).toString('utf8'));
+"""
+
+    result = subprocess.run(
+        [NODE, "-e", script, str(encrypted), "browser-compatible-passphrase"],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == payload

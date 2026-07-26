@@ -32,11 +32,22 @@ Every supported request except the non-sensitive `/healthz` probe must carry
 `Cf-Access-Jwt-Assertion`; unsafe API calls must also have that exact Origin and the existing
 per-process Jobscope token.
 
-The header check assumes `cloudflared` has **Protect with Access** enabled and validates the JWT
-before proxying. The Railway service must have no generated/public domain, and Cloudflare Access
-must deny by default. A header without those network controls is forgeable and is not authentication.
+The application validates every Access JWT against Cloudflare's rotating remote JWKS using exact
+RS256, issuer, audience, expiry, and issued-at checks. Hosted startup fails without the exact
+`JOBSCOPE_CF_ACCESS_TEAM_DOMAIN` and application `JOBSCOPE_CF_ACCESS_AUD`. Keep **Protect with
+Access** enabled as a second gate. The Railway service must have no generated/public domain, and
+Cloudflare Access must deny by default.
 Run one application replica because SQLite and refresh state remain single-writer. Keep AI, SMTP,
 and campaign ticking disabled during the empty canary and initial data cutover.
+
+Hosted automation is optional and fails closed without a 32+ character
+`JOBSCOPE_AUTOMATION_TOKEN`, the exact public Origin, and the validated Access header. Give its
+Cloudflare service identity access only to `/api/automation/*`; those fixed routes can refresh,
+report status, run one paced tick, or return the already-encrypted Pages snapshot. Encryption uses
+the hosted `JOBSCOPE_APPS_PASSPHRASE`; GitHub Actions receives neither plaintext nor passphrase. They cannot
+accept campaign IDs, draft content, recipients, or generic campaign actions. Hosted builds deploy
+a self-destroying service worker, detect Access HTML/redirect responses, clear live state, and offer
+explicit Access logout. API and HTML responses remain `no-store` and deny framing.
 
 ## Secrets
 
@@ -127,7 +138,11 @@ still requires its own explicit approval and immutable content hash:
   every result must be valid, non-automated, non-ATS, and on that confirmed domain. Confidence/source is shown,
   role inboxes are not auto-selected for campaigns, and Jobscope never guesses an address.
 - **Discovery is best-effort + locally controlled.** Employer-page discovery and optional finders run from
-  your machine; disable site discovery with `apply.outreach.discover: false` and omit finder keys to disable providers.
+  the active private workspace; disable site discovery with `apply.outreach.discover: false` and omit finder
+  keys to disable providers. Shared HTTP GETs reject credentials, non-HTTP schemes, private/loopback/link-local/
+  reserved IPv4 and IPv6 destinations, mixed public/private DNS answers, and redirects to those destinations.
+  Each request connects to the vetted IP directly while preserving the original Host, TLS SNI, and certificate
+  hostname, so DNS cannot change between validation and connection.
 - **Deduped + cooldown + opt-out.** One outreach per company (recorded on the application), a
   configurable `cooldown_days`, `do_not_contact`, application-history exclusion, and local opt-out suppressions
   are all rechecked before a campaign send.
@@ -145,7 +160,9 @@ still requires its own explicit approval and immutable content hash:
   `sendmail` starts, an exception becomes `delivery_unknown`, never an automatic retry. The user must inspect
   Sent mail and explicitly resolve the attempt. A process that dies after atomically claiming a send leaves
   `sending`; after 15 minutes the next scheduler tick moves that stale claim to `delivery_unknown` for the same
-  manual resolution, never an automatic retry. Error records contain only safe exception type/code metadata.
+  manual resolution, never an automatic retry. One atomic SQLite claim is global across campaigns and processes;
+  any `sending` or `delivery_unknown` target blocks every later delivery until resolved. Error records contain
+  only safe exception type/code metadata.
 - **Generated documents isolate untrusted content.** Job, company, résumé, news, and optional model text is
   HTML-escaped before Markdown rendering. The PDF browser disables JavaScript, aborts subresource requests,
   and receives a deny-by-default CSP, so a listing cannot execute script or fetch remote pixels beside résumé PII.
@@ -169,6 +186,8 @@ still requires its own explicit approval and immutable content hash:
 4. Keep `data/` and `.env` owner-only; don't sync them to a shared/cloud drive unencrypted.
 5. Never commit `.env`, `config.yaml`, or `data/` (all gitignored); let the pre-commit/CI secret scan run.
 6. Run `jobscope doctor` before enabling schedules and after rotating keys or changing config.
+7. Before hosted scheduling, run `jobscope campaign ready`; it rejects unresolved delivery and approved
+  targets whose résumé attachment is missing or changed after migration.
 
 ## Deferred (not implemented)
 

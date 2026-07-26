@@ -22,6 +22,7 @@ REFRESH=""
 NOSCAN=""
 ENCRYPTED=""
 VERIFY_ONLY=""
+EXTERNAL_ENCRYPTED_JSON="${JOBSCOPE_PUBLISH_ENCRYPTED_JSON:-}"
 POSITIONAL=()
 for arg in "$@"; do
     case "$arg" in
@@ -50,6 +51,12 @@ else
 fi
 [ -n "$PY" ] || { echo "error: Python not found (run setup first)" >&2; exit 1; }
 export PYTHONPATH=.
+
+if [ -n "$EXTERNAL_ENCRYPTED_JSON" ]; then
+    [ -f "$EXTERNAL_ENCRYPTED_JSON" ] || { echo "error: hosted encrypted payload not found: $EXTERNAL_ENCRYPTED_JSON" >&2; exit 1; }
+    [ -z "$REFRESH" ] || { echo "error: --refresh cannot be combined with JOBSCOPE_PUBLISH_ENCRYPTED_JSON" >&2; exit 1; }
+    EXTERNAL_ENCRYPTED_JSON="$(cd "$(dirname "$EXTERNAL_ENCRYPTED_JSON")" && pwd)/$(basename "$EXTERNAL_ENCRYPTED_JSON")"
+fi
 
 # Whole-app auth: the public build ships NO data -- only the passphrase-encrypted blob
 # can reveal anything -- so a non-encrypted publish would be a dead, unopenable site.
@@ -114,10 +121,14 @@ if [ -n "${REFRESH:-}" ]; then
 fi
 
 # 1. Emit the locked (empty) public payload and bake it into the web app.
-echo "==> Emitting the locked (empty) public dashboard JSON (jobscope dashboard --emit-json --public)"
-"$PY" -m jobscope dashboard --emit-json --public
-
 PUBLIC_JSON="$STAGE_DIR/data/dashboard.public.json"
+if [ -n "$EXTERNAL_ENCRYPTED_JSON" ]; then
+    echo "==> Building the locked public shell for the hosted encrypted payload"
+    "$PY" -c 'from jobscope.deliver.render import write_public_shell; import sys; write_public_shell(sys.argv[1])' "$PUBLIC_JSON"
+else
+    echo "==> Emitting the locked (empty) public dashboard JSON (jobscope dashboard --emit-json --public)"
+    "$PY" -m jobscope dashboard --emit-json --public
+fi
 [ -f "$PUBLIC_JSON" ] || { echo "expected payload not found: $PUBLIC_JSON" >&2; exit 1; }
 
 # 1b. Optional: encrypt the FULL un-redacted dashboard for the whole-site unlock.
@@ -130,17 +141,22 @@ ENC_MARKER="$STAGE_DIR/data/applications.encrypted.json"
 SITE_BLOB="$STAGE_DIR/data/site.enc.json"
 FULL_JSON=""
 if [ -n "${ENCRYPTED:-}" ]; then
-    echo "==> Emitting un-redacted data + encrypting the full dashboard for the SPA"
-    "$PY" -m jobscope dashboard --emit-json   # -> data/dashboard.json (has applications; gitignored)
     FULL_JSON="$STAGE_DIR/data/dashboard.json"
-    [ -f "$FULL_JSON" ] || { echo "expected payload not found: $FULL_JSON" >&2; exit 1; }
-    PASS="${JOBSCOPE_APPS_PASSPHRASE:-}"
-    if [ -z "$PASS" ]; then
-        read -r -s -p "Passphrase to encrypt your applications (8+ chars): " PASS; echo
+    if [ -n "$EXTERNAL_ENCRYPTED_JSON" ]; then
+        echo "==> Using the hosted encrypted dashboard payload"
+        cp "$EXTERNAL_ENCRYPTED_JSON" "$SITE_BLOB"
+        FULL_JSON=""
+    else
+        echo "==> Emitting un-redacted data + encrypting the full dashboard for the SPA"
+        "$PY" -m jobscope dashboard --emit-json   # -> data/dashboard.json (has applications; gitignored)
+        [ -f "$FULL_JSON" ] || { echo "expected payload not found: $FULL_JSON" >&2; exit 1; }
+        PASS="${JOBSCOPE_APPS_PASSPHRASE:-}"
+        if [ -z "$PASS" ]; then
+            read -r -s -p "Passphrase to encrypt your applications (8+ chars): " PASS; echo
+        fi
+        printf '%s' "$PASS" | node "$REPO_ROOT/scripts/build-secure-apps.mjs" "$FULL_JSON" "$REPO_ROOT/scripts/apps-template.html" "-" "$SITE_BLOB"
+        unset PASS
     fi
-    # "-" skips the retired standalone page; write the heavy ciphertext blob the SPA fetches lazily.
-    printf '%s' "$PASS" | node "$REPO_ROOT/scripts/build-secure-apps.mjs" "$FULL_JSON" "$REPO_ROOT/scripts/apps-template.html" "-" "$SITE_BLOB"
-    unset PASS
     # Bake only a tiny pointer to the lazily-fetched blob (keeps the public bundle lean).
     printf '%s' '{"v":1,"url":"site.enc.json"}' > "$ENC_MARKER"
     echo "==> Encrypted full dashboard -> unlock with the header lock button"
@@ -166,13 +182,17 @@ fi
 
 SOURCE_COMMIT="$(git rev-parse HEAD)"
 echo "==> Validating isolated publication artifact"
-"$PY" -m jobscope.deliver.publish_artifact \
-    --public "$PUBLIC_JSON" \
-    --full "$FULL_JSON" \
-    --encrypted "$SITE_BLOB" \
-    --marker "$ENC_MARKER" \
-    --dist "$DIST" \
+VERIFY_ARGS=(
+    --public "$PUBLIC_JSON"
+    --encrypted "$SITE_BLOB"
+    --marker "$ENC_MARKER"
+    --dist "$DIST"
     --source-commit "$SOURCE_COMMIT"
+)
+if [ -n "$FULL_JSON" ]; then
+    VERIFY_ARGS+=(--full "$FULL_JSON")
+fi
+"$PY" -m jobscope.deliver.publish_artifact "${VERIFY_ARGS[@]}"
 
 if [ -n "${VERIFY_ONLY:-}" ]; then
     echo "==> Artifact verified; --verify-only requested, skipping push."

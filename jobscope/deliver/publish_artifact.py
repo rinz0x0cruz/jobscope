@@ -206,21 +206,21 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def verify_artifact(*, public_path: str | Path, full_path: str | Path,
+def verify_artifact(*, public_path: str | Path, full_path: str | Path | None,
                     encrypted_path: str | Path, marker_path: str | Path,
                     dist_path: str | Path, source_commit: str = "") -> dict[str, Any]:
     public_file = Path(public_path)
-    full_file = Path(full_path)
+    full_file = Path(full_path) if full_path else None
     encrypted_file = Path(encrypted_path)
     marker_file = Path(marker_path)
     dist = Path(dist_path)
 
     public = _load_json(public_file)
-    full = _load_json(full_file)
+    full = _load_json(full_file) if full_file else None
     envelope = _load_json(encrypted_file)
     marker = _load_json(marker_file)
     _validate_public(public)
-    if not isinstance(full, dict):
+    if full is not None and not isinstance(full, dict):
         raise ArtifactValidationError("full dashboard payload is not an object")
     _validate_envelope(envelope)
     if marker != {"v": 1, "url": "site.enc.json"}:
@@ -243,11 +243,12 @@ def verify_artifact(*, public_path: str | Path, full_path: str | Path,
         raise ArtifactValidationError("built assets do not contain the public payload marker")
     if "site.enc.json" not in asset_text:
         raise ArtifactValidationError("built assets do not contain the encrypted payload pointer")
-    for key, value in sorted(_private_markers(full), key=lambda item: len(item[1]), reverse=True):
-        if any(marker in asset_text for marker in _serialized_markers(key, value)):
-            raise ArtifactValidationError(
-                f"private dashboard field leaked into built assets: {key}={value[:80]!r}"
-            )
+    if full is not None:
+        for key, value in sorted(_private_markers(full), key=lambda item: len(item[1]), reverse=True):
+            if any(marker in asset_text for marker in _serialized_markers(key, value)):
+                raise ArtifactValidationError(
+                    f"private dashboard field leaked into built assets: {key}={value[:80]!r}"
+                )
 
     files = {
         path.relative_to(dist).as_posix(): _sha256(path)
@@ -279,7 +280,7 @@ def verify_artifact(*, public_path: str | Path, full_path: str | Path,
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--public", required=True)
-    parser.add_argument("--full", required=True)
+    parser.add_argument("--full", default="")
     parser.add_argument("--encrypted", required=True)
     parser.add_argument("--marker", required=True)
     parser.add_argument("--dist", required=True)
@@ -287,7 +288,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         manifest = verify_artifact(
-            public_path=args.public, full_path=args.full,
+            public_path=args.public, full_path=args.full or None,
             encrypted_path=args.encrypted, marker_path=args.marker,
             dist_path=args.dist, source_commit=args.source_commit,
         )

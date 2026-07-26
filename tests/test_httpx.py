@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 
+import pytest
 import requests
 
 from jobscope.core import httpx
@@ -12,6 +13,69 @@ def _response(status: int, *, data=None, text: str = "", headers=None):
     response.json.return_value = data
     response.text = text
     return response
+
+
+@pytest.mark.parametrize("url", [
+    "file:///etc/passwd",
+    "http://localhost/admin",
+    "http://127.0.0.1/admin",
+    "http://10.0.0.1/admin",
+    "http://169.254.169.254/latest/meta-data",
+    "http://[::1]/admin",
+    "https://user:password@example.com/",  # pragma: allowlist secret
+    "http://jobscope.railway.internal/",
+])
+def test_public_url_validation_rejects_non_public_destinations(url):
+    with pytest.raises(ValueError, match="outbound URL|non-public"):
+        httpx._validate_public_url(url)
+
+
+def test_public_url_validation_rejects_mixed_dns_answers(monkeypatch):
+    monkeypatch.setattr(httpx.socket, "getaddrinfo", lambda *_args, **_kwargs: [
+        (httpx.socket.AF_INET, httpx.socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+        (httpx.socket.AF_INET, httpx.socket.SOCK_STREAM, 6, "", ("10.0.0.5", 443)),
+    ])
+
+    with pytest.raises(ValueError, match="non-public"):
+        httpx._validate_public_url("https://example.com/jobs")
+
+
+def test_get_rejects_redirect_to_private_address(monkeypatch):
+    redirected = _response(302, headers={"Location": "http://127.0.0.1/private"})
+    redirected.url = "https://example.com/jobs"
+    monkeypatch.setattr(httpx.socket, "getaddrinfo", lambda *_args, **_kwargs: [
+        (httpx.socket.AF_INET, httpx.socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+    ])
+    request = Mock(return_value=redirected)
+    monkeypatch.setattr(httpx, "_request_pinned", request)
+
+    with pytest.raises(ValueError, match="non-public"):
+        httpx.get("https://example.com/jobs")
+
+    assert request.call_count == 1
+
+
+def test_get_connects_to_the_vetted_ip_without_second_dns_lookup(monkeypatch):
+    resolutions = {"count": 0}
+
+    def resolve(*_args, **_kwargs):
+        resolutions["count"] += 1
+        address = "93.184.216.34" if resolutions["count"] == 1 else "127.0.0.1"
+        return [(httpx.socket.AF_INET, httpx.socket.SOCK_STREAM, 6, "", (address, 443))]
+
+    monkeypatch.setattr(httpx.socket, "getaddrinfo", resolve)
+    response = _response(200, text="ok")
+    response.url = "https://example.com/jobs"
+    request = Mock(return_value=response)
+    monkeypatch.setattr(httpx, "_request_pinned", request)
+
+    result = httpx.get("https://example.com/jobs")
+
+    assert result.status_code == 200
+    assert resolutions["count"] == 1
+    assert request.call_args.args[:2] == (
+        "https://example.com/jobs", "93.184.216.34",
+    )
 
 
 def test_json_result_retries_transient_status(monkeypatch):

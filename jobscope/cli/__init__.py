@@ -184,7 +184,8 @@ def cmd_campaign(args, cfg):
     try:
         action = getattr(args, "action", "list")
         if action == "ready":
-            result = campaigns.sending_readiness(cfg)
+            with _store(args, cfg) as store:
+                result = campaigns.sending_readiness(cfg, store)
             if result["ok"]:
                 print("  campaign scheduler ready")
                 return 0

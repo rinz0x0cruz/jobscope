@@ -67,6 +67,21 @@ describe('CampaignsView', () => {
     vi.clearAllMocks()
   })
 
+  it('replaces a stale snapshot campaign selection with the first live campaign', async () => {
+    api.listCampaigns.mockResolvedValue([summary])
+    api.getCampaign.mockRejectedValue(new Error('campaign not found'))
+    const onSelect = vi.fn()
+
+    render(<CampaignsView
+      token="csrf"
+      selectedId="campaign:deleted"
+      onSelect={onSelect}
+      onOpenApplications={vi.fn()}
+    />)
+
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith(campaign.id))
+  })
+
   it('approves only the exact saved draft and has no bulk approval', async () => {
     api.listCampaigns.mockResolvedValue([summary])
     api.getCampaign.mockResolvedValue(detail)

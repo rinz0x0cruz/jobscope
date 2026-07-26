@@ -476,15 +476,25 @@ class OutreachCampaignsMixin:
     def claim_outreach_campaign_target_send(
         self, target_id: str, outbound_message_id: str = "",
     ) -> bool:
-        """Atomically claim an approved target so two senders cannot both email it."""
+        """Atomically claim one outbound delivery across every campaign."""
         cursor = self.conn.execute(
             "UPDATE outreach_campaign_targets SET error_code = 'sending', error_detail = '', "
             "outbound_message_id = ?, updated_at = ? WHERE id = ? AND state = 'approved' "
-            "AND approval_hash <> '' AND COALESCE(error_code, '') = ''",
+            "AND approval_hash <> '' AND COALESCE(error_code, '') = '' "
+            "AND NOT EXISTS (SELECT 1 FROM outreach_campaign_targets "
+            "WHERE error_code IN ('sending', 'delivery_unknown'))",
             (outbound_message_id.strip().strip("<>"), now_iso(), target_id),
         )
         self.conn.commit()
         return cursor.rowcount == 1
+
+    def outreach_campaign_delivery_blocker(self) -> str:
+        row = self.conn.execute(
+            "SELECT error_code FROM outreach_campaign_targets "
+            "WHERE error_code IN ('sending', 'delivery_unknown') "
+            "ORDER BY CASE error_code WHEN 'delivery_unknown' THEN 0 ELSE 1 END LIMIT 1"
+        ).fetchone()
+        return str(row["error_code"] or "") if row else ""
 
     def due_outreach_campaign_targets(self, due_at: str, *, campaign_id: str = "") -> list[dict]:
         params: list[str] = [due_at]

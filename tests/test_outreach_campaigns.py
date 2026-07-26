@@ -788,6 +788,9 @@ def test_send_next_recovers_only_stale_claims_before_selecting_due_work():
             self.cutoff = cutoff
             return 1
 
+        def outreach_campaign_delivery_blocker(self):
+            return ""
+
         def due_outreach_campaign_targets(self, *_args, **_kwargs):
             return []
 
@@ -797,6 +800,26 @@ def test_send_next_recovers_only_stale_claims_before_selecting_due_work():
 
     assert result == {"ok": True, "sent": False, "code": "nothing_due"}
     assert store.cutoff == "2026-07-17T05:15:00Z"
+
+
+@pytest.mark.parametrize("blocker, code", [
+    ("sending", "send_in_progress"),
+    ("delivery_unknown", "delivery_unknown"),
+])
+def test_send_next_stops_before_selecting_another_target(blocker, code):
+    class Store:
+        def mark_stale_outreach_campaign_sends_unknown(self, _cutoff):
+            return 0
+
+        def outreach_campaign_delivery_blocker(self):
+            return blocker
+
+        def due_outreach_campaign_targets(self, *_args, **_kwargs):
+            raise AssertionError("must not select another target")
+
+    assert campaigns.send_next_approved({}, Store(), now=NOW) == {
+        "ok": False, "sent": False, "code": code,
+    }
 
 
 def test_draft_uses_profile_relevant_security_role_instead_of_backend(seeded):

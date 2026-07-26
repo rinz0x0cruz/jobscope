@@ -218,6 +218,22 @@ def _activity_audit_data(store) -> dict[str, Any]:
     }
 
 
+def empty_public_data() -> dict:
+    return {"generated": now_iso(), "total": 0, "rows": [],
+            "overview": {"funnel": {}, "gaps": [], "considered": 0, "targets": []},
+            "applications": [], "profile": None, "applied_outreach": [],
+            "companies": [], "reviews": [],
+            "outreach_snapshot": _empty_outreach_snapshot(),
+            "activity_audit": _empty_activity_audit()}
+
+
+def write_public_shell(path: str) -> str:
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(empty_public_data(), handle, ensure_ascii=False, separators=(",", ":"))
+    return path
+
+
 def build_data(cfg: dict, store, public: bool = False) -> dict:
     """Assemble the dashboard payload (rows + overview) as a plain dict.
 
@@ -228,12 +244,7 @@ def build_data(cfg: dict, store, public: bool = False) -> dict:
     the passphrase, so the published bundle is an empty, schema-valid shell.
     """
     if public:
-        return {"generated": now_iso(), "total": 0, "rows": [],
-                "overview": {"funnel": {}, "gaps": [], "considered": 0, "targets": []},
-            "applications": [], "profile": None, "applied_outreach": [],
-            "companies": [], "reviews": [],
-            "outreach_snapshot": _empty_outreach_snapshot(),
-            "activity_audit": _empty_activity_audit()}
+        return empty_public_data()
     jobs = store.jobs(order_by_score=True)
     # Skip-tier roles (off-target / too-senior / filtered) are hidden from the
     # dashboard by default, so the pages show only actionable matches. Set
