@@ -8,12 +8,15 @@ steps and publication are stubbed; the SPA is a one-line fixture.
 import datetime as dt
 import base64
 import http.client
+import io
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import urllib.error
 import urllib.request
+import zipfile
 
 import pytest
 
@@ -21,13 +24,13 @@ from jobscope.analyze import match as match_mod
 from jobscope.analyze import review as review_mod
 from jobscope.core.config import load_config
 from jobscope.core.model import Application, Job, Resume
+from jobscope.core import sqlite_runtime
 from jobscope.core.store import Store
 from jobscope.cli import build_parser
 from jobscope.deliver import serve
 from jobscope.ingest import inbox as inbox_mod
 from jobscope.ingest import monitor as monitor_mod
 from jobscope.ingest import reconcile
-from jobscope.ingest import scrape as scrape_mod
 
 _INDEX_HTML = '<!doctype html><html><head></head><body><div id="root"></div></body></html>'
 
@@ -48,7 +51,9 @@ def _cfg(tmp):
 def _reset_state():
     serve._STATE.update(state="idle", step="", message="", started="",
                         finished="", last_date="", run_id="", stages=[])
+    serve._BACKUP_STATE.update(ready=False, pending_id="", pending_sha256="")
     yield
+    serve._BACKUP_STATE.update(ready=False, pending_id="", pending_sha256="")
 
 
 def _patch_pipeline(monkeypatch):
@@ -89,7 +94,6 @@ def _patch_pipeline(monkeypatch):
 
     monkeypatch.setattr(inbox_mod, "run", fake_inbox)
     monkeypatch.setattr(match_mod, "run", fake_match)
-    monkeypatch.setattr(scrape_mod, "run", fake_scrape)
     monkeypatch.setattr(monitor_mod, "scan_active_monitors", fake_monitor)
     monkeypatch.setattr(review_mod, "sync_reviews", fake_review)
     monkeypatch.setattr(serve, "_publish", fake_publish)
@@ -109,7 +113,7 @@ def test_perform_refresh_runs_and_stamps(monkeypatch):
         assert calls["inbox"] == 1 and calls["match"] == 1 and calls["publish"] == 1
         assert calls["monitor"] == 1 and calls["review"] == 1
         assert calls["render"] == 0
-        assert calls["scrape"] == 1  # first broad discovery is due on an empty DB
+        assert calls["scrape"] == 0
         assert calls["order"] == ["publish"]
         days = cfg["serve"]["inbox_days"]
         assert calls["since"] == (dt.date.today() - dt.timedelta(days=days)).isoformat()
@@ -172,17 +176,6 @@ def test_force_overrides_guard(monkeypatch):
 
         assert res["state"] == "done"
         assert calls["inbox"] == 1 and calls["match"] == 1 and calls["publish"] == 1
-
-
-def test_full_scan_toggle(monkeypatch):
-    with tempfile.TemporaryDirectory() as tmp:
-        cfg = _cfg(tmp)
-        Store(cfg["output"]["db_path"]).close()
-        calls = _patch_pipeline(monkeypatch)
-
-        serve.perform_refresh(cfg, force=True, full_scan=True)
-
-        assert calls["scrape"] == 1
 
 
 def test_refresh_stage_reports_duration(monkeypatch):
@@ -261,19 +254,22 @@ def test_nonzero_required_stage_aborts_refresh(monkeypatch, failed_stage):
             assert store.meta_get("refresh:last_failed_stage") == failed_stage
 
 
-def test_optional_scan_failure_completes_degraded(monkeypatch):
+def test_optional_monitor_failure_completes_degraded(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
         Store(cfg["output"]["db_path"]).close()
         calls = _patch_pipeline(monkeypatch)
-        monkeypatch.setattr(scrape_mod, "run", lambda *_a, **_k: 1)
+        monkeypatch.setattr(
+            monitor_mod, "scan_active_monitors",
+            lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("monitor failed")),
+        )
 
-        res = serve.perform_refresh(cfg, force=True, full_scan=True)
+        res = serve.perform_refresh(cfg, force=True)
 
         assert res["state"] == "done" and res["degraded"] is True
         stages = {stage["name"]: stage for stage in res["stages"]}
-        assert stages["scan"]["required"] is False
-        assert stages["scan"]["status"] == "degraded"
+        assert stages["monitors"]["required"] is False
+        assert stages["monitors"]["status"] == "degraded"
         assert calls["publish"] == 1 and calls["render"] == 0
         with Store(cfg["output"]["db_path"]) as store:
             assert store.meta_get("refresh:last_date") == dt.date.today().isoformat()
@@ -333,6 +329,12 @@ def _get_text(url, headers=None):
     req = urllib.request.Request(url, headers=headers or {})
     with urllib.request.urlopen(req, timeout=5) as resp:
         return resp.status, resp.read().decode("utf-8", "replace")
+
+
+def _get_bytes(url, headers=None):
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return resp.status, resp.read(), dict(resp.headers)
 
 
 def test_serves_spa_without_legacy_refresh_widget(monkeypatch):
@@ -517,6 +519,31 @@ def test_endpoints_and_csrf_guard(monkeypatch):
             thread.join(timeout=3)
 
 
+def test_rejected_post_with_a_body_returns_a_clean_status(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        monkeypatch.setattr(serve, "_run_refresh", lambda *a, **k: None)
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        try:
+            for _ in range(5):
+                status, _ = _req(
+                    "POST", base + "/api/refresh", data="x" * (128 * 1024),
+                    headers={"Content-Type": "application/json"},
+                )
+                assert status == 403
+                status, _ = _req(
+                    "POST", base + "/api/campaigns/action", data="x" * (128 * 1024),
+                    headers={"X-Refresh-Token": token, "Origin": "https://evil.example"},
+                )
+                assert status == 403
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
 def test_server_marks_a_persisted_running_refresh_interrupted():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
@@ -543,6 +570,72 @@ def test_hosted_mode_fails_closed_without_required_environment(monkeypatch):
 
     with pytest.raises(RuntimeError, match="JOBSCOPE_PUBLIC_ORIGIN"):
         serve._build_server({}, 0, hosted=True)
+
+
+def test_hosted_run_rejects_affected_sqlite_before_building_server(monkeypatch):
+    def reject_runtime(**kwargs):
+        raise RuntimeError("affected SQLite runtime")
+
+    monkeypatch.setattr(sqlite_runtime, "require_safe_sqlite", reject_runtime)
+    monkeypatch.setattr(
+        serve, "_build_server",
+        lambda *args, **kwargs: pytest.fail("server built before SQLite runtime check"),
+    )
+
+    with pytest.raises(RuntimeError, match="affected SQLite runtime"):
+        serve.run({}, hosted=True)
+
+
+def test_hosted_run_audits_existing_database_before_building_server(monkeypatch, tmp_path):
+    path = tmp_path / "jobscope.db"
+    Store(str(path)).close()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """INSERT INTO outreach_campaign_targets
+               (id, campaign_id, company_key, company, created_at, updated_at)
+               VALUES ('target-1', 'missing-campaign', 'acme', 'Acme', 'now', 'now')"""
+        )
+    monkeypatch.setattr(sqlite_runtime, "require_safe_sqlite", lambda **kwargs: None)
+    monkeypatch.setattr(
+        serve, "_build_server",
+        lambda *args, **kwargs: pytest.fail("server built before database audit"),
+    )
+
+    with pytest.raises(RuntimeError, match="foreign_key_check"):
+        serve.run({"output": {"db_path": str(path)}}, hosted=True)
+
+
+def test_hosted_run_reports_non_secret_runtime_identity(monkeypatch, tmp_path, capsys):
+    class Server:
+        server_address = ("0.0.0.0", 8799)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(sqlite_runtime, "require_safe_sqlite", lambda **kwargs: None)
+    monkeypatch.setattr(sqlite_runtime, "source_id", lambda: "trusted-source-id")
+    monkeypatch.setattr(
+        serve, "_build_server",
+        lambda *args, **kwargs: (Server(), "index.html", "token", False),
+    )
+    monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", "https://jobs.example.com")
+    monkeypatch.setenv("JOBSCOPE_ARTIFACT_ID", "sha256:artifact")
+    monkeypatch.setenv("JOBSCOPE_SQLITE_ARCHIVE_SHA256", "archive-sha256")
+
+    assert serve.run(
+        {"output": {"db_path": str(tmp_path / "missing.db")}}, hosted=True,
+    ) == 0
+
+    output = capsys.readouterr().out
+    assert "artifact=sha256:artifact" in output
+    assert "source=trusted-source-id" in output
+    assert "archive=archive-sha256" in output
 
 
 def test_hosted_mode_fails_closed_without_access_verification_config(monkeypatch):
@@ -638,6 +731,7 @@ def test_hosted_automation_is_secret_scoped_serialized_and_redacted(monkeypatch)
         monkeypatch.setenv("JOBSCOPE_AUTOMATION_ORIGIN", automation_origin)
         monkeypatch.setenv("JOBSCOPE_AUTOMATION_EDGE_TOKEN", automation_edge_token)
         monkeypatch.setenv("JOBSCOPE_APPS_PASSPHRASE", "hosted-test-passphrase")
+        monkeypatch.setenv("JOBSCOPE_BACKUP_KEY", "hosted-test-full-backup-key")
         monkeypatch.setattr(serve, "_run_refresh", lambda *args, **kwargs: None)
         monkeypatch.setattr(campaigns, "tick", lambda *_args, **_kwargs: {
             "ok": True,
@@ -671,6 +765,43 @@ def test_hosted_automation_is_secret_scoped_serialized_and_redacted(monkeypatch)
             )
             assert status == 403
 
+            status, _ = _req(
+                "POST", base + "/api/automation/tick", data="{}", headers=authorized,
+            )
+            assert status == 503
+
+            status, payload, response_headers = _get_bytes(
+                base + "/api/automation/backup", headers=authorized,
+            )
+            assert status == 200
+            assert response_headers["Content-Type"] == "application/zip"
+            with zipfile.ZipFile(io.BytesIO(payload)) as bundle:
+                assert set(bundle.namelist()) == {"jobscope.db.jsdb", "manifest.json"}
+                manifest = json.loads(bundle.read("manifest.json"))
+                assert bundle.read("jobscope.db.jsdb").startswith(b"JSDB")
+                assert "jobscope.db" not in bundle.namelist()
+            assert response_headers["X-Jobscope-Backup-Id"] == manifest["backup_id"]
+            assert manifest["database"]["table_count"] > 0
+            assert serve._BACKUP_STATE["ready"] is False
+            status, _ = _req(
+                "POST", base + "/api/automation/backup/ack",
+                data=json.dumps({
+                    "backup_id": manifest["backup_id"],
+                    "encrypted_sha256": "0" * 64,
+                }),
+                headers=authorized,
+            )
+            assert status == 409 and serve._BACKUP_STATE["ready"] is False
+            status, result = _req(
+                "POST", base + "/api/automation/backup/ack",
+                data=json.dumps({
+                    "backup_id": manifest["backup_id"],
+                    "encrypted_sha256": manifest["encrypted"]["sha256"],
+                }),
+                headers=authorized,
+            )
+            assert status == 200 and result["backup_id"] == manifest["backup_id"]
+
             status, result = _req(
                 "POST", base + "/api/automation/tick", data="{}", headers=authorized,
             )
@@ -692,7 +823,7 @@ def test_hosted_automation_is_secret_scoped_serialized_and_redacted(monkeypatch)
 
             status, result = _req(
                 "POST", base + "/api/automation/refresh",
-                data=json.dumps({"force": True, "full_scan": False}), headers=authorized,
+                data=json.dumps({"force": True}), headers=authorized,
             )
             assert status == 200 and result["state"] == "started"
             assert len(result["run_id"]) == 24
@@ -715,6 +846,89 @@ def test_hosted_automation_is_secret_scoped_serialized_and_redacted(monkeypatch)
             thread.join(timeout=3)
 
 
+def test_hosted_backup_failure_disables_tick_until_backup_recovers(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        from jobscope.apply import campaigns
+        from jobscope.core import backup as backup_mod
+
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        automation_origin = "https://automation.example.workers.dev"
+        monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", "https://jobs.example.com")
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_TOKEN", "a" * 32)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_ORIGIN", automation_origin)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_EDGE_TOKEN", "e" * 32)
+        monkeypatch.setenv("JOBSCOPE_BACKUP_KEY", "hosted-test-full-backup-key")
+        monkeypatch.setattr(campaigns, "tick", lambda *_args, **_kwargs: {
+            "ok": True, "sent": False, "code": "no_due_targets", "tracking": {},
+        })
+        original_create = backup_mod.create_generation
+        httpd, port, _, thread = _serve_bg(cfg, hosted=True)
+        base = f"http://127.0.0.1:{port}"
+        authorized = {
+            "Origin": automation_origin,
+            "X-Jobscope-Automation": "a" * 32,
+            "X-Jobscope-Edge": "e" * 32,
+            "Content-Type": "application/json",
+        }
+
+        def wait_for_operation() -> None:
+            assert serve._OPERATION_LOCK.acquire(timeout=5)
+            serve._OPERATION_LOCK.release()
+
+        try:
+            _, payload, _ = _get_bytes(base + "/api/automation/backup", headers=authorized)
+            wait_for_operation()
+            with zipfile.ZipFile(io.BytesIO(payload)) as bundle:
+                manifest = json.loads(bundle.read("manifest.json"))
+            status, _ = _req(
+                "POST", base + "/api/automation/backup/ack",
+                data=json.dumps({
+                    "backup_id": manifest["backup_id"],
+                    "encrypted_sha256": manifest["encrypted"]["sha256"],
+                }), headers=authorized,
+            )
+            assert status == 200
+            assert serve._BACKUP_STATE["ready"] is True
+
+            def fail_backup(*_args, **_kwargs):
+                raise backup_mod.BackupError("disk full")
+
+            monkeypatch.setattr(backup_mod, "create_generation", fail_backup)
+            status, _ = _req(
+                "GET", base + "/api/automation/backup", headers=authorized,
+            )
+            wait_for_operation()
+            assert status == 500 and serve._BACKUP_STATE["ready"] is False
+            status, _ = _req(
+                "POST", base + "/api/automation/tick", data="{}", headers=authorized,
+            )
+            assert status == 503
+
+            monkeypatch.setattr(backup_mod, "create_generation", original_create)
+            _, payload, _ = _get_bytes(base + "/api/automation/backup", headers=authorized)
+            wait_for_operation()
+            with zipfile.ZipFile(io.BytesIO(payload)) as bundle:
+                manifest = json.loads(bundle.read("manifest.json"))
+            assert serve._BACKUP_STATE["ready"] is False
+            status, _ = _req(
+                "POST", base + "/api/automation/backup/ack",
+                data=json.dumps({
+                    "backup_id": manifest["backup_id"],
+                    "encrypted_sha256": manifest["encrypted"]["sha256"],
+                }), headers=authorized,
+            )
+            assert status == 200
+            status, result = _req(
+                "POST", base + "/api/automation/tick", data="{}", headers=authorized,
+            )
+            assert status == 200 and result["code"] == "no_due_targets"
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
 def test_hosted_mode_rejects_short_automation_secret(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
@@ -726,6 +940,59 @@ def test_hosted_mode_rejects_short_automation_secret(monkeypatch):
             serve._build_server(
                 cfg, 0, hosted=True, access_verifier=_TestAccessVerifier(),
             )
+
+
+def test_hosted_recovery_mode_keeps_reads_and_disables_all_mutations(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        public_origin = "https://jobs.example.com"
+        automation_origin = "https://automation.example.workers.dev"
+        monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", public_origin)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_TOKEN", "a" * 32)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_ORIGIN", automation_origin)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_EDGE_TOKEN", "e" * 32)
+        monkeypatch.setenv("JOBSCOPE_APPS_PASSPHRASE", "recovery-read-passphrase")
+        monkeypatch.setenv("JOBSCOPE_RECOVERY_MODE", "1")
+        httpd, port, token, thread = _serve_bg(cfg, hosted=True)
+        base = f"http://127.0.0.1:{port}"
+        automation = {
+            "Origin": automation_origin,
+            "X-Jobscope-Automation": "a" * 32,
+            "X-Jobscope-Edge": "e" * 32,
+            "Content-Type": "application/json",
+        }
+        browser = {
+            "Origin": public_origin,
+            "Cf-Access-Jwt-Assertion": "validated-test-access-jwt",
+            "X-Refresh-Token": token,
+            "Content-Type": "application/json",
+        }
+        try:
+            status, snapshot = _req(
+                "GET", base + "/api/automation/snapshot", headers=automation,
+            )
+            assert status == 200 and snapshot["ok"] is True
+
+            for route in ("refresh", "tick"):
+                status, _ = _req(
+                    "POST", base + f"/api/automation/{route}",
+                    data="{}", headers=automation,
+                )
+                assert status == 503
+
+            status, _ = _req(
+                "POST", base + "/api/campaigns/action", data="{}", headers=browser,
+            )
+            assert status == 503
+            status, _ = _req(
+                "PUT", base + "/api/profile", data="{}", headers=browser,
+            )
+            assert status == 503
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
 
 
 @pytest.mark.parametrize(("name", "value", "message"), [
@@ -1093,3 +1360,180 @@ def test_publish_requires_whole_site_passphrase(monkeypatch):
 
     with pytest.raises(RuntimeError, match="required for whole-site publication"):
         serve._publish({})
+
+
+def test_hosted_scheduled_slots_run_once_and_report_a_heartbeat(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        from jobscope.deliver import automation
+
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        automation_origin = "https://automation.example.workers.dev"
+        monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", "https://jobs.example.com")
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_TOKEN", "a" * 32)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_ORIGIN", automation_origin)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_EDGE_TOKEN", "e" * 32)
+        monkeypatch.delenv("JOBSCOPE_AUTOMATION_DISABLED", raising=False)
+        started = []
+        monkeypatch.setattr(
+            serve, "_run_refresh",
+            lambda *args, **kwargs: started.append(args),
+        )
+        httpd, port, _, thread = _serve_bg(cfg, hosted=True)
+        base = f"http://127.0.0.1:{port}"
+        # Slots are clock-relative: recent enough to be accepted, never future.
+        minute = 60 * 1000
+        scheduled = int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000) - 20 * minute
+        authorized = {
+            "Origin": automation_origin,
+            "X-Jobscope-Automation": "a" * 32,
+            "X-Jobscope-Edge": "e" * 32,
+            "Content-Type": "application/json",
+        }
+        slotted = {
+            **authorized,
+            "X-Jobscope-Slot-Time": str(scheduled),
+            "X-Jobscope-Slot-Period": str(3 * 60 * 60 * 1000),
+        }
+        try:
+            # An unparseable scheduled time is refused before any work starts.
+            status, _ = _req(
+                "POST", base + "/api/automation/refresh", data="{}",
+                headers={**slotted, "X-Jobscope-Slot-Time": "not-a-time"},
+            )
+            assert status == 400
+            assert started == []
+
+            status, payload = _req(
+                "POST", base + "/api/automation/refresh", data="{}", headers=slotted,
+            )
+            assert status == 200
+            assert payload["state"] == "started"
+            run_id = payload["run_id"]
+            assert len(started) == 1
+
+            # The retried slot returns the original result instead of running again.
+            status, repeat = _req(
+                "POST", base + "/api/automation/refresh", data="{}", headers=slotted,
+            )
+            assert status == 200
+            assert repeat["code"] == "duplicate"
+            assert repeat["run_id"] == run_id
+            assert len(started) == 1
+
+            # A different slot arriving while that work is live is deferred.
+            status, _ = _req(
+                "POST", base + "/api/automation/refresh", data="{}",
+                headers={**slotted, "X-Jobscope-Slot-Time": str(scheduled + 5 * minute)},
+            )
+            assert status == 409
+            assert len(started) == 1
+
+            with Store(cfg["output"]["db_path"]) as store:
+                slot = json.loads(store.meta_get(automation.SLOT_KEY))
+                assert slot["run_id"] == run_id
+                assert slot["operation"] == "refresh"
+                automation.finish(store, slot["slot"], state="ok", code="done",
+                                  run_id=run_id)
+
+            status, payload = _req(
+                "GET", base + "/api/automation/status", headers=authorized,
+            )
+            assert status == 200
+            assert payload["heartbeat"]["state"] == "ok"
+            assert payload["heartbeat"]["run_id"] == run_id
+            assert payload["heartbeat"]["stale"] is False
+            assert payload["heartbeat"]["disabled"] is False
+
+            # The kill switch blocks new mutation without touching the schedule.
+            monkeypatch.setenv("JOBSCOPE_AUTOMATION_DISABLED", "1")
+            status, _ = _req(
+                "POST", base + "/api/automation/refresh", data="{}",
+                headers={**slotted, "X-Jobscope-Slot-Time": str(scheduled + 10 * minute)},
+            )
+            assert status == 503
+            assert len(started) == 1
+
+            # A human-initiated call carries no slot and stays available.
+            monkeypatch.delenv("JOBSCOPE_AUTOMATION_DISABLED", raising=False)
+            serve._STATE.update(state="idle")
+            status, payload = _req(
+                "POST", base + "/api/automation/refresh", data="{}", headers=authorized,
+            )
+            assert status == 200
+            assert payload["state"] == "started"
+
+            # A slot claimed for work that cannot start must not stay running,
+            # or it would block every later slot until the abandon window.
+            status, payload = _req(
+                "POST", base + "/api/automation/refresh", data="{}",
+                headers={**slotted, "X-Jobscope-Slot-Time": str(scheduled + 15 * minute)},
+            )
+            assert status == 200
+            assert payload["state"] == "busy"
+            with Store(cfg["output"]["db_path"]) as store:
+                released = json.loads(store.meta_get(automation.SLOT_KEY))
+            assert released["state"] == "skipped"
+            assert released["code"] == "operation_busy"
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_a_failing_tick_still_closes_its_scheduled_slot(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        from jobscope.apply import campaigns
+        from jobscope.deliver import automation
+
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        automation_origin = "https://automation.example.workers.dev"
+        monkeypatch.setenv("JOBSCOPE_PUBLIC_ORIGIN", "https://jobs.example.com")
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_TOKEN", "a" * 32)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_ORIGIN", automation_origin)
+        monkeypatch.setenv("JOBSCOPE_AUTOMATION_EDGE_TOKEN", "e" * 32)
+        monkeypatch.delenv("JOBSCOPE_AUTOMATION_DISABLED", raising=False)
+
+        def exploding(*_args, **_kwargs):
+            raise RuntimeError("tick blew up")
+
+        monkeypatch.setattr(campaigns, "tick", exploding)
+        monkeypatch.setitem(serve._BACKUP_STATE, "ready", True)
+        httpd, port, _, thread = _serve_bg(cfg, hosted=True)
+        base = f"http://127.0.0.1:{port}"
+        minute = 60 * 1000
+        scheduled = int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000) - 20 * minute
+        slotted = {
+            "Origin": automation_origin,
+            "X-Jobscope-Automation": "a" * 32,
+            "X-Jobscope-Edge": "e" * 32,
+            "Content-Type": "application/json",
+            "X-Jobscope-Slot-Time": str(scheduled),
+            "X-Jobscope-Slot-Period": str(30 * 60 * 1000),
+        }
+        try:
+            # The handler raises, so the connection drops without a response.
+            # What matters is that the slot does not stay claimed.
+            with pytest.raises(Exception):
+                _req("POST", base + "/api/automation/tick", data="{}", headers=slotted)
+
+            with Store(cfg["output"]["db_path"]) as store:
+                record = json.loads(store.meta_get(automation.SLOT_KEY))
+            assert record["state"] == "error"
+            assert record["code"] == "tick_failed"
+
+            # The next scheduled slot is not blocked by the failed one.
+            with pytest.raises(Exception):
+                _req(
+                    "POST", base + "/api/automation/tick", data="{}",
+                    headers={**slotted, "X-Jobscope-Slot-Time": str(scheduled + 5 * minute)},
+                )
+            with Store(cfg["output"]["db_path"]) as store:
+                following = json.loads(store.meta_get(automation.SLOT_KEY))
+            assert following["scheduled_ms"] == scheduled + 5 * minute
+            assert following["state"] == "error"
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)

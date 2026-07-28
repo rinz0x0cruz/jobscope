@@ -81,7 +81,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Build hosted image once
-        run: docker build --tag "jobscope-hosted:${GITHUB_SHA}" .
+        run: docker build --build-arg "JOBSCOPE_REVISION=${GITHUB_SHA}" --tag "jobscope-hosted:${GITHUB_SHA}" .
       - name: Smoke hosted image and persistent volume
         env:
           IMAGE: jobscope-hosted:${{ github.sha }}
@@ -164,12 +164,17 @@ jobs:
           test -s "$data/jobscope.db"
           docker exec --interactive jobscope-hosted python - <<'PY'
           import sqlite3
+          from jobscope.core.sqlite_runtime import require_safe_sqlite
 
+          require_safe_sqlite(verify_identity=True)
           with sqlite3.connect("/data/jobscope.db") as connection:
-              assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+              assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+              assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
               assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+              assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
           PY
       - name: Publish the tested image by commit
+        id: publish
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -183,7 +188,68 @@ jobs:
           printf '%s\n' "$output"
           digest="$(printf '%s\n' "$output" | awk '/digest:/ { print $2 }' | tail -n 1)"
           test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
           printf 'Tested hosted image: `%s@%s`\n' "$repository" "$digest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Pull and verify the published digest
+        if: steps.publish.outputs.digest != ''
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          PUBLIC_ORIGIN: https://jobs.example.test
+          AUTOMATION_ORIGIN: https://jobscope-automation.example.workers.dev
+          AUTOMATION_TOKEN: ci-automation-token-32-characters-minimum
+          AUTOMATION_EDGE_TOKEN: ci-edge-token-32-characters-minimum
+          ACCESS_TEAM_DOMAIN: https://ci.cloudflareaccess.com
+          ACCESS_AUDIENCE: ci-audience
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}@${DIGEST}"
+          data="$RUNNER_TEMP/jobscope-data"
+          docker pull "$image"
+          test "$(docker image inspect "$image" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
+          cleanup() {
+            docker rm --force jobscope-published >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run --detach --name jobscope-published \
+            --publish 127.0.0.1:8799:8799 \
+            --env "JOBSCOPE_PUBLIC_ORIGIN=$PUBLIC_ORIGIN" \
+            --env "JOBSCOPE_AUTOMATION_TOKEN=$AUTOMATION_TOKEN" \
+            --env "JOBSCOPE_AUTOMATION_ORIGIN=$AUTOMATION_ORIGIN" \
+            --env "JOBSCOPE_AUTOMATION_EDGE_TOKEN=$AUTOMATION_EDGE_TOKEN" \
+            --env "JOBSCOPE_CF_ACCESS_TEAM_DOMAIN=$ACCESS_TEAM_DOMAIN" \
+            --env "JOBSCOPE_CF_ACCESS_AUD=$ACCESS_AUDIENCE" \
+            --volume "$data:/data" \
+            "$image" >/dev/null
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8799/healthz >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 30 ]; then
+              docker logs jobscope-published
+              exit 1
+            fi
+            sleep 1
+          done
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:8799/api/token)" = "403"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --header "X-Jobscope-Automation: $AUTOMATION_TOKEN" \
+            --header "X-Jobscope-Edge: $AUTOMATION_EDGE_TOKEN" \
+            --header "Origin: $AUTOMATION_ORIGIN" \
+            http://127.0.0.1:8799/api/automation/status)" = "200"
+          docker exec --interactive jobscope-published python - <<'PY'
+          import os
+          import sqlite3
+          from jobscope.core.sqlite_runtime import require_safe_sqlite, source_id
+
+          require_safe_sqlite(verify_identity=True)
+          with sqlite3.connect("/data/jobscope.db") as connection:
+              assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+              assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+              assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+              assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
+          print(os.environ["JOBSCOPE_ARTIFACT_ID"], sqlite3.sqlite_version, source_id())
+          PY
 
   publish-artifact:
     runs-on: ubuntu-latest

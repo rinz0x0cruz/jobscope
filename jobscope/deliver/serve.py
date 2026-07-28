@@ -14,14 +14,17 @@ from __future__ import annotations
 import datetime as _dt
 import base64
 import binascii
+import copy
 import http.server
 import json
 import os
 import secrets
+import sqlite3
 import tempfile
 import threading
 import time
 import webbrowser
+import zipfile
 from dataclasses import asdict, dataclass
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
@@ -38,6 +41,8 @@ _MAX_CAMPAIGN_REQUEST_BYTES = _MAX_API_REQUEST_BYTES
 _HOSTED_ACCESS_HEADER = "Cf-Access-Jwt-Assertion"
 _AUTOMATION_HEADER = "X-Jobscope-Automation"
 _AUTOMATION_EDGE_HEADER = "X-Jobscope-Edge"
+_SLOT_TIME_HEADER = "X-Jobscope-Slot-Time"
+_SLOT_PERIOD_HEADER = "X-Jobscope-Slot-Period"
 _MAX_PROFILE_REQUEST_BYTES = 32 * 1024
 _RESUME_EXTENSIONS = frozenset({".md", ".txt", ".json", ".pdf"})
 _REFRESH_STATE_META_KEY = "serve:refresh_state:v1"
@@ -51,6 +56,7 @@ _STATE: dict[str, object] = {
     "run_id": "",
     "stages": [],
 }
+_BACKUP_STATE = {"ready": False, "pending_id": "", "pending_sha256": ""}
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,13 +167,20 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
     port."""
     from jobscope.core.store import Store
 
+    if hosted:
+        cfg = copy.deepcopy(cfg)
+        cfg.setdefault("_runtime", {})["hosted"] = True
+        cfg.setdefault("ai", {})["enabled"] = False
+        cfg.setdefault("quorum", {})["enabled"] = False
+
     public_origin = _hosted_settings(hosted)
     if hosted and access_verifier is None:
         from jobscope.deliver.access import AccessJWTVerifier
         access_verifier = AccessJWTVerifier.from_environment()
     directory = _dist_dir(cfg)
     serve_cfg = cfg.get("serve", {}) or {}
-    refresh_on = bool(serve_cfg.get("refresh_enabled", True))
+    recovery_mode = hosted and os.environ.get("JOBSCOPE_RECOVERY_MODE", "") == "1"
+    refresh_on = bool(serve_cfg.get("refresh_enabled", True)) and not recovery_mode
     automation_token = os.environ.get("JOBSCOPE_AUTOMATION_TOKEN", "").strip()
     if automation_token and len(automation_token) < 32:
         raise RuntimeError("JOBSCOPE_AUTOMATION_TOKEN must contain at least 32 characters")
@@ -213,14 +226,65 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
             super().end_headers()
 
         # -- helpers ------------------------------------------------------
+        def _discard_unread_body(self) -> None:
+            """Consume an unread request body before answering.
+
+            Closing a socket that still holds unread data makes the OS send RST,
+            so a client sees a connection abort instead of the real status code.
+            Rejections happen before the body is parsed, so drain it here.
+            """
+            if getattr(self, "_body_consumed", False):
+                return
+            self._body_consumed = True
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                return
+            if length <= 0:
+                return
+            if length > _MAX_RESUME_REQUEST_BYTES:
+                self.close_connection = True
+                return
+            previous_timeout = self.connection.gettimeout()
+            try:
+                self.connection.settimeout(1)
+                remaining = length
+                while remaining:
+                    chunk = self.rfile.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except OSError:
+                self.close_connection = True
+            finally:
+                self.connection.settimeout(previous_timeout)
+
         def _send_json(self, code: int, obj: dict) -> None:
+            self._discard_unread_body()
             body = json.dumps(obj).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            if getattr(self, "_close_after_response", False):
+                self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
+
+        def _send_file(self, path: str, *, content_type: str, filename: str,
+                       backup_id: str = "") -> None:
+            size = os.path.getsize(path)
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(size))
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.send_header("Cache-Control", "no-store")
+            if backup_id:
+                self.send_header("X-Jobscope-Backup-Id", backup_id)
+            self.end_headers()
+            with open(path, "rb") as handle:
+                for block in iter(lambda: handle.read(1024 * 1024), b""):
+                    self.wfile.write(block)
 
         def _serve_index(self) -> None:
             try:
@@ -275,18 +339,20 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                 and secrets.compare_digest(supplied_edge, automation_edge_token)
             )
 
-        def _start_refresh(self, opts: dict) -> None:
-            unknown = set(opts) - {"force", "full_scan"}
+        def _start_refresh(self, opts: dict, slot: str = "") -> None:
+            unknown = set(opts) - {"force"}
             if unknown:
+                self._slot_finish(slot, state="skipped", code="invalid_options")
                 self._send_json(400, {
                     "state": "error",
                     "message": f"unknown refresh option(s): {', '.join(sorted(unknown))}",
                 })
                 return
             force = bool(opts.get("force"))
-            full_scan = bool(opts.get("full_scan"))
             with _LOCK:
                 if _STATE["state"] == "running":
+                    # The claim must not outlive the request that cannot use it.
+                    self._slot_finish(slot, state="skipped", code="operation_busy")
                     self._send_json(200, {
                         "state": "busy", "run_id": _STATE.get("run_id", ""),
                     })
@@ -295,21 +361,96 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                 _STATE.update(state="running", step="starting", message="Starting\u2026",
                               started=_now(), finished="", run_id=run_id, stages=[])
                 _persist_refresh_state(cfg)
-            threading.Thread(target=_run_refresh, args=(cfg, force, full_scan, run_id),
+            if slot:
+                self._slot_link(slot, run_id)
+            threading.Thread(target=_run_refresh, args=(cfg, force, run_id, slot),
                              daemon=True).start()
             self._send_json(200, {"state": "started", "run_id": run_id})
 
-        def _automation_tick(self) -> None:
+        def _slot_claim(self, operation: str) -> tuple[bool, str]:
+            """Claim the scheduled slot, if this call carries one.
+
+            A request without slot headers is human-initiated and runs under the
+            operation lock alone. Returns whether the caller may proceed.
+            """
+            scheduled = self.headers.get(_SLOT_TIME_HEADER, "").strip()
+            if not scheduled:
+                return True, ""
+            from jobscope.core.store import Store
+            from jobscope.deliver import automation
+            with Store(cfg["output"]["db_path"]) as store:
+                outcome, record = automation.claim(
+                    store, operation=operation, scheduled_ms=scheduled,
+                    period_ms=self.headers.get(_SLOT_PERIOD_HEADER, "").strip() or 0,
+                )
+            if outcome == "claimed":
+                return True, str(record.get("slot") or "")
+            self._send_json({
+                "duplicate": 200, "superseded": 200, "stale": 200,
+                "busy": 409, "disabled": 503, "invalid": 400,
+            }[outcome], {
+                "ok": outcome in {"duplicate", "superseded", "stale"},
+                "sent": False,
+                "code": outcome,
+                "slot": str(record.get("slot") or ""),
+                "state": str(record.get("state") or ""),
+                "run_id": str(record.get("run_id") or ""),
+            })
+            return False, ""
+
+        def _slot_link(self, slot: str, run_id: str) -> None:
+            from jobscope.core.store import Store
+            from jobscope.deliver import automation
+            with Store(cfg["output"]["db_path"]) as store:
+                automation.link_run(store, slot, run_id)
+
+        def _slot_finish(self, slot: str, *, state: str, code: str) -> None:
+            if slot:
+                _finish_slot(cfg, slot, state=state, code=code, run_id="")
+
+        def _slot_status(self) -> dict:
+            from jobscope.core.store import Store
+            from jobscope.deliver import automation
+            with Store(cfg["output"]["db_path"]) as store:
+                return automation.status(store)
+
+        def _automation_tick(self, slot: str = "") -> None:
             if not _OPERATION_LOCK.acquire(blocking=False):
+                self._slot_finish(slot, state="skipped", code="operation_busy")
                 self._send_json(409, {
                     "ok": False, "sent": False, "code": "operation_busy",
                 })
                 return
             try:
+                if not _BACKUP_STATE["ready"]:
+                    self._slot_finish(slot, state="skipped", code="backup_required")
+                    self._send_json(503, {
+                        "ok": False, "sent": False, "code": "backup_required",
+                        "tracking": {
+                            "inbox_status": "not_run", "replied": 0, "opted_out": 0,
+                        },
+                    })
+                    return
                 from jobscope.apply import campaigns
                 from jobscope.core.store import Store
-                with Store(cfg["output"]["db_path"]) as store:
-                    result = campaigns.tick(cfg, store)
+                from jobscope.deliver import automation
+                recorded = False
+                try:
+                    with Store(cfg["output"]["db_path"]) as store:
+                        result = campaigns.tick(cfg, store)
+                        if slot:
+                            automation.finish(
+                                store, slot,
+                                state="ok" if result.get("ok") else "error",
+                                code=str(result.get("code") or ""),
+                            )
+                            recorded = True
+                except Exception:
+                    # An unhandled failure must still close the slot, or the next
+                    # scheduled slot is deferred until the abandon window passes.
+                    if not recorded:
+                        self._slot_finish(slot, state="error", code="tick_failed")
+                    raise
                 tracking = result.get("tracking") or {}
                 self._send_json(200, {
                     "ok": bool(result.get("ok")),
@@ -353,6 +494,57 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
             finally:
                 _OPERATION_LOCK.release()
 
+        def _automation_backup(self) -> None:
+            if not _OPERATION_LOCK.acquire(blocking=False):
+                self._send_json(409, {"ok": False, "code": "operation_busy"})
+                return
+            try:
+                key = os.environ.get("JOBSCOPE_BACKUP_KEY", "")
+                if len(key) < 12:
+                    self._send_json(503, {
+                        "ok": False,
+                        "error": "hosted full-backup encryption is not configured",
+                    })
+                    return
+                from jobscope.core.backup import (
+                    ENCRYPTED_NAME,
+                    MANIFEST_NAME,
+                    BackupError,
+                    create_generation,
+                )
+                try:
+                    with tempfile.TemporaryDirectory(prefix="jobscope-full-backup-") as tmp:
+                        generation = create_generation(
+                            cfg["output"]["db_path"], os.path.join(tmp, "generations"), key,
+                            artifact_identity=os.environ.get("JOBSCOPE_ARTIFACT_ID", "unknown"),
+                        )
+                        backup_id = generation.name
+                        archive = os.path.join(tmp, f"{backup_id}.zip")
+                        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
+                            bundle.write(generation / ENCRYPTED_NAME, ENCRYPTED_NAME)
+                            bundle.write(generation / MANIFEST_NAME, MANIFEST_NAME)
+                        with open(generation / MANIFEST_NAME, encoding="utf-8") as handle:
+                            manifest = json.load(handle)
+                        _BACKUP_STATE.update(
+                            ready=False,
+                            pending_id=backup_id,
+                            pending_sha256=manifest["encrypted"]["sha256"],
+                        )
+                        self._send_file(
+                            archive, content_type="application/zip",
+                            filename=f"jobscope-full-backup-{backup_id}.zip",
+                            backup_id=backup_id,
+                        )
+                except (BackupError, OSError):
+                    _BACKUP_STATE.update(
+                        ready=False, pending_id="", pending_sha256="",
+                    )
+                    self._send_json(500, {
+                        "ok": False, "error": "hosted full-backup generation failed",
+                    })
+            finally:
+                _OPERATION_LOCK.release()
+
         def _exclusive_operation(self, action: Callable[[], object]) -> tuple[bool, object]:
             if not _OPERATION_LOCK.acquire(blocking=False):
                 return False, None
@@ -371,10 +563,29 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                 self._send_json(400, {"ok": False, "error": "invalid content length"})
                 return None
             if length == 0:
+                self._body_consumed = True
                 return {}
             if length > max_bytes:
+                self._close_after_response = True
+                self.close_connection = True
+                self._body_consumed = True
+                if length <= min(max_bytes + 64 * 1024, 1024 * 1024):
+                    previous_timeout = self.connection.gettimeout()
+                    try:
+                        self.connection.settimeout(1)
+                        remaining = length
+                        while remaining:
+                            chunk = self.rfile.read(min(64 * 1024, remaining))
+                            if not chunk:
+                                break
+                            remaining -= len(chunk)
+                    except OSError:
+                        pass
+                    finally:
+                        self.connection.settimeout(previous_timeout)
                 self._send_json(413, {"ok": False, "error": "request is too large"})
                 return None
+            self._body_consumed = True
             try:
                 value = json.loads(self.rfile.read(length))
             except (UnicodeDecodeError, ValueError):
@@ -467,13 +678,15 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                         allowed_by_action = {
                             "discover": {"action", "target_id", "force", "fetch"},
                             "draft": {"action", "target_id", "selected_email", "subject", "body"},
-                            "approve": {"action", "target_id"},
+                            "approve": {"action", "target_id", "policy"},
                             "status": {"action", "campaign_id", "status"},
                             "delete": {"action", "campaign_id"},
                             "skip": {"action", "target_id"},
                             "discover_pending": {"action", "campaign_id", "limit", "fetch"},
                             "check_replies": {"action", "fetch"},
                             "resolve_delivery": {"action", "target_id", "outcome"},
+                            "reconcile_delivery": {"action", "target_id"},
+                            "resolve_feedback": {"action", "target_id", "outcome"},
                             "send_next": {"action", "campaign_id"},
                             "send_now": {"action", "target_id"},
                         }
@@ -508,14 +721,29 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                         elif action == "approve":
                             target = campaigns.approve_target(
                                 cfg, store, str(data.get("target_id") or ""),
+                                policy=data.get("policy"),
                             )
                             response = {"ok": True, "target": target}
                         elif action == "status":
-                            detail = campaigns.set_campaign_status(
-                                store, str(data.get("campaign_id") or ""),
-                                str(data.get("status") or ""),
-                            )
-                            response = {"ok": True, **detail}
+                            status = str(data.get("status") or "")
+                            if status == "active":
+                                acquired, detail = self._exclusive_operation(
+                                    lambda: campaigns.activate_campaign(
+                                        cfg, store, str(data.get("campaign_id") or ""),
+                                    )
+                                )
+                                response = (
+                                    {"ok": True, **detail}
+                                    if acquired else {
+                                        "ok": False, "code": "operation_busy",
+                                        "error": "another refresh or outreach operation is running",
+                                    }
+                                )
+                            else:
+                                detail = campaigns.set_campaign_status(
+                                    store, str(data.get("campaign_id") or ""), status,
+                                )
+                                response = {"ok": True, **detail}
                         elif action == "delete":
                             response = campaigns.delete_draft_campaign(
                                 store, str(data.get("campaign_id") or ""),
@@ -550,6 +778,22 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                             }
                         elif action == "resolve_delivery":
                             target = campaigns.resolve_delivery(
+                                store, str(data.get("target_id") or ""),
+                                str(data.get("outcome") or ""),
+                            )
+                            response = {"ok": True, "target": target}
+                        elif action == "reconcile_delivery":
+                            acquired, result = self._exclusive_operation(
+                                lambda: campaigns.reconcile_delivery(
+                                    cfg, store, str(data.get("target_id") or ""),
+                                )
+                            )
+                            response = result if acquired else {
+                                "ok": False, "code": "operation_busy",
+                                "error": "another refresh or outreach operation is running",
+                            }
+                        elif action == "resolve_feedback":
+                            target = campaigns.resolve_feedback(
                                 store, str(data.get("target_id") or ""),
                                 str(data.get("outcome") or ""),
                             )
@@ -603,7 +847,7 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                         res = outreach.api_send(
                             cfg, store, job_id, to=str(data.get("to") or ""),
                             subject=str(data.get("subject") or ""),
-                            body=str(data.get("body") or ""), force=bool(data.get("force")))
+                            body=str(data.get("body") or ""))
                     else:
                         res = outreach.api_preview(cfg, store, job_id, to=(data.get("to") or None),
                                                    followup=bool(data.get("followup")))
@@ -631,8 +875,7 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                         res = outreach.api_company_send(
                             cfg, store, company, to=str(data.get("to") or ""),
                             subject=str(data.get("subject") or ""),
-                            body=str(data.get("body") or ""), url=url,
-                            force=bool(data.get("force")))
+                            body=str(data.get("body") or ""), url=url)
                     else:
                         res = outreach.api_company_preview(
                             cfg, store, company, url=url, to=(data.get("to") or None))
@@ -956,13 +1199,22 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                 if not self._automation_authorized():
                     self._send_json(403, {"ok": False, "error": "forbidden"})
                 else:
-                    self._send_json(200, dict(_STATE))
+                    self._send_json(200, {
+                        **_STATE, "backup_ready": bool(_BACKUP_STATE["ready"]),
+                        "heartbeat": self._slot_status(),
+                    })
                 return
             if route == "/api/automation/snapshot":
                 if not self._automation_authorized():
                     self._send_json(403, {"ok": False, "error": "forbidden"})
                 else:
                     self._automation_snapshot()
+                return
+            if route == "/api/automation/backup":
+                if not self._automation_authorized():
+                    self._send_json(403, {"ok": False, "error": "forbidden"})
+                else:
+                    self._automation_backup()
                 return
             if not self._tunnel_authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
@@ -1001,26 +1253,67 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                 if not self._automation_authorized():
                     self._send_json(403, {"ok": False, "error": "forbidden"})
                     return
+                if recovery_mode:
+                    self._send_json(503, {
+                        "ok": False, "sent": False, "code": "recovery_mode",
+                    })
+                    return
                 opts = self._json_request(_MAX_API_REQUEST_BYTES)
                 if opts is None:
                     return
+                operation = "refresh" if route == "/api/automation/refresh" else "tick"
                 if route == "/api/automation/refresh":
                     if not refresh_on:
                         self._send_json(403, {
                             "state": "error", "message": "refresh disabled",
                         })
-                    else:
-                        self._start_refresh(opts)
+                        return
+                    proceed, slot = self._slot_claim(operation)
+                    if proceed:
+                        self._start_refresh(opts, slot)
                     return
                 if opts:
                     self._send_json(400, {
                         "ok": False, "error": "automation tick accepts no options",
                     })
                     return
-                self._automation_tick()
+                proceed, slot = self._slot_claim(operation)
+                if proceed:
+                    self._automation_tick(slot)
+                return
+            if route == "/api/automation/backup/ack":
+                if not self._automation_authorized():
+                    self._send_json(403, {"ok": False, "error": "forbidden"})
+                    return
+                if recovery_mode:
+                    self._send_json(503, {"ok": False, "code": "recovery_mode"})
+                    return
+                value = self._json_request(_MAX_API_REQUEST_BYTES)
+                if value is None:
+                    return
+                backup_id = str(value.get("backup_id") or "")
+                encrypted_sha256 = str(value.get("encrypted_sha256") or "")
+                if (set(value) != {"backup_id", "encrypted_sha256"}
+                        or not secrets.compare_digest(
+                            backup_id, str(_BACKUP_STATE["pending_id"]),
+                        )
+                        or not secrets.compare_digest(
+                            encrypted_sha256, str(_BACKUP_STATE["pending_sha256"]),
+                        )):
+                    self._send_json(409, {
+                        "ok": False, "code": "backup_ack_mismatch",
+                    })
+                    return
+                _BACKUP_STATE.update(
+                    ready=True, pending_id="", pending_sha256="",
+                )
+                self._send_json(200, {"ok": True, "backup_id": backup_id})
                 return
             if not self._tunnel_authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            if recovery_mode:
+                self._send_json(503, {"ok": False, "error": "recovery_mode"})
                 return
             if route == "/api/outreach":
                 self._outreach()
@@ -1074,6 +1367,9 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
             if not self._tunnel_authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
+            if recovery_mode:
+                self._send_json(503, {"ok": False, "error": "recovery_mode"})
+                return
             if route == "/api/profile":
                 self._profile_update()
                 return
@@ -1089,6 +1385,19 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
 
 def run(cfg: dict, port: int = 8799, open_browser: bool = False,
         hosted: bool = False) -> int:
+    if hosted:
+        from jobscope.core.snapshot import validate_sqlite_snapshot
+        from jobscope.core.sqlite_runtime import require_safe_sqlite, source_id
+        require_safe_sqlite(verify_identity=True)
+        db_path = (cfg.get("output", {}) or {}).get("db_path") or "data/jobscope.db"
+        if os.path.isfile(db_path):
+            validate_sqlite_snapshot(db_path)
+        artifact = os.environ.get("JOBSCOPE_ARTIFACT_ID", "unknown")
+        archive = os.environ.get("JOBSCOPE_SQLITE_ARCHIVE_SHA256", "unknown")
+        print(
+            f"  hosted artifact={artifact} sqlite={sqlite3.sqlite_version} "
+            f"source={source_id()} archive={archive}"
+        )
     httpd, page, _token, refresh_on = _build_server(cfg, port, hosted=hosted)
     port = httpd.server_address[1]
     with httpd:
@@ -1107,7 +1416,7 @@ def run(cfg: dict, port: int = 8799, open_browser: bool = False,
     return 0
 
 
-def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
+def perform_refresh(cfg: dict, *, force: bool = False,
                     publish_site: bool = True, on_step=None) -> dict:
     """Refresh local data and optionally publish the encrypted snapshot.
 
@@ -1119,6 +1428,8 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
     the loopback API can refresh SQLite without rebuilding Vite or pushing Pages.
     """
     from jobscope.core.store import Store
+    from jobscope.core import ai
+    ai.reset_budget(cfg)
 
     def step(name: str, message: str) -> None:
         if on_step:
@@ -1126,7 +1437,6 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
 
     serve_cfg = cfg.get("serve", {}) or {}
     days = int(serve_cfg.get("inbox_days", 7) or 7)
-    want_scan = full_scan or bool(serve_cfg.get("refresh_full_scan", False))
     today = _today()
     with Store(cfg["output"]["db_path"]) as store:
         data_current = (store.meta_get("refresh:last_date", "") or "") == today
@@ -1141,22 +1451,12 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
         note = ""
         try:
             if force or not data_current:
-                from jobscope.ingest import monitor, scrape
+                from jobscope.ingest import monitor
                 step("monitors", "Scanning monitored company portals")
                 stages.append(_run_stage(
                     "monitors", required=False,
                     action=lambda: monitor.scan_active_monitors(cfg, store),
                 ))
-
-                if want_scan or scrape.discovery_due(cfg, store):
-                    step("scan", "Scanning job boards...")
-                    stages.append(_run_stage(
-                        "scan", required=False,
-                        action=lambda: scrape.run(
-                            cfg, store, mode="discovery", force_discovery=want_scan,
-                        ),
-                        nonzero_is_failure=True,
-                    ))
 
                 step("inbox", f"Syncing Gmail (last {days} days)...")
                 from jobscope.ingest import inbox
@@ -1231,27 +1531,39 @@ def perform_refresh(cfg: dict, *, force: bool = False, full_scan: bool = False,
             "degraded": degraded, "stages": [asdict(stage) for stage in stages]}
 
 
-def _run_refresh(cfg: dict, force: bool, full_scan: bool, run_id: str = "") -> None:
+def _run_refresh(cfg: dict, force: bool, run_id: str = "", slot: str = "") -> None:
     """Server background worker: run :func:`perform_refresh`, mirroring progress
     and the outcome into the shared ``_STATE`` for /api/status polling."""
     def on_step(name: str, message: str) -> None:
         _STATE.update(step=name, message=message)
         _persist_refresh_state(cfg)
 
+    state = "error"
+    code = ""
     try:
         with _OPERATION_LOCK:
-            res = perform_refresh(
-                cfg, force=force, full_scan=full_scan, publish_site=False, on_step=on_step,
-            )
+            res = perform_refresh(cfg, force=force, publish_site=False, on_step=on_step)
         _STATE.update(state=res["state"], step=res["state"], message=res["message"],
                   stages=res.get("stages", []),
                       last_date=res.get("last_date") or _STATE.get("last_date", ""),
                       finished=_now(), run_id=run_id or _STATE.get("run_id", ""))
+        state = "ok" if res["state"] == "done" else "error"
+        code = str(res["state"])
     except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
         _STATE.update(state="error", step="error", message=str(exc)[:300],
                       finished=_now(), run_id=run_id or _STATE.get("run_id", ""))
+        code = "refresh_failed"
     finally:
         _persist_refresh_state(cfg)
+        if slot:
+            _finish_slot(cfg, slot, state=state, code=code, run_id=run_id)
+
+
+def _finish_slot(cfg: dict, slot: str, *, state: str, code: str, run_id: str) -> None:
+    from jobscope.core.store import Store
+    from jobscope.deliver import automation
+    with Store(cfg["output"]["db_path"]) as store:
+        automation.finish(store, slot, state=state, code=code, run_id=run_id)
 
 
 def _build_local_spa(cfg: dict, store) -> None:

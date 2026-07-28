@@ -13,10 +13,6 @@ on:
         description: "Repeat today's refresh"
         type: boolean
         default: false
-      full_scan:
-        description: "Also scan job boards"
-        type: boolean
-        default: false
 
 concurrency:
   group: jobscope-hosted-operations
@@ -44,7 +40,6 @@ jobs:
         env:
           OPERATION: ${{ inputs.operation }}
           FORCE: ${{ inputs.force }}
-          FULL_SCAN: ${{ inputs.full_scan }}
         run: |
           set -euo pipefail
           origin="${JOBSCOPE_AUTOMATION_ORIGIN%/}"
@@ -78,12 +73,11 @@ jobs:
             exit 0
           fi
 
-          python - "$FORCE" "$FULL_SCAN" > "$RUNNER_TEMP/refresh-request.json" <<'PY'
+            python - "$FORCE" > "$RUNNER_TEMP/refresh-request.json" <<'PY'
           import json, sys
           truthy = {"1", "true", "yes"}
           print(json.dumps({
               "force": sys.argv[1].lower() in truthy,
-              "full_scan": sys.argv[2].lower() in truthy,
           }))
           PY
           api --request POST --header "Content-Type: application/json" \

@@ -14,14 +14,11 @@ name: refresh
 run-name: ${{ inputs.mutation_nonce && format('Monitoring sync {0}', inputs.mutation_nonce) || format('Refresh ({0})', github.event_name) }}
 
 on:
-  schedule:
-    - cron: "17 */3 * * *"    # every 3 hours (UTC)
+  # No `schedule:` trigger. The Cloudflare `jobscope-automation` Worker is the
+  # only autonomous writer; a second mutating clock here would race it and
+  # break single-writer slot claiming. Run this manually only.
   workflow_dispatch:           # manual "Run workflow" button -- works from the GitHub mobile app
     inputs:
-      full_scan:
-        description: "Also scan job boards (slower)"
-        type: boolean
-        default: false
       inbox_backfill:
         description: "Re-scan ALL inbox history and re-score (one-time heal; slower)"
         type: boolean
@@ -144,11 +141,6 @@ jobs:
             python -m jobscope companies apply --actions-file data/monitoring-actions.json
           else
             python -m jobscope companies scan || echo "::warning::one or more company monitors need attention"
-            if [ "${{ inputs.full_scan }}" = "true" ]; then
-              python -m jobscope scan --mode discovery --force-discovery || echo "::warning::broad discovery failed (non-fatal)"
-            else
-              python -m jobscope scan --mode discovery || echo "::warning::broad discovery failed (non-fatal)"
-            fi
             if [ "${{ inputs.inbox_backfill }}" = "true" ]; then
               python -m jobscope inbox --backfill --include-spam --initiator cloud_refresh
             else
