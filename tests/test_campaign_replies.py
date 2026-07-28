@@ -1,3 +1,7 @@
+from datetime import datetime, timezone
+
+import pytest
+
 from jobscope.apply import campaigns
 from jobscope.core.model import MailEvent
 
@@ -18,8 +22,16 @@ def _sent_target(store, *, company="Acme", domain="acme.example",
         selected_email=f"recruiter@{domain}", subject="Hello", body="Body",
         resume_path="resume.pdf",
     )
-    store.approve_outreach_campaign_target(target["id"])
-    assert store.claim_outreach_campaign_target_send(target["id"], message_id)
+    store.set_outreach_campaign_policy(target["id"], {
+        "policy_version": campaigns.OUTREACH_POLICY_VERSION,
+        "purpose": "cold",
+        "contact_source": "test_fixture",
+    })
+    approved = store.approve_outreach_campaign_target(target["id"])
+    assert store.claim_outreach_campaign_target_send(
+        target["id"], message_id,
+        expected_approval_hash=approved["approval_hash"],
+    )
     store.mark_outreach_campaign_target_sent(target["id"], sent_at)
     return target["id"]
 
@@ -124,6 +136,107 @@ def test_domain_fallback_refuses_ambiguous_outstanding_targets(tmp_path):
     store.close()
 
 
+@pytest.mark.parametrize(
+    ("signal", "expected_kind", "expected_state", "domain_suppressed"),
+    [
+        ("campaign_hard_bounce", "hard_bounce", "failed", False),
+        ("campaign_complaint", "complaint", "opted_out", True),
+    ],
+)
+def test_terminal_provider_feedback_suppresses_and_is_idempotent(
+    tmp_path, signal, expected_kind, expected_state, domain_suppressed,
+):
+    from jobscope.core.store import Store
+
+    store = Store(str(tmp_path / f"{expected_kind}.db"))
+    outbound_id = f"jobscope-campaign-{'a' * 24}@example.com"
+    target_id = _sent_target(store, message_id=outbound_id)
+    event = MailEvent(
+        account="me@example.com", message_id=f"<{expected_kind}@provider.example>",
+        thread_id=outbound_id, from_addr="mailer-daemon@provider.example",
+        from_domain="provider.example", subject="Delivery feedback",
+        date="2026-07-17T06:00:00Z", signal=signal,
+    ).ensure_id()
+    store.upsert_mail_event(event)
+
+    first = campaigns.reconcile_provider_feedback(store)
+    second = campaigns.reconcile_provider_feedback(store)
+
+    target = store.get_outreach_campaign_target(target_id)
+    assert first[expected_kind] == 1 and first["duplicate"] == 0
+    assert second[expected_kind] == 0 and second["duplicate"] == 1
+    assert target["state"] == expected_state
+    assert target["error_code"] == expected_kind
+    assert target["feedback_event_id"] == event.id
+    assert store.is_outreach_suppressed("email", "recruiter@acme.example")
+    assert store.is_outreach_suppressed("domain", "acme.example") is domain_suppressed
+    assert store.outreach_delivery_feedback(target_id) == [{
+        "event_id": event.id,
+        "target_id": target_id,
+        "kind": expected_kind,
+        "feedback_at": "2026-07-17T06:00:00Z",
+        "created_at": store.outreach_delivery_feedback(target_id)[0]["created_at"],
+    }]
+    store.close()
+
+
+def test_transient_bounce_pauses_all_delivery_until_review(tmp_path):
+    from jobscope.core.store import Store
+
+    store = Store(str(tmp_path / "transient.db"))
+    outbound_id = f"jobscope-campaign-{'b' * 24}@example.com"
+    target_id = _sent_target(store, message_id=outbound_id)
+    event = MailEvent(
+        account="me@example.com", message_id="<delayed@provider.example>",
+        thread_id=outbound_id, from_addr="mailer-daemon@provider.example",
+        from_domain="provider.example", subject="Delivery delayed",
+        date="2026-07-17T06:00:00Z", signal="campaign_transient_bounce",
+    ).ensure_id()
+    store.upsert_mail_event(event)
+
+    result = campaigns.reconcile_provider_feedback(store)
+
+    target = store.get_outreach_campaign_target(target_id)
+    assert result["transient_bounce"] == 1
+    assert target["state"] == "sent" and target["error_code"] == "transient_bounce"
+    assert store.outreach_campaign_delivery_blocker() == "transient_bounce"
+    assert store.outreach_suppressions() == []
+
+    resolved = store.resolve_outreach_campaign_transient_bounce(target_id, "delivered")
+    assert resolved["state"] == "sent" and resolved["error_code"] == ""
+    assert store.outreach_campaign_delivery_blocker() == ""
+    store.close()
+
+
+def test_text_dsn_matches_stable_message_id_and_ambiguous_feedback_is_ignored(tmp_path):
+    from jobscope.core.store import Store
+
+    store = Store(str(tmp_path / "text-dsn.db"))
+    outbound_id = f"jobscope-campaign-{'c' * 24}@example.com"
+    target_id = _sent_target(store, message_id=outbound_id)
+    matched = MailEvent(
+        account="me@example.com", message_id="<dsn@provider.example>",
+        from_addr="mailer-daemon@provider.example", from_domain="provider.example",
+        subject="Undeliverable message", date="2026-07-17T06:00:00Z",
+        signal="other", snippet=f"Status: 5.1.1 Original-Message-ID: <{outbound_id}>",
+    ).ensure_id()
+    ambiguous = MailEvent(
+        account="me@example.com", message_id="<ambiguous@provider.example>",
+        from_addr="mailer-daemon@provider.example", from_domain="provider.example",
+        subject="Undeliverable message", date="2026-07-17T06:01:00Z",
+        signal="campaign_hard_bounce", snippet="Status: 5.1.1",
+    ).ensure_id()
+    store.upsert_mail_event(matched)
+    store.upsert_mail_event(ambiguous)
+
+    result = campaigns.reconcile_provider_feedback(store)
+
+    assert result["hard_bounce"] == 1 and result["ambiguous"] == 1
+    assert store.get_outreach_campaign_target(target_id)["feedback_event_id"] == matched.id
+    assert len(store.outreach_delivery_feedback(target_id)) == 1
+    store.close()
+
+
 def test_sync_replies_fetches_inbox_then_reconciles(tmp_path, monkeypatch):
     from jobscope.core.store import Store
 
@@ -151,22 +264,40 @@ def test_sync_replies_fetches_inbox_then_reconciles(tmp_path, monkeypatch):
     store.close()
 
 
-def test_tick_checks_replies_before_one_delivery(monkeypatch):
+@pytest.mark.parametrize(
+    ("inbox_status", "pending", "expected_code", "ok"),
+    [
+        ("ok", 1, "reconciliation_only", True),
+        ("not_needed", 0, "reconciliation_only", True),
+        ("error", 1, "reply_sync_required", False),
+        ("disabled", 1, "reply_sync_required", False),
+        ("unconfigured", 1, "reply_sync_required", False),
+        ("not_fetched", 1, "reply_sync_required", False),
+    ],
+)
+def test_tick_is_reconciliation_only_and_fails_closed(
+    monkeypatch, inbox_status, pending, expected_code, ok,
+):
     order = []
     monkeypatch.setattr(
         campaigns, "sync_replies",
         lambda *_args, **_kwargs: order.append("replies") or {
-            "ok": True, "inbox_status": "ok", "replied": 0, "opted_out": 0,
+            "ok": inbox_status in {"ok", "not_needed"},
+            "inbox_status": inbox_status, "pending": pending,
+            "replied": 0, "opted_out": 0,
         },
     )
     monkeypatch.setattr(
         campaigns, "send_next_approved",
-        lambda *_args, **_kwargs: order.append("send") or {
-            "ok": True, "sent": True, "code": "",
-        },
+        lambda *_args, **_kwargs: pytest.fail("tick attempted delivery"),
     )
+    store = type("Store", (), {
+        "due_outreach_campaign_targets": lambda *_args, **_kwargs: [{"id": "due"}],
+    })()
 
-    result = campaigns.tick({}, object())
+    result = campaigns.tick({}, store, now=datetime(2026, 7, 17, tzinfo=timezone.utc))
 
-    assert order == ["replies", "send"]
-    assert result["sent"] is True
+    assert order == ["replies"]
+    assert result["ok"] is ok and result["sent"] is False
+    assert result["code"] == expected_code
+    assert result["delivery"]["due_count"] == 1

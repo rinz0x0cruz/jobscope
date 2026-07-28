@@ -1,23 +1,16 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Pace individually approved Jobscope campaign emails from this computer.
+    Reconcile Jobscope campaign replies from this computer.
 
 .DESCRIPTION
     Registers an hourly Windows Scheduled Task that runs `jobscope campaign
-    tick`. Each invocation incrementally checks configured inboxes for replies,
-    then sends at most one due, individually approved draft. Jobscope rechecks
-    the local time window, daily limit, spacing,
-    application history, cooldown, do-not-contact list, recipient domain,
-    attachment, and SMTP gates immediately before sending.
-
-    Registration first runs `jobscope campaign ready`. SMTP passwords are resolved
-    from the OS keychain or configured environment variable and are never written
-    into the task definition.
+    tick`. Each invocation incrementally checks configured inboxes, reconciles
+    replies, opt-outs, bounces, and complaints, and reports due approved work.
+    It never calls SMTP; delivery remains a separate explicit action.
 
 .PARAMETER IntervalMinutes
-    Scheduler frequency. Default 60; minimum 15. This is only a wake-up cadence,
-    not a send rate: Jobscope's stricter campaign pacing remains authoritative.
+    Reconciliation frequency. Default 60; minimum 15.
 
 .PARAMETER Config
     Optional path to a non-default Jobscope config file.
@@ -47,19 +40,6 @@ if ($Config) {
     $ResolvedConfig = (Resolve-Path $Config).Path
 }
 
-$ReadyArgs = @("-m", "jobscope")
-if ($ResolvedConfig) { $ReadyArgs += @("--config", $ResolvedConfig) }
-$ReadyArgs += @("campaign", "ready")
-Push-Location $RepoRoot
-try {
-    & $Py @ReadyArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Campaign sending is not configured. Fix the readiness messages above before registering the task."
-    }
-} finally {
-    Pop-Location
-}
-
 $ConfigArg = if ($ResolvedConfig) { "--config `"$ResolvedConfig`" " } else { "" }
 $CommandArgs = "-m jobscope ${ConfigArg}campaign tick"
 $action = New-ScheduledTaskAction -Execute $Py -Argument $CommandArgs -WorkingDirectory $RepoRoot
@@ -77,9 +57,9 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force | Out-Null
 
 Write-Host "Registered scheduled task '$TaskName'."
-Write-Host "  cadence: every $IntervalMinutes minute(s); one approved email maximum per run"
+Write-Host "  cadence: every $IntervalMinutes minute(s); reconciliation only"
 Write-Host "  command: $Py $CommandArgs"
-Write-Host "  pacing: campaign daily limit, spacing, timezone, and send window remain authoritative"
+Write-Host "  delivery: separate manual action; this task never calls SMTP"
 Write-Host ""
 Write-Host "Run now:  Start-ScheduledTask -TaskName '$TaskName'"
 Write-Host "Remove:   ./scripts/unregister-outreach-task.ps1 -TaskName '$TaskName'"

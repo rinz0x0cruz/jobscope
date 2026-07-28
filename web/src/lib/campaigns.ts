@@ -19,6 +19,21 @@ export interface CampaignContact {
   note: string
 }
 
+export interface OutreachPolicy {
+  sender_jurisdiction: string
+  recipient_jurisdiction: string
+  recipient_kind: 'prior_inbound_recruiter' | 'employer_published' | 'verified_business_contact' | 'role_inbox'
+  contact_source: string
+  contact_provenance_at: string
+  purpose: 'cold' | 'followup'
+  basis: 'consent' | 'existing_relationship' | 'legitimate_interest'
+  consent: 'yes' | 'no' | 'not_applicable'
+  identity_footer: boolean
+  opt_out_method: 'reply' | 'mailto' | 'unsubscribe_link'
+  reviewer: string
+  policy_version: 'outreach-policy-v1'
+}
+
 export interface CampaignEvidence {
   region?: string[]
   compensation?: string[]
@@ -100,6 +115,8 @@ export interface CampaignTarget {
   body: string
   resume_path: string
   resume_sha256: string
+  policy?: Partial<OutreachPolicy>
+  policy_sha256?: string
   approval_hash: string
   approved_at: string
   scheduled_at: string
@@ -107,6 +124,9 @@ export interface CampaignTarget {
   sent_at: string
   replied_at: string
   reply_event_id: string
+  feedback_event_id?: string
+  feedback_kind?: string
+  feedback_at?: string
   error_code: string
   error_detail: string
   created_at: string
@@ -132,6 +152,8 @@ export interface CampaignActionResult {
   ok: boolean
   error?: string
   code?: string
+  status?: string
+  count?: number
   sent?: boolean
   target?: CampaignTarget
   campaign?: Campaign

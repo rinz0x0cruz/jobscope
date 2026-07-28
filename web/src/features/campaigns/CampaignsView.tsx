@@ -31,6 +31,7 @@ import {
   type CampaignHistoryItem,
   type CampaignSummary,
   type OutreachSnapshot,
+  type OutreachPolicy,
   type CampaignSnapshotTarget,
   type CampaignTarget,
 } from '@/lib/campaigns'
@@ -392,12 +393,13 @@ function CampaignDetail({
   async function sendNext() {
     setBusy('send_next')
     try {
-      const result = await campaignAction(token, { action: 'send_next', campaign_id: campaign.id })
-      if (!result.ok) throw new Error(messageForCode(result.code))
+      const result = await campaignAction(token, { action: 'check_replies', fetch: true })
+      if (!result.ok) throw new Error(result.error || 'Inbox reply check failed')
       await onChanged()
-      toast.success(result.sent ? 'Approved email sent' : 'No approved email is due')
+      const due = detail.counts.approved ?? 0
+      toast.success(`${result.replied ?? 0} replies · ${result.opted_out ?? 0} opt-outs · ${due} approved due/review item${due === 1 ? '' : 's'}`)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not send campaign email')
+      toast.error(error instanceof Error ? error.message : 'Could not check replies and due work')
     } finally {
       setBusy('')
     }
@@ -446,7 +448,7 @@ function CampaignDetail({
               <ActionButton label={campaign.status === 'paused' ? 'Resume' : 'Start'} onClick={() => status('active')} busy={busy === 'active'} Icon={Play} primary />
             ) : null}
             {campaign.status === 'active' && (
-              <ActionButton label="Send next due" onClick={sendNext} busy={busy === 'send_next'} Icon={Send} />
+              <ActionButton label="Check replies and due work" onClick={sendNext} busy={busy === 'send_next'} Icon={RefreshCw} />
             )}
             {campaign.status === 'draft' && (
               <ActionButton label="Delete draft" onClick={deleteDraft} busy={busy === 'delete'} Icon={Trash2} danger />
@@ -574,6 +576,15 @@ function TargetEditor({
   const [email, setEmail] = useState(target.selected_email || target.contacts[0]?.email || '')
   const [subject, setSubject] = useState(target.subject)
   const [body, setBody] = useState(target.body)
+  const [senderJurisdiction, setSenderJurisdiction] = useState(target.policy?.sender_jurisdiction || '')
+  const [recipientJurisdiction, setRecipientJurisdiction] = useState(target.policy?.recipient_jurisdiction || '')
+  const [recipientKind, setRecipientKind] = useState<OutreachPolicy['recipient_kind'] | ''>(target.policy?.recipient_kind || '')
+  const [provenanceAt, setProvenanceAt] = useState(target.policy?.contact_provenance_at || '')
+  const [basis, setBasis] = useState<OutreachPolicy['basis'] | ''>(target.policy?.basis || '')
+  const [consent, setConsent] = useState<OutreachPolicy['consent'] | ''>(target.policy?.consent || '')
+  const [optOutMethod, setOptOutMethod] = useState<OutreachPolicy['opt_out_method'] | ''>(target.policy?.opt_out_method || '')
+  const [identityFooter, setIdentityFooter] = useState(target.policy?.identity_footer === true)
+  const [reviewer, setReviewer] = useState(target.policy?.reviewer || '')
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState('')
   const deliveryUnknown = target.error_code === 'delivery_unknown'
@@ -622,17 +633,31 @@ function TargetEditor({
     }
   }
 
-  async function approve(sendNow: boolean) {
-    setBusy(sendNow ? 'approve_send' : 'approve')
+  async function approve() {
+    setBusy('approve')
     try {
-      await saveDraft()
-      await checkedAction(token, { action: 'approve', target_id: target.id })
-      if (sendNow) {
-        const result = await campaignAction(token, { action: 'send_now', target_id: target.id })
-        if (!result.ok) throw new Error(messageForCode(result.code))
+      const saved = await saveDraft()
+      if (!senderJurisdiction || !recipientJurisdiction || !recipientKind || !provenanceAt
+          || !basis || !consent || !optOutMethod || !identityFooter || !reviewer) {
+        throw new Error('Complete the compliance review before approval')
       }
+      const policy: OutreachPolicy = {
+        sender_jurisdiction: senderJurisdiction,
+        recipient_jurisdiction: recipientJurisdiction,
+        recipient_kind: recipientKind,
+        contact_source: saved.target?.selected_source || target.selected_source,
+        contact_provenance_at: provenanceAt,
+        purpose: campaign.purpose || 'cold',
+        basis,
+        consent,
+        identity_footer: identityFooter,
+        opt_out_method: optOutMethod,
+        reviewer,
+        policy_version: 'outreach-policy-v1',
+      }
+      await checkedAction(token, { action: 'approve', target_id: target.id, policy })
       await onChanged()
-      toast.success(sendNow ? 'Approved email sent' : 'Email approved and scheduled')
+      toast.success('Email approved and scheduled')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not approve email')
     } finally {
@@ -679,6 +704,41 @@ function TargetEditor({
         : 'Returned to draft; review and approve before retrying')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not resolve delivery')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function reconcileUnknown() {
+    setBusy('reconcile_sent')
+    try {
+      const result = await campaignAction(token, {
+        action: 'reconcile_delivery', target_id: target.id,
+      })
+      if (!result.ok) throw new Error(messageForCode(result.code))
+      await onChanged()
+      toast.success(result.status === 'sent'
+        ? 'Exact Message-ID found once in Sent; delivery marked sent'
+        : 'Message-ID not found in Sent; returned to draft for review')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not check Sent mail')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function resolveFeedback(outcome: 'delivered' | 'hard_bounce') {
+    setBusy(`feedback_${outcome}`)
+    try {
+      await checkedAction(token, {
+        action: 'resolve_feedback', target_id: target.id, outcome,
+      })
+      await onChanged()
+      toast.success(outcome === 'delivered'
+        ? 'Transient bounce cleared after delivery verification'
+        : 'Hard bounce confirmed; recipient suppressed')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not resolve provider feedback')
     } finally {
       setBusy('')
     }
@@ -783,9 +843,47 @@ function TargetEditor({
           </p>
         )}
 
+        {editable && hasDraft && (
+          <fieldset className="grid gap-3 border-t border-line pt-4 sm:grid-cols-2">
+            <legend className="col-span-full text-[10px] font-semibold uppercase text-ink-3">Compliance review</legend>
+            <PolicyInput label="Sender jurisdiction" value={senderJurisdiction} onChange={(value) => { setSenderJurisdiction(value); setDirty(true) }} />
+            <PolicyInput label="Recipient jurisdiction" value={recipientJurisdiction} onChange={(value) => { setRecipientJurisdiction(value); setDirty(true) }} />
+            <PolicySelect label="Recipient kind" value={recipientKind} onChange={(value) => { setRecipientKind(value); setDirty(true) }} options={[
+              ['prior_inbound_recruiter', 'Prior inbound recruiter'],
+              ['employer_published', 'Employer-published address'],
+              ['verified_business_contact', 'Verified business contact'],
+              ['role_inbox', 'Role inbox'],
+            ]} />
+            <PolicyInput label="Contact provenance date" value={provenanceAt} onChange={(value) => { setProvenanceAt(value); setDirty(true) }} placeholder="2026-07-28T10:00:00Z" />
+            <PolicySelect label="Basis" value={basis} onChange={(value) => { setBasis(value); setDirty(true) }} options={[
+              ['consent', 'Consent'],
+              ['existing_relationship', 'Existing relationship'],
+              ['legitimate_interest', 'Legitimate interest'],
+            ]} />
+            <PolicySelect label="Consent" value={consent} onChange={(value) => { setConsent(value); setDirty(true) }} options={[
+              ['yes', 'Yes'], ['no', 'No'], ['not_applicable', 'Not applicable'],
+            ]} />
+            <PolicySelect label="Opt-out method" value={optOutMethod} onChange={(value) => { setOptOutMethod(value); setDirty(true) }} options={[
+              ['reply', 'Reply'], ['mailto', 'Mailto'], ['unsubscribe_link', 'Unsubscribe link'],
+            ]} />
+            <PolicyInput label="Reviewer" value={reviewer} onChange={(value) => { setReviewer(value); setDirty(true) }} />
+            <label className="col-span-full flex items-center gap-2 text-[11px] text-ink-2">
+              <input type="checkbox" checked={identityFooter} onChange={(event) => { setIdentityFooter(event.target.checked); setDirty(true) }} />
+              Sender identity and required footer are present in this exact draft.
+            </label>
+          </fieldset>
+        )}
+
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
+          {target.error_code === 'transient_bounce' && (
+            <>
+              <ActionButton label="Confirmed delivered" onClick={() => resolveFeedback('delivered')} busy={busy === 'feedback_delivered'} Icon={Check} primary />
+              <ActionButton label="Confirmed hard bounce" onClick={() => resolveFeedback('hard_bounce')} busy={busy === 'feedback_hard_bounce'} Icon={AlertTriangle} />
+            </>
+          )}
           {deliveryUnknown && (
             <>
+              <ActionButton label="Check Sent" onClick={reconcileUnknown} busy={busy === 'reconcile_sent'} Icon={MailSearch} primary />
               <ActionButton label="Confirmed in Sent" onClick={() => resolveUnknown('sent')} busy={busy === 'resolve_sent'} Icon={Check} primary />
               <ActionButton label="Confirmed not sent" onClick={() => resolveUnknown('not_sent')} busy={busy === 'resolve_not_sent'} Icon={RefreshCw} />
             </>
@@ -794,10 +892,7 @@ function TargetEditor({
             <ActionButton label={hasDraft ? 'Save draft' : 'Generate draft'} onClick={saveOnly} busy={busy === 'save'} Icon={Check} />
           )}
           {editable && hasDraft && email && (target.state !== 'approved' || dirty) && (
-            <>
-              <ActionButton label="Approve" onClick={() => approve(false)} busy={busy === 'approve'} Icon={ShieldCheck} primary />
-              <ActionButton label="Approve and send now" onClick={() => approve(true)} busy={busy === 'approve_send'} Icon={Send} />
-            </>
+            <ActionButton label="Approve" onClick={approve} busy={busy === 'approve'} Icon={ShieldCheck} primary />
           )}
           {target.state === 'approved' && !dirty && !deliveryUnknown && (
             <ActionButton label="Send now" onClick={sendNow} busy={busy === 'send_now'} Icon={Send} primary />
@@ -837,6 +932,16 @@ function messageForCode(code?: string): string {
     operation_busy: 'Another refresh or outreach operation is running',
     send_in_progress: 'Another campaign email is already being sent',
     delivery_unknown: 'A delivery outcome is unknown; check Sent mail before sending anything else',
+    smtp_pre_send_failure: 'SMTP failed before submission; review configuration and approve again',
+    smtp_transient_rejection: 'The SMTP server temporarily rejected submission; review before retrying',
+    smtp_permanent_rejection: 'The SMTP server permanently rejected submission; correct the draft or recipient',
+    multiple_sent_matches: 'Multiple exact Message-ID copies were found; sending remains blocked for manual review',
+    sent_account_unconfigured: 'Configure the SMTP sender as exactly one read-only inbox account',
+    inbox_disabled: 'Enable the read-only inbox before checking Sent mail',
+    sent_folder_unavailable: 'The configured Sent folder is unavailable',
+    sent_search_failed: 'The Sent folder could not be searched safely',
+    sent_search_too_broad: 'The Sent search returned too many candidates; sending remains blocked',
+    sent_reconciliation_failed: 'Could not safely check Sent mail; sending remains blocked',
     resume_changed: 'The approved résumé changed; review and approve this draft again',
     company_cooldown: 'This company is still in its outreach cooldown',
     nothing_due: 'No approved email is due',
@@ -917,6 +1022,27 @@ function Evidence({ label, score, lines = [] }: { label: string; score: number; 
 function ContactNote({ contact }: { contact?: CampaignContact }) {
   if (!contact) return null
   return <p className="text-[11px] text-ink-3">{contact.note || contact.source} · {contact.confidence} confidence</p>
+}
+
+function PolicyInput({ label, value, onChange, placeholder = '' }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+  return (
+    <label className="text-[10px] font-semibold uppercase text-ink-3">
+      {label}
+      <input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-line bg-inset px-3 text-[12px] font-normal normal-case text-ink outline-none focus:border-line-strong" />
+    </label>
+  )
+}
+
+function PolicySelect<T extends string>({ label, value, onChange, options }: { label: string; value: T | ''; onChange: (value: T | '') => void; options: Array<[T, string]> }) {
+  return (
+    <label className="text-[10px] font-semibold uppercase text-ink-3">
+      {label}
+      <select value={value} onChange={(event) => onChange(event.target.value as T | '')} className="mt-1 h-9 w-full rounded-md border border-line bg-inset px-3 text-[12px] font-normal normal-case text-ink outline-none focus:border-line-strong">
+        <option value="">Select</option>
+        {options.map(([option, text]) => <option key={option} value={option}>{text}</option>)}
+      </select>
+    </label>
+  )
 }
 
 function targetDisplayState(target: CampaignTarget): string {
@@ -1036,7 +1162,7 @@ export function CampaignsSnapshotView({
         <ShieldCheck size={15} className="shrink-0 text-brand" aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <p className="text-[12px] font-semibold text-ink">Pages is view-only</p>
-          <p className="text-[11px] text-ink-3">Delete draft · Find recruiters · Approve · Start · Send next due</p>
+          <p className="text-[11px] text-ink-3">Delete draft · Find recruiters · Approve · Start · Check replies and due work</p>
         </div>
         <a
           href={privateUrl}

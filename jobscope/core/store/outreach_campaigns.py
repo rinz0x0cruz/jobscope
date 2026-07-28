@@ -38,7 +38,14 @@ def _approval_hash(row: dict) -> str:
         "resume_sha256": row.get("resume_sha256") or "",
         "parent_message_id": row.get("parent_message_id") or "",
         "root_message_id": row.get("root_message_id") or "",
+        "application_job_id": row.get("application_job_id") or "",
+        "source_target_id": row.get("source_target_id") or "",
         "followup_number": int(row.get("followup_number") or 0),
+        "recipient_locked": bool(row.get("recipient_locked")),
+        "selected_source": row.get("selected_source") or "",
+        "selected_confidence": row.get("selected_confidence") or "",
+        "selected_note": row.get("selected_note") or "",
+        "policy_sha256": row.get("policy_sha256") or "",
     }
     return hashlib.sha256(_json(approved).encode("utf-8")).hexdigest()
 
@@ -53,6 +60,7 @@ def _hydrate(row) -> Optional[dict]:
         return None
     value = dict(row)
     for key in ("weights_json", "criteria_json", "evidence_json", "contacts_json",
+                "policy_json",
                 "summary_json"):
         if key in value:
             default = "[]" if key == "contacts_json" else "{}"
@@ -192,6 +200,14 @@ class OutreachCampaignsMixin:
     ) -> dict:
         timestamp = now_iso()
         target_id = _target_id(campaign_id, company_key)
+        approval_identity_changed = (
+            "(outreach_campaign_targets.application_job_id <> excluded.application_job_id OR "
+            "outreach_campaign_targets.source_target_id <> excluded.source_target_id OR "
+            "outreach_campaign_targets.parent_message_id <> excluded.parent_message_id OR "
+            "outreach_campaign_targets.root_message_id <> excluded.root_message_id OR "
+            "outreach_campaign_targets.followup_number <> excluded.followup_number OR "
+            "outreach_campaign_targets.recipient_locked <> excluded.recipient_locked)"
+        )
         self.conn.execute(
             "INSERT INTO outreach_campaign_targets ("
             "id, campaign_id, company_key, company, application_job_id, source_target_id, "
@@ -200,6 +216,10 @@ class OutreachCampaignsMixin:
             "compensation_score, growth_score, evidence_coverage, evidence_json, "
             "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(campaign_id, company_key) DO UPDATE SET "
+            f"state = CASE WHEN {approval_identity_changed} THEN 'draft' ELSE state END, "
+            f"approval_hash = CASE WHEN {approval_identity_changed} THEN '' ELSE approval_hash END, "
+            f"approved_at = CASE WHEN {approval_identity_changed} THEN '' ELSE approved_at END, "
+            f"scheduled_at = CASE WHEN {approval_identity_changed} THEN '' ELSE scheduled_at END, "
             "company = excluded.company, application_job_id = excluded.application_job_id, "
             "source_target_id = excluded.source_target_id, "
             "parent_message_id = excluded.parent_message_id, "
@@ -298,6 +318,7 @@ class OutreachCampaignsMixin:
             "contacts_json = ?, selected_email = ?, selected_source = ?, "
             "selected_confidence = ?, selected_note = ?, subject = ?, body = ?, "
             "resume_path = ?, resume_sha256 = ?, approval_hash = '', approved_at = '', scheduled_at = '', "
+            "policy_json = '{}', policy_sha256 = '', "
             "error_code = '', error_detail = '', updated_at = ? WHERE id = ? "
             "AND COALESCE(error_code, '') <> 'sending'",
             (
@@ -327,6 +348,7 @@ class OutreachCampaignsMixin:
             "selected_email = '', selected_source = '', selected_confidence = '', "
             "selected_note = '', subject = '', body = '', resume_path = '', "
             "resume_sha256 = '', approval_hash = '', approved_at = '', scheduled_at = '', "
+            "policy_json = '{}', policy_sha256 = '', "
             "error_code = '', error_detail = '', "
             "updated_at = ? "
             "WHERE id = ? AND COALESCE(error_code, '') <> 'sending'",
@@ -342,12 +364,32 @@ class OutreachCampaignsMixin:
             raise KeyError(target_id)
         return target
 
+    def set_outreach_campaign_policy(self, target_id: str, policy: dict) -> dict:
+        target = self.get_outreach_campaign_target(target_id)
+        if target is None:
+            raise KeyError(target_id)
+        encoded = _json(policy)
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        cursor = self.conn.execute(
+            "UPDATE outreach_campaign_targets SET state = 'draft', policy_json = ?, "
+            "policy_sha256 = ?, approval_hash = '', approved_at = '', scheduled_at = '', "
+            "error_code = '', error_detail = '', updated_at = ? WHERE id = ? "
+            "AND state IN ('draft', 'approved') AND COALESCE(error_code, '') <> 'sending'",
+            (encoded, digest, now_iso(), target_id),
+        )
+        self.conn.commit()
+        if cursor.rowcount != 1:
+            raise ValueError("only an editable draft can receive a policy review")
+        return self.get_outreach_campaign_target(target_id)
+
     def approve_outreach_campaign_target(self, target_id: str) -> dict:
         target = self.get_outreach_campaign_target(target_id)
         if target is None:
             raise KeyError(target_id)
         if not target["selected_email"] or not target["subject"] or not target["body"]:
             raise ValueError("recipient, subject, and body are required before approval")
+        if not target.get("policy_sha256"):
+            raise ValueError("compliance policy review is required before approval")
         timestamp = now_iso()
         digest = _approval_hash(target)
         cursor = self.conn.execute(
@@ -365,6 +407,7 @@ class OutreachCampaignsMixin:
         target = self.get_outreach_campaign_target(target_id)
         return bool(
             target and target["state"] == "approved" and target["approval_hash"]
+            and target.get("policy_sha256")
             and target["approval_hash"] == _approval_hash(target)
         )
 
@@ -474,27 +517,220 @@ class OutreachCampaignsMixin:
         return self.get_outreach_campaign_target(target_id)
 
     def claim_outreach_campaign_target_send(
-        self, target_id: str, outbound_message_id: str = "",
+        self, target_id: str, outbound_message_id: str = "", *,
+        expected_approval_hash: str = "", commit: bool = True,
     ) -> bool:
         """Atomically claim one outbound delivery across every campaign."""
-        cursor = self.conn.execute(
-            "UPDATE outreach_campaign_targets SET error_code = 'sending', error_detail = '', "
-            "outbound_message_id = ?, updated_at = ? WHERE id = ? AND state = 'approved' "
-            "AND approval_hash <> '' AND COALESCE(error_code, '') = '' "
-            "AND NOT EXISTS (SELECT 1 FROM outreach_campaign_targets "
-            "WHERE error_code IN ('sending', 'delivery_unknown'))",
-            (outbound_message_id.strip().strip("<>"), now_iso(), target_id),
-        )
-        self.conn.commit()
-        return cursor.rowcount == 1
+        if self.conn.in_transaction:
+            self.conn.commit()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            target = self.get_outreach_campaign_target(target_id)
+            if not (
+                target and target.get("state") == "approved"
+                and target.get("approval_hash") == expected_approval_hash
+                and target.get("approval_hash") == _approval_hash(target)
+                and target.get("policy_sha256")
+                and not target.get("error_code")
+            ):
+                self.conn.rollback()
+                return False
+            suppressed = self.conn.execute(
+                "SELECT 1 FROM outreach_suppressions WHERE "
+                "(kind = 'email' AND value = ?) OR (kind = 'domain' AND value = ?) "
+                "OR (kind = 'company' AND value = ?) LIMIT 1",
+                (
+                    str(target.get("selected_email") or "").lower(),
+                    str(target.get("domain") or "").lower(),
+                    str(target.get("company_key") or "").lower(),
+                ),
+            ).fetchone()
+            if suppressed:
+                self.conn.rollback()
+                return False
+            parent_id = str(target.get("parent_message_id") or "")
+            anchor = str((target.get("evidence") or {}).get("anchor") or "")
+            application_job_id = str(target.get("application_job_id") or "")
+            reply = self.conn.execute(
+                "SELECT 1 FROM mail_events WHERE "
+                "((? <> '' AND thread_id = ?) OR (? <> '' AND job_id = ?)) "
+                "AND (? = '' OR COALESCE(NULLIF(date, ''), first_seen) > ?) "
+                "AND signal IN ('recruiter', 'assessment', 'interview', 'offer', "
+                "'rejection', 'campaign_reply', 'campaign_optout') LIMIT 1",
+                (
+                    parent_id, parent_id, application_job_id, application_job_id,
+                    anchor, anchor,
+                ),
+            ).fetchone()
+            if reply:
+                self.conn.rollback()
+                return False
+            blocker = self.conn.execute(
+                "SELECT 1 FROM outreach_campaign_targets WHERE "
+                "error_code IN ('sending', 'delivery_unknown', 'transient_bounce') LIMIT 1"
+            ).fetchone()
+            if blocker:
+                self.conn.rollback()
+                return False
+            cursor = self.conn.execute(
+                "UPDATE outreach_campaign_targets SET error_code = 'sending', "
+                "error_detail = '', outbound_message_id = ?, updated_at = ? "
+                "WHERE id = ? AND state = 'approved' AND approval_hash = ? "
+                "AND COALESCE(error_code, '') = ''",
+                (
+                    outbound_message_id.strip().strip("<>"), now_iso(), target_id,
+                    expected_approval_hash,
+                ),
+            )
+            if cursor.rowcount != 1:
+                self.conn.rollback()
+                return False
+            if commit:
+                self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def outreach_campaign_delivery_blocker(self) -> str:
         row = self.conn.execute(
             "SELECT error_code FROM outreach_campaign_targets "
-            "WHERE error_code IN ('sending', 'delivery_unknown') "
-            "ORDER BY CASE error_code WHEN 'delivery_unknown' THEN 0 ELSE 1 END LIMIT 1"
+            "WHERE error_code IN ('sending', 'delivery_unknown', 'transient_bounce') "
+            "ORDER BY CASE error_code WHEN 'delivery_unknown' THEN 0 "
+            "WHEN 'transient_bounce' THEN 1 ELSE 2 END LIMIT 1"
         ).fetchone()
         return str(row["error_code"] or "") if row else ""
+
+    def outreach_campaign_target_by_message_id(self, message_id: str) -> Optional[dict]:
+        normalized = (message_id or "").strip().strip("<>")
+        if not normalized:
+            return None
+        row = self.conn.execute(
+            "SELECT * FROM outreach_campaign_targets WHERE outbound_message_id = ? "
+            "AND sent_at <> '' ORDER BY sent_at DESC LIMIT 1",
+            (normalized,),
+        ).fetchone()
+        return _hydrate(row)
+
+    def apply_outreach_campaign_feedback(
+        self, target_id: str, event_id: str, kind: str, feedback_at: str,
+    ) -> tuple[bool, dict]:
+        """Apply one provider event exactly once and retain append-only lineage."""
+        if kind not in {"hard_bounce", "transient_bounce", "complaint"}:
+            raise ValueError("invalid provider feedback kind")
+        if not event_id:
+            raise ValueError("provider feedback event id is required")
+        if self.conn.in_transaction:
+            self.conn.commit()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            existing = self.conn.execute(
+                "SELECT 1 FROM outreach_delivery_feedback WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            target = self.get_outreach_campaign_target(target_id)
+            if target is None:
+                self.conn.rollback()
+                raise KeyError(target_id)
+            if existing:
+                self.conn.rollback()
+                return False, target
+            if not target.get("sent_at") or not target.get("outbound_message_id"):
+                self.conn.rollback()
+                raise ValueError("provider feedback requires a sent target")
+
+            timestamp = feedback_at or now_iso()
+            self.conn.execute(
+                "INSERT INTO outreach_delivery_feedback "
+                "(event_id, target_id, kind, feedback_at, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (event_id, target_id, kind, timestamp, now_iso()),
+            )
+            if kind == "hard_bounce":
+                state, error_code = "failed", "hard_bounce"
+            elif kind == "complaint":
+                state, error_code = "opted_out", "complaint"
+            else:
+                state, error_code = target["state"], "transient_bounce"
+            self.conn.execute(
+                "UPDATE outreach_campaign_targets SET state = ?, error_code = ?, "
+                "error_detail = ?, feedback_event_id = ?, feedback_kind = ?, "
+                "feedback_at = ?, updated_at = ? WHERE id = ?",
+                (
+                    state, error_code,
+                    "provider feedback requires review" if kind == "transient_bounce"
+                    else kind.replace("_", " "),
+                    event_id, kind, timestamp, now_iso(), target_id,
+                ),
+            )
+
+            suppressions = [("email", target.get("selected_email") or "")]
+            if kind == "complaint":
+                suppressions.append(("domain", target.get("domain") or ""))
+            if kind in {"hard_bounce", "complaint"}:
+                for suppression_kind, raw_value in suppressions:
+                    value = str(raw_value).strip().lower()
+                    if not value:
+                        continue
+                    suppression_id = (
+                        f"suppression:{suppression_kind}:"
+                        f"{hashlib.sha256(value.encode('utf-8')).hexdigest()[:24]}"
+                    )
+                    self.conn.execute(
+                        "INSERT INTO outreach_suppressions "
+                        "(id, kind, value, reason, source, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(kind, value) DO UPDATE SET "
+                        "reason = excluded.reason, source = excluded.source",
+                        (
+                            suppression_id, suppression_kind, value,
+                            kind.replace("_", " "), event_id, now_iso(),
+                        ),
+                    )
+            self.conn.commit()
+            updated = self.get_outreach_campaign_target(target_id)
+            if updated is None:
+                raise KeyError(target_id)
+            return True, updated
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def resolve_outreach_campaign_transient_bounce(
+        self, target_id: str, outcome: str,
+    ) -> dict:
+        if outcome not in {"delivered", "hard_bounce"}:
+            raise ValueError("transient bounce outcome must be delivered or hard_bounce")
+        target = self.get_outreach_campaign_target(target_id)
+        if target is None:
+            raise KeyError(target_id)
+        if target.get("error_code") != "transient_bounce":
+            raise ValueError("target is not awaiting transient-bounce review")
+        if outcome == "delivered":
+            self.conn.execute(
+                "UPDATE outreach_campaign_targets SET error_code = '', error_detail = '', "
+                "updated_at = ? WHERE id = ? AND error_code = 'transient_bounce'",
+                (now_iso(), target_id),
+            )
+            self.conn.commit()
+            return self.get_outreach_campaign_target(target_id)
+        event_id = f"manual-hard-bounce:{target_id}:{now_iso()}"
+        return self.apply_outreach_campaign_feedback(
+            target_id, event_id, "hard_bounce", now_iso(),
+        )[1]
+
+    def outreach_delivery_feedback(self, target_id: str = "") -> list[dict]:
+        if target_id:
+            rows = self.conn.execute(
+                "SELECT * FROM outreach_delivery_feedback WHERE target_id = ? "
+                "ORDER BY feedback_at, event_id",
+                (target_id,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM outreach_delivery_feedback ORDER BY feedback_at, event_id"
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def due_outreach_campaign_targets(self, due_at: str, *, campaign_id: str = "") -> list[dict]:
         params: list[str] = [due_at]

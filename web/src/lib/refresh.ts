@@ -219,7 +219,7 @@ export async function scanNewMail(onLocalData?: (data: DashboardData) => void): 
       const response = await controlPlaneFetch('api/refresh', localToken, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force: true, full_scan: false }),
+        body: JSON.stringify({ force: true }),
       })
       const payload = await response.json() as { state?: string; message?: string; run_id?: string }
       toast.dismiss(id)

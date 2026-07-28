@@ -37,6 +37,13 @@ const target: CampaignTarget = {
   selected_confidence: 'medium', selected_note: 'Security recruiter via Hunter.io',
   subject: 'Security opportunities', body: 'Hello from Jane.', resume_path: 'resume.pdf',
   resume_sha256: 'resume-hash',
+  policy: {
+    sender_jurisdiction: 'IN', recipient_jurisdiction: 'IN',
+    recipient_kind: 'verified_business_contact', contact_source: 'hunter',
+    contact_provenance_at: '2026-07-17T05:00:00Z', purpose: 'cold',
+    basis: 'legitimate_interest', consent: 'not_applicable', identity_footer: true,
+    opt_out_method: 'reply', reviewer: 'Jane Doe', policy_version: 'outreach-policy-v1',
+  },
   approval_hash: '', approved_at: '', scheduled_at: '', sent_at: '', replied_at: '',
   outbound_message_id: '',
   reply_event_id: '',
@@ -113,11 +120,11 @@ describe('CampaignsView', () => {
       subject: target.subject, body: 'Edited exact draft.',
     })
     expect(api.campaignAction).toHaveBeenNthCalledWith(2, 'csrf', {
-      action: 'approve', target_id: target.id,
+      action: 'approve', target_id: target.id, policy: target.policy,
     })
   })
 
-  it('approves and sends one target without activating the campaign', async () => {
+  it('keeps approval and sending as separate actions', async () => {
     api.listCampaigns.mockResolvedValue([summary])
     api.getCampaign.mockResolvedValue(detail)
     api.campaignAction.mockResolvedValue({ ok: true, target })
@@ -127,11 +134,14 @@ describe('CampaignsView', () => {
       onOpenApplications={vi.fn()}
     />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve and send now' }))
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve and send now' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Send now' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
 
-    await waitFor(() => expect(api.campaignAction).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(api.campaignAction).toHaveBeenCalledTimes(2))
     expect(api.campaignAction.mock.calls.map(([, payload]) => payload.action)).toEqual([
-      'draft', 'approve', 'send_now',
+      'draft', 'approve',
     ])
   })
 
@@ -231,6 +241,33 @@ describe('CampaignsView', () => {
 
     await waitFor(() => expect(api.campaignAction).toHaveBeenCalledWith('csrf', {
       action: 'resolve_delivery', target_id: target.id, outcome: 'not_sent',
+    }))
+  })
+
+  it('checks Sent by exact Message-ID before manual unknown-delivery resolution', async () => {
+    const unknown = {
+      ...target,
+      state: 'approved' as const,
+      error_code: 'delivery_unknown',
+      error_detail: 'SMTP outcome unknown',
+      outbound_message_id: 'jobscope-campaign-1@example.com',
+    }
+    api.listCampaigns.mockResolvedValue([summary])
+    api.getCampaign.mockResolvedValue({
+      ...detail, targets: [unknown], counts: { approved: 1 }, history: [],
+    })
+    api.campaignAction.mockResolvedValue({
+      ok: true, code: 'sent', status: 'sent', count: 1,
+    })
+    render(<CampaignsView
+      token="csrf" selectedId={campaign.id} onSelect={vi.fn()}
+      onOpenApplications={vi.fn()}
+    />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Check Sent' }))
+
+    await waitFor(() => expect(api.campaignAction).toHaveBeenCalledWith('csrf', {
+      action: 'reconcile_delivery', target_id: target.id,
     }))
   })
 

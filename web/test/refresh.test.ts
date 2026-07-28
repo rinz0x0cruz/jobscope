@@ -101,7 +101,7 @@ describe('refresh: scanNewMail dispatch (token path)', () => {
     const refreshCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/refresh'))
     expect(refreshCall).toBeTruthy()
     expect(JSON.parse(String((refreshCall?.[1] as RequestInit).body))).toEqual({
-      force: true, full_scan: false,
+      force: true,
     })
     expect(toast.success).toHaveBeenCalledWith('Gmail scan started')
   })

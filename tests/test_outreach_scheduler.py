@@ -42,19 +42,25 @@ def test_campaign_readiness_rejects_missing_approved_attachment(tmp_path, monkey
             target["id"], selected_email="recruiter@acme.example",
             subject="Hello", body="Body", resume_path=str(tmp_path / "missing.pdf"),
         )
+        store.set_outreach_campaign_policy(target["id"], {
+            "policy_version": "outreach-policy-v1",
+            "purpose": "cold",
+            "contact_source": "test_fixture",
+        })
         store.approve_outreach_campaign_target(target["id"])
 
     assert main(["--config", str(config), "campaign", "ready"]) == 1
     assert "approved target attachment(s) are missing or changed" in capsys.readouterr().err
 
 
-def test_outreach_task_is_single_instance_and_cannot_force_send():
+def test_outreach_task_is_single_instance_and_reconciliation_only():
     register = (ROOT / "scripts" / "register-outreach-task.ps1").read_text(encoding="utf-8")
     unregister = (ROOT / "scripts" / "unregister-outreach-task.ps1").read_text(encoding="utf-8")
 
     assert "campaign tick" in register
-    assert "campaign ready" in register
     assert "MultipleInstances IgnoreNew" in register
     assert "RepetitionInterval" in register
     assert "--force" not in register
+    assert "never calls SMTP" in register
+    assert "sends at most one" not in register
     assert "Unregister-ScheduledTask" in unregister

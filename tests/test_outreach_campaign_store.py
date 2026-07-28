@@ -12,6 +12,22 @@ def _store():
     return Store(os.path.join(tmp, "campaigns.db"))
 
 
+def _approve(store, target_id):
+    store.set_outreach_campaign_policy(target_id, {
+        "policy_version": "outreach-policy-v1",
+        "purpose": "cold",
+        "contact_source": "test_fixture",
+    })
+    return store.approve_outreach_campaign_target(target_id)
+
+
+def _claim(store, target_id, message_id=""):
+    target = store.get_outreach_campaign_target(target_id)
+    return store.claim_outreach_campaign_target_send(
+        target_id, message_id, expected_approval_hash=target["approval_hash"],
+    )
+
+
 def test_campaign_draft_edit_invalidates_individual_approval():
     store = _store()
     campaign = store.create_outreach_campaign("India security", 3)
@@ -31,7 +47,7 @@ def test_campaign_draft_edit_invalidates_individual_approval():
     assert draft["state"] == "draft"
     assert draft["selected_email"] == "recruiter@acme.example"
 
-    approved = store.approve_outreach_campaign_target(target["id"])
+    approved = _approve(store, target["id"])
     assert approved["state"] == "approved" and approved["approval_hash"]
     assert store.outreach_campaign_approval_valid(target["id"]) is True
 
@@ -43,9 +59,9 @@ def test_campaign_draft_edit_invalidates_individual_approval():
     assert edited["state"] == "draft"
     assert edited["approval_hash"] == "" and edited["approved_at"] == ""
     assert store.outreach_campaign_approval_valid(target["id"]) is False
-    store.approve_outreach_campaign_target(target["id"])
-    assert store.claim_outreach_campaign_target_send(target["id"]) is True
-    assert store.claim_outreach_campaign_target_send(target["id"]) is False
+    _approve(store, target["id"])
+    assert _claim(store, target["id"]) is True
+    assert _claim(store, target["id"]) is False
     with pytest.raises(ValueError, match="send is in progress"):
         store.set_outreach_campaign_draft(
             target["id"], selected_email=edited["selected_email"],
@@ -64,8 +80,8 @@ def test_delivery_unknown_requires_explicit_resolution():
         target["id"], selected_email="recruiter@acme.example",
         subject="Hello", body="Body",
     )
-    store.approve_outreach_campaign_target(target["id"])
-    assert store.claim_outreach_campaign_target_send(target["id"], "message@example.com")
+    _approve(store, target["id"])
+    assert _claim(store, target["id"], "message@example.com")
     store.mark_outreach_campaign_delivery_unknown(target["id"], "SMTPServerDisconnected")
 
     draft = store.resolve_outreach_campaign_delivery(target["id"], "not_sent")
@@ -88,18 +104,18 @@ def test_unresolved_delivery_blocks_claiming_a_different_target():
             target["id"], selected_email=f"recruiter@{target['company'].lower()}.example",
             subject="Hello", body="Body",
         )
-        store.approve_outreach_campaign_target(target["id"])
+        _approve(store, target["id"])
 
-    assert store.claim_outreach_campaign_target_send(targets[0]["id"], "one@example.com")
+    assert _claim(store, targets[0]["id"], "one@example.com")
     assert store.outreach_campaign_delivery_blocker() == "sending"
-    assert not store.claim_outreach_campaign_target_send(targets[1]["id"], "two@example.com")
+    assert not _claim(store, targets[1]["id"], "two@example.com")
     store.mark_outreach_campaign_delivery_unknown(targets[0]["id"], "connection closed")
     assert store.outreach_campaign_delivery_blocker() == "delivery_unknown"
-    assert not store.claim_outreach_campaign_target_send(targets[1]["id"], "two@example.com")
+    assert not _claim(store, targets[1]["id"], "two@example.com")
 
     store.resolve_outreach_campaign_delivery(targets[0]["id"], "not_sent")
     assert store.outreach_campaign_delivery_blocker() == ""
-    assert store.claim_outreach_campaign_target_send(targets[1]["id"], "two@example.com")
+    assert _claim(store, targets[1]["id"], "two@example.com")
     store.close()
 
 
@@ -113,8 +129,8 @@ def test_stale_send_claim_becomes_delivery_unknown_without_retry():
         target["id"], selected_email="recruiter@acme.example",
         subject="Hello", body="Body",
     )
-    store.approve_outreach_campaign_target(target["id"])
-    assert store.claim_outreach_campaign_target_send(target["id"], "message@example.com")
+    _approve(store, target["id"])
+    assert _claim(store, target["id"], "message@example.com")
     store.conn.execute(
         "UPDATE outreach_campaign_targets SET updated_at = ? WHERE id = ?",
         ("2026-07-23T10:00:00Z", target["id"]),

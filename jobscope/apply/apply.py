@@ -182,12 +182,23 @@ def _profile_fields(resume) -> dict:
 
 # ---- filled answers -----------------------------------------------------
 def _filled_answers(cfg: dict, store, resume, job) -> str:
+    source_facts = (
+        f"role {job.title}; company {job.company}; "
+        f"skills {', '.join(resume.skills[:15])}"
+    )
     why = ai.chat(
         cfg, store,
         system=("Write 2-3 sentences answering 'Why do you want to work here?' Specific, "
                 "sincere, no clichés. Use only plausible facts."),
         user=f"Role: {job.title} at {job.company}. Candidate skills: {', '.join(resume.skills[:15])}.",
+        purpose="application_answer_advice",
         strategy=ai.strategy_for(cfg, "generative"),
+        validator=ai.grounded_text_validator(
+            source_facts, max_words=80,
+            required_any=tuple([job.company, job.title, *resume.skills[:6]]),
+            per_line=True,
+        ),
+        max_output_chars=1200,
     ) or (f"I'm drawn to {job.company}'s work and the {job.title} role fits my background in "
           f"{', '.join(resume.skills[:3])}. I'm excited to contribute and grow with the team.")
 

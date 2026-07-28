@@ -8,6 +8,8 @@ the do-not-contact list, and records the outreach.
 import os
 import tempfile
 
+import pytest
+
 from jobscope.apply import outreach
 from jobscope.core.config import load_config
 from jobscope.core.model import Application, Job, MailEvent, Resume
@@ -147,18 +149,26 @@ def test_dry_run_previews_without_sending(monkeypatch, capsys):
         store.close()
 
 
-def test_send_records_then_dedups(monkeypatch):
-    sent = []
-    monkeypatch.setattr("jobscope.deliver.email.send", lambda *a, **k: sent.append(k) or True)
+def test_send_request_queues_one_reusable_draft_without_smtp(monkeypatch):
+    monkeypatch.setattr(
+        "jobscope.deliver.email.send",
+        lambda *a, **k: pytest.fail("direct outreach called SMTP"),
+    )
     with tempfile.TemporaryDirectory() as tmp:
         cfg, store, job = _seed(tmp, with_recruiter_mail=True)
         rc = outreach.run(cfg, store, job.id, send=True)
-        assert rc == 0 and len(sent) == 1 and sent[0]["to"] == "talent@acme.com"
-        app = store.get_application(job.id)
-        assert app["outreach_at"] and app["outreach_to"] == "talent@acme.com"
-        # a second send for the same job is deduped (not re-sent)
+        assert rc == 0
+        campaign = store.outreach_campaigns()[0]
+        target = store.outreach_campaign_targets(campaign["id"])[0]
+        assert campaign["criteria"]["direct"] is True
+        assert target["state"] == "draft"
+        assert target["selected_email"] == "talent@acme.com"
+        assert not (store.get_application(job.id) or {}).get("outreach_at")
+
         rc2 = outreach.run(cfg, store, job.id, send=True)
-        assert rc2 == 0 and len(sent) == 1
+        assert rc2 == 0
+        assert len(store.outreach_campaigns()) == 1
+        assert store.outreach_campaign_targets(campaign["id"])[0]["id"] == target["id"]
         store.close()
 
 
@@ -283,16 +293,20 @@ def test_company_preview_requires_resume():
         store.close()
 
 
-def test_company_send_sends_and_rejects_automated(monkeypatch):
-    sent: list = []
-    monkeypatch.setattr("jobscope.deliver.email.send", lambda *a, **k: sent.append(k) or True)
+def test_company_send_queues_draft_and_rejects_automated_without_smtp(monkeypatch):
+    monkeypatch.setattr(
+        "jobscope.deliver.email.send",
+        lambda *a, **k: pytest.fail("company outreach called SMTP"),
+    )
     with tempfile.TemporaryDirectory() as tmp:
         cfg, store, _ = _seed(tmp)
         bad = outreach.api_company_send(cfg, store, "Acme", to="noreply@acme.com", subject="s", body="b")
-        assert not bad["ok"] and not sent
+        assert not bad["ok"]
         ok = outreach.api_company_send(cfg, store, "Acme", to="recruiting@acme.com", subject="s", body="b")
-        assert ok["ok"] and ok["sent"] and ok["to"] == "recruiting@acme.com"
-        assert len(sent) == 1 and sent[0]["to"] == "recruiting@acme.com"
+        assert ok["ok"] and ok["queued"] and not ok["sent"]
+        target = store.get_outreach_campaign_target(ok["target_id"])
+        assert target["state"] == "draft"
+        assert target["selected_email"] == "recruiting@acme.com"
         store.close()
 
 
