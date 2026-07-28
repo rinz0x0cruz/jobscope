@@ -32,6 +32,12 @@ READY_STATES = frozenset({"preflight_passed", "canary_passed", "active"})
 _EVIDENCE_MAX_AGE_DAYS = 30.0
 _TICK_MAX_AGE_DAYS = 2.0
 _CANARY_KEY = "readiness:canary:"
+# Only reviewed automatic providers describe the current discovery lane. Rows
+# from a retired source survive in `source_health` forever, so counting them
+# would make a dead lane look live and permanently unhealthy.
+_DISCOVERY_SOURCE_PREFIX = "ats:"
+_DISCOVERY_HEALTHY = {"ok", "empty", "partial"}      # benign ats.BoardStatus
+_INBOX_HEALTHY = {"ok", "empty", "recovered"}
 
 
 def _now() -> _dt.datetime:
@@ -181,17 +187,15 @@ def _discovery_lane(cfg: dict, store) -> tuple[bool, list[str], str]:
     active = [item for item in monitors if item["status"] == "active"]
     resolved = [item for item in active if item["resolution_status"] == "resolved"]
     companies = (cfg.get("search", {}) or {}).get("companies") or []
-    # Every non-inbox source is a discovery source: ats, jobspy, and whatever
-    # a later provider registers. An allowlist here silently hides a live lane.
     health = [row for row in store.source_health()
-              if not str(row["source"]).startswith("inbox:")]
+              if str(row["source"]).startswith(_DISCOVERY_SOURCE_PREFIX)]
     blockers: list[str] = []
     if active and not resolved:
         blockers.append("no_resolved_monitors")
-    if any(row["status"] not in {"ok", "empty", "recovered"} for row in health):
+    if any(row["status"] not in _DISCOVERY_HEALTHY for row in health):
         blockers.append("source_unhealthy")
     last = max((str(row["checked_at"] or "") for row in health), default="")
-    return bool(active or companies or health), blockers, last
+    return bool(active or companies), blockers, last
 
 
 def _inbox_lane(cfg: dict, store) -> tuple[bool, list[str], str]:
@@ -211,7 +215,7 @@ def _inbox_lane(cfg: dict, store) -> tuple[bool, list[str], str]:
         elif not inbox_password(cfg, account):
             blockers.append("secret_unavailable")
     health = [row for row in store.source_health() if str(row["source"]).startswith("inbox:")]
-    if any(row["status"] not in {"ok", "empty", "recovered"} for row in health):
+    if any(row["status"] not in _INBOX_HEALTHY for row in health):
         blockers.append("sync_unhealthy")
     last = max((str(row["checked_at"] or "") for row in health), default="")
     return bool(inbox_cfg.get("enabled")), sorted(set(blockers)), last
@@ -360,6 +364,9 @@ def _blocked(result: dict, lane: str) -> list[str]:
 
 def _next_action(item: dict) -> str:
     if item["state"] == "disabled":
+        if item["lane"] == "discovery":
+            # Discovery has no enable flag; it needs targets.
+            return "add company monitors or search.companies entries"
         return "enable in config when you intend to activate"
     if item["blockers"]:
         return f"resolve {item['blockers'][0]}"

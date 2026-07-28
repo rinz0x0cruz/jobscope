@@ -74,31 +74,38 @@ def test_every_lane_is_reported_with_a_known_state(cfg, store, lane):
     assert "ai" not in item["depends_on"]
 
 
-def test_discovery_counts_any_non_inbox_provider(cfg, store):
-    assert _lane(readiness.report(cfg, store), "discovery")["state"] == "disabled"
+def test_retired_source_history_neither_enables_nor_blocks_discovery(cfg, store):
+    # Retired-provider rows survive in source_health forever. Counting them
+    # would make a dead lane look live and permanently unhealthy, because that
+    # blocker could never clear.
+    for status in ("saturated", "error", "ok"):
+        store.set_source_health(
+            f"jobspy:{status}", provider="jobspy", slug=status,
+            status=status, item_count=0, attempts=1, status_code=0, detail="",
+        )
 
+    item = _lane(readiness.report(cfg, store), "discovery")
+
+    assert item["enabled"] is False
+    assert item["state"] == "disabled"
+    assert item["blockers"] == []
+
+
+@pytest.mark.parametrize("status,blocked", [
+    ("ok", False), ("empty", False), ("partial", False),
+    ("error", True), ("invalid", True), ("unsupported", True),
+])
+def test_only_reviewed_ats_sources_drive_discovery_health(cfg, store, status, blocked):
+    cfg["search"]["companies"] = ["Acme|greenhouse|acme"]
     store.set_source_health(
-        "jobspy:indeed", provider="jobspy", slug="indeed",
-        status="ok", item_count=7, attempts=1, status_code=200, detail="",
+        "ats:Acme", provider="greenhouse", slug="acme",
+        status=status, item_count=3, attempts=1, status_code=200, detail="",
     )
 
     item = _lane(readiness.report(cfg, store), "discovery")
 
     assert item["enabled"] is True
-    assert item["state"] == "active"
-    assert item["blockers"] == []
-
-
-def test_unhealthy_discovery_source_blocks_the_lane(cfg, store):
-    store.set_source_health(
-        "jobspy:indeed", provider="jobspy", slug="indeed",
-        status="blocked", item_count=0, attempts=3, status_code=403, detail="",
-    )
-
-    item = _lane(readiness.report(cfg, store), "discovery")
-
-    assert "source_unhealthy" in item["blockers"]
-    assert item["state"] == "configured"
+    assert ("source_unhealthy" in item["blockers"]) is blocked
 
 
 def test_a_stale_or_failed_scheduled_slot_is_visible_to_the_observer(cfg, store):
