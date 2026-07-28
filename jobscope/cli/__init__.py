@@ -29,11 +29,13 @@ Usage:
     python -m jobscope prune [--yes]               Drop stored jobs outside your India/remote scope
     python -m jobscope secrets [set|list|rm|import-env]  Store secrets in the OS keychain
     python -m jobscope doctor                       Offline operational readiness checks
+    python -m jobscope readiness [--require LANE]   Activation readiness for optional lanes
     python -m jobscope selftest                     Offline self-tests (no network)
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -49,7 +51,7 @@ def _store(args, cfg) -> Store:
 
 # --------------------------------------------------------------------------
 # commands (feature modules are imported lazily so the core CLI stays light
-# and offline-friendly; heavy deps like jobspy/playwright load only on demand)
+# and offline-friendly; optional browser tooling loads only on demand)
 # --------------------------------------------------------------------------
 def cmd_init(args, cfg):
     from . import scaffold
@@ -98,10 +100,7 @@ def cmd_companies(args, cfg):
 def cmd_scan(args, cfg):
     from ..ingest import scrape
     with _store(args, cfg) as store:
-        return scrape.run(
-            cfg, store, mode=getattr(args, "mode", "all"),
-            force_discovery=getattr(args, "force_discovery", False),
-        )
+        return scrape.run(cfg, store, mode=getattr(args, "mode", "all"))
 
 
 def cmd_reviews(args, cfg):
@@ -179,6 +178,11 @@ def cmd_outreach_scan(args, cfg):
     return 0
 
 
+def cmd_inbox_canary(args, cfg):
+    from . import inbox_canary
+    return inbox_canary.run(cfg, args.account)
+
+
 def cmd_campaign(args, cfg):
     from ..apply import campaigns
     try:
@@ -250,12 +254,29 @@ def cmd_campaign(args, cfg):
                 print(f"  draft saved for {target['company']} -> {target['selected_email']}")
                 return 0
             if action == "approve":
-                target = campaigns.approve_target(cfg, store, args.target_id)
+                if not args.policy_file:
+                    print("  --policy-file is required for approval", file=sys.stderr)
+                    return 1
+                with open(args.policy_file, encoding="utf-8") as handle:
+                    policy = json.load(handle)
+                target = campaigns.approve_target(
+                    cfg, store, args.target_id, policy=policy,
+                )
                 print(f"  approved {target['company']} for {target['scheduled_at']}")
+                return 0
+            if action == "export-eml":
+                result = campaigns.export_target_eml(
+                    cfg, store, args.target_id, path=args.out,
+                )
+                print(f"  EML exported -> {result['path']}")
                 return 0
             if action in {"start", "pause", "cancel"}:
                 status = {"start": "active", "pause": "paused", "cancel": "cancelled"}[action]
-                detail = campaigns.set_campaign_status(store, args.campaign_id, status)
+                detail = (
+                    campaigns.activate_campaign(cfg, store, args.campaign_id)
+                    if status == "active"
+                    else campaigns.set_campaign_status(store, args.campaign_id, status)
+                )
                 print(f"  {detail['campaign']['id']} -> {detail['campaign']['status']}")
                 return 0
             if action == "delete":
@@ -278,6 +299,10 @@ def cmd_campaign(args, cfg):
                     cfg, store, campaign_id=args.campaign_id or "",
                 )
                 print(f"  {result.get('code') or ('sent' if result.get('sent') else 'no send')}")
+                return 0 if result.get("ok") else 1
+            if action == "reconcile-delivery":
+                result = campaigns.reconcile_delivery(cfg, store, args.target_id)
+                print(f"  Sent reconciliation: {result.get('code') or 'unknown'}")
                 return 0 if result.get("ok") else 1
             if action == "replies":
                 result = campaigns.sync_replies(
@@ -329,7 +354,7 @@ def cmd_serve(args, cfg):
 
 def cmd_refresh(args, cfg):
     from ..deliver import serve
-    res = serve.perform_refresh(cfg, force=args.force, full_scan=args.full_scan,
+    res = serve.perform_refresh(cfg, force=args.force,
                                 publish_site=not args.local_only,
                                 on_step=lambda name, message: print(f"  {message}"))
     print(f"  {res['message']}")
@@ -411,10 +436,17 @@ def cmd_inbox(args, cfg):
 def cmd_new(args, cfg):
     from ..apply import track
     with _store(args, cfg) as store:
+        if getattr(args, "reconcile_sent", False):
+            result = track.reconcile_digest_delivery(cfg, store)
+            print(f"  digest Sent reconciliation: {result.get('code') or 'unknown'}")
+            return 0 if result.get("ok") else 1
         if getattr(args, "email", False):
-            n = track.send_digest(cfg, store)
-            print(f"  emailed a digest of {n} new match(es)." if n
-                  else "  no digest sent (nothing new, or email disabled).")
+            result = track.send_digest_result(cfg, store, retry_intent=True)
+            if not result.sent:
+                print(f"  digest not sent: {result.detail}", file=sys.stderr)
+                return 1
+            print(f"  digest accepted for {result.attempted} new match(es)." if result.attempted
+                  else f"  no digest needed ({result.detail}).")
             return 0
         return track.run_new(store)
 
@@ -472,6 +504,15 @@ def cmd_selftest(args, cfg):
 def cmd_doctor(args, cfg):
     from . import doctor
     return doctor.run(cfg)
+
+
+def cmd_readiness(args, cfg):
+    from . import readiness
+    with _store(args, cfg) as store:
+        return readiness.run(
+            cfg, store, require=args.require, canary=args.canary,
+            account=args.account, as_json=args.json,
+        )
 
 
 def _secret_names(cfg) -> list[str]:
@@ -642,7 +683,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Scout a supported public ATS board and rank openings vs your active profile")
     sp.add_argument("company", help="Company name (or 'Name|provider|slug' to force a board)")
     sp.add_argument("--provider", default=None,
-                    help="ATS provider: greenhouse | lever | ashby | phenom")
+                    help="ATS provider: greenhouse | lever | ashby")
     sp.add_argument("--slug", default=None, help="Board slug (skips name resolution)")
     sp.add_argument("--save", action="store_true", help="Save matching openings into your pipeline")
     sp.add_argument("--limit", type=int, default=20, help="Max openings to show (default 20)")
@@ -660,11 +701,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="JSON action file for `companies apply` (used by cloud refresh)")
     sp.set_defaults(func=cmd_companies)
 
-    sp = sub.add_parser("scan", help="Scan monitored portals and/or broad discovery sources")
-    sp.add_argument("--mode", choices=["all", "monitored", "discovery"], default="all",
-                    help="all (default), monitored portals only, or broad discovery only")
-    sp.add_argument("--force-discovery", action="store_true",
-                    help="Ignore the broad-discovery interval marker")
+    sp = sub.add_parser("scan", help="Scan user-selected company ATS portals")
+    sp.add_argument("--mode", choices=["all", "monitored"], default="all",
+                    help="all and monitored both scan active company monitors")
     sp.set_defaults(func=cmd_scan)
 
     sp = sub.add_parser("reviews", help="Synchronize or inspect the curated review queue")
@@ -697,11 +736,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Assisted fill of a PUBLIC ATS form; stops before submit")
     sp.set_defaults(func=cmd_apply)
 
-    sp = sub.add_parser("outreach", help="Draft (and optionally send) a recruiter outreach email + resume")
+    sp = sub.add_parser("outreach", help="Preview or queue a durable recruiter outreach draft")
     sp.add_argument("job_id")
     sp.add_argument("--to", default=None, help="Send to this exact address (skips discovery)")
-    sp.add_argument("--send", action="store_true", help="Actually send via SMTP + record (default: preview only)")
-    sp.add_argument("--force", action="store_true", help="Override cooldown / dedup / low-confidence guards")
+    sp.add_argument("--send", action="store_true", help="Queue a durable draft for separate policy review")
+    sp.add_argument("--force", action="store_true", help="Deprecated; cannot bypass outreach guards")
     sp.set_defaults(func=cmd_outreach)
 
     sp = sub.add_parser("outreach-scan",
@@ -718,7 +757,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "action", nargs="?",
         choices=["create", "followups", "list", "show", "discover", "draft", "approve", "start",
-                 "pause", "cancel", "delete", "skip", "send-approved", "ready", "replies", "tick"],
+                 "pause", "cancel", "delete", "skip", "send-approved", "ready", "replies", "tick",
+                 "reconcile-delivery", "export-eml"],
         default="list",
     )
     sp.add_argument("--campaign-id", default="", help="Campaign id for show/start/pause/delete/send")
@@ -729,6 +769,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--to", default="", help="Discovered recipient to select while editing a draft")
     sp.add_argument("--subject", default=None, help="Edited draft subject")
     sp.add_argument("--body", default=None, help="Edited draft body")
+    sp.add_argument("--policy-file", default="",
+                    help="JSON compliance review required by campaign approve")
+    sp.add_argument("--out", default="", help="Output path for campaign export-eml")
     sp.add_argument("--force", action="store_true", help="Refresh cached contact discovery only")
     sp.add_argument("--no-fetch", action="store_true", help="Do not fetch company/contact sources")
     sp.add_argument("--yes", action="store_true", help="Confirm permanent deletion of a draft campaign")
@@ -758,8 +801,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Sync Gmail + rescore + publish (once-per-day guard)")
     sp.add_argument("--force", action="store_true",
                     help="Run even if already refreshed today")
-    sp.add_argument("--full-scan", action="store_true",
-                    help="Also re-scrape job boards before matching (slower, 429-prone)")
     sp.add_argument("--local-only", action="store_true",
                     help="Refresh SQLite without publishing the encrypted Pages snapshot")
     sp.set_defaults(func=cmd_refresh)
@@ -801,6 +842,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("new", help="Show new Strong/Good jobs since your last review")
     sp.add_argument("--email", action="store_true",
                     help="Email a digest of new matches (needs email.enabled) instead of printing")
+    sp.add_argument("--reconcile-sent", action="store_true",
+                    help="Resolve one unknown digest by exact read-only Sent-folder Message-ID")
     sp.set_defaults(func=cmd_new)
 
     sp = sub.add_parser("referrals",
@@ -877,6 +920,25 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_secrets)
 
     sub.add_parser("doctor", help="Offline operational readiness checks").set_defaults(func=cmd_doctor)
+
+    sp = sub.add_parser(
+        "readiness", help="Report whether each optional lane is safe to activate",
+    )
+    sp.add_argument("--require", default="",
+                    choices=("", "storage", "discovery", "inbox", "smtp",
+                             "outreach", "scheduler", "ai"),
+                    help="Exit nonzero until this lane and its dependencies are ready")
+    sp.add_argument("--canary", default="", choices=("", "inbox", "smtp"),
+                    help="Run the one explicit live check for a lane (never sends mail)")
+    sp.add_argument("--account", default="", help="Configured address for the inbox canary")
+    sp.add_argument("--json", action="store_true", help="Emit the machine-readable report")
+    sp.set_defaults(func=cmd_readiness)
+    sp = sub.add_parser(
+        "inbox-canary",
+        help="Classify one account in a no-send, read-only throwaway database",
+    )
+    sp.add_argument("--account", required=True, help="Exact configured account email")
+    sp.set_defaults(func=cmd_inbox_canary)
     sub.add_parser("selftest", help="Offline self-tests (no network)").set_defaults(func=cmd_selftest)
     return p
 
@@ -885,6 +947,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
+    from jobscope.core import ai
+    ai.reset_budget(cfg)
     # A --db override is authoritative for the whole run, so sibling paths derived
     # from it (e.g. named profiles under <db-dir>/profiles/) stay consistent.
     if getattr(args, "db", None):

@@ -123,15 +123,23 @@ def run() -> int:
 
     merged = _deep_merge(DEFAULT_CONFIG, {"search": {"location": "Berlin"}})
     c.ok("deep_merge overrides leaf", merged["search"]["location"] == "Berlin")
-    c.ok("deep_merge keeps siblings", merged["search"]["results_wanted"] == 25)
     c.ok("default weights sum ~1.0",
          abs(sum(DEFAULT_CONFIG["match"]["weights"].values()) - 1.0) < 1e-9)
     cfg = load_config(None)
     c.ok("load_config returns defaults",
          isinstance(cfg.get("ai"), dict)
-         and DEFAULT_CONFIG["ai"]["provider"] == "openrouter"
-         and DEFAULT_CONFIG["ai"]["model"] == "nvidia/nemotron-3-ultra-550b-a55b:free")
+         and DEFAULT_CONFIG["ai"]["enabled"] is False
+         and DEFAULT_CONFIG["ai"]["provider"] == "ollama"
+         and DEFAULT_CONFIG["ai"]["base_url"].startswith("http://127.0.0.1")
+         and DEFAULT_CONFIG["ai"]["model"] in DEFAULT_CONFIG["ai"]["local_models"]
+         and DEFAULT_CONFIG["ai"]["remote"]["enabled"] is False
+         and DEFAULT_CONFIG["quorum"]["enabled"] is False)
     from ..core import ai as _ai
+    c.ok("ai off by default -> no route",
+         _ai.available(DEFAULT_CONFIG, "company_brief") is False)
+    c.ok("ai requires an exact purpose",
+         _ai.available({**DEFAULT_CONFIG, "ai": {**DEFAULT_CONFIG["ai"], "enabled": True}},
+                       "not_a_purpose") is False)
     c.ok("quorum strategy_generative default", _ai.strategy_for(DEFAULT_CONFIG, "generative") == "council")
     c.ok("quorum strategy_classify default", _ai.strategy_for(DEFAULT_CONFIG, "classify") == "ensemble")
     c.ok("quorum strategy_for empty -> None", _ai.strategy_for({"quorum": {}}, "generative") is None)
@@ -272,11 +280,6 @@ def _selftest_filters(c: "_Check") -> None:
          apply_filters(Job(title="Staff Engineer"), {"max_years_experience": 2}) is not None)
     c.ok("exp filter keeps at/below cap",
          apply_filters(Job(title="Engineer", description="2+ years"), {"max_years_experience": 2}) is None)
-    from ..ingest import scrape
-    c.ok("remote: concrete city overrides stray flag",
-         scrape._derive_remote(True, "Dublin, County Dublin, Ireland", "Security Engineer") is False)
-    c.ok("remote: explicit keyword is remote",
-         scrape._derive_remote(False, "Remote - India", "Security Engineer") is True)
     r1 = Resume(skills=["yara", "malware analysis"], seniority="mid")
     r2 = Resume(skills=["audit", "compliance"], seniority="mid")
     job = Job(title="Malware Analyst", description="yara malware analysis " * 5)
