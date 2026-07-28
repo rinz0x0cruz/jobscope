@@ -5,12 +5,14 @@ import argparse
 import json
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 from typing import Sequence
 
 SQLITE_MAGIC = b"SQLite format 3\0"
 REQUIRED_TABLES = frozenset({"applications", "jobs", "meta"})
 LOCAL_ONLY_TABLES = (
+    "ai_cache",
     "outreach_campaign_runs",
     "outreach_campaign_targets",
     "outreach_campaigns",
@@ -34,8 +36,14 @@ def validate_sqlite_snapshot(path: str | Path) -> None:
 
     try:
         uri = f"{snapshot.resolve().as_uri()}?mode=ro"
-        with sqlite3.connect(uri, uri=True) as connection:
-            integrity = connection.execute("PRAGMA quick_check").fetchall()
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
+            try:
+                integrity = connection.execute("PRAGMA integrity_check").fetchall()
+            except sqlite3.Error as exc:
+                raise SnapshotValidationError(
+                    f"{snapshot} failed SQLite integrity_check: {exc}"
+                ) from exc
+            foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
             tables = {
                 row[0]
                 for row in connection.execute(
@@ -47,7 +55,11 @@ def validate_sqlite_snapshot(path: str | Path) -> None:
 
     if integrity != [("ok",)]:
         raise SnapshotValidationError(
-            f"{snapshot} failed SQLite quick_check: {integrity!r}"
+            f"{snapshot} failed SQLite integrity_check: {integrity!r}"
+        )
+    if foreign_keys:
+        raise SnapshotValidationError(
+            f"{snapshot} failed SQLite foreign_key_check: {foreign_keys[:10]!r}"
         )
     missing = REQUIRED_TABLES - tables
     if missing:
@@ -73,8 +85,8 @@ def create_cloud_safe_snapshot(source: str | Path, destination: str | Path) -> N
     try:
         destination_path.unlink(missing_ok=True)
         source_uri = f"{source_path.resolve().as_uri()}?mode=ro"
-        with sqlite3.connect(source_uri, uri=True) as source_connection:
-            with sqlite3.connect(destination_path) as destination_connection:
+        with closing(sqlite3.connect(source_uri, uri=True)) as source_connection:
+            with closing(sqlite3.connect(destination_path)) as destination_connection:
                 source_connection.backup(destination_connection)
         from jobscope.apply.campaigns import (
             OUTREACH_SNAPSHOT_META_KEY,
@@ -86,20 +98,39 @@ def create_cloud_safe_snapshot(source: str | Path, destination: str | Path) -> N
                 OUTREACH_SNAPSHOT_META_KEY,
                 json.dumps(outreach_snapshot(snapshot_store), separators=(",", ":")),
             )
-        with sqlite3.connect(destination_path) as destination_connection:
-                destination_connection.execute("PRAGMA journal_mode = DELETE")
-                destination_connection.execute("PRAGMA secure_delete = ON")
-                tables = {
-                    row[0]
-                    for row in destination_connection.execute(
-                        "SELECT name FROM sqlite_master WHERE type = 'table'"
-                    )
-                }
-                for table in LOCAL_ONLY_TABLES:
-                    if table in tables:
-                        destination_connection.execute(f"DELETE FROM {table}")
-                destination_connection.commit()
-                destination_connection.execute("VACUUM")
+        with closing(sqlite3.connect(destination_path)) as destination_connection:
+            destination_connection.execute("PRAGMA journal_mode = DELETE")
+            destination_connection.execute("PRAGMA secure_delete = ON")
+            tables = {
+                row[0]
+                for row in destination_connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            for table in LOCAL_ONLY_TABLES:
+                if table in tables:
+                    destination_connection.execute(f"DELETE FROM {table}")
+            if "job_analysis" in tables:
+                rows = destination_connection.execute(
+                    "SELECT job_id, resume_base, version, brief_json FROM job_analysis "
+                    "WHERE brief_json IS NOT NULL"
+                ).fetchall()
+                for job_id, resume_base, version, raw in rows:
+                    try:
+                        brief = json.loads(raw)
+                    except (TypeError, json.JSONDecodeError):
+                        brief = None
+                    if isinstance(brief, dict):
+                        brief.pop("advisory", None)
+                        brief.pop("provenance", None)
+                        brief["ai"] = False
+                        destination_connection.execute(
+                            "UPDATE job_analysis SET brief_json = ? "
+                            "WHERE job_id = ? AND resume_base = ? AND version = ?",
+                            (json.dumps(brief), job_id, resume_base, version),
+                        )
+            destination_connection.commit()
+            destination_connection.execute("VACUUM")
         validate_sqlite_snapshot(destination_path)
     except (OSError, sqlite3.Error) as exc:
         destination_path.unlink(missing_ok=True)

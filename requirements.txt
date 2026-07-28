@@ -1,5 +1,4 @@
-# Core (Phase 1): scraping, config, HTTP, RSS
-python-jobspy==1.1.80
+# Core (Phase 1): config, HTTP, RSS
 pyyaml==6.0.2
 requests==2.33.0
 pyjwt[crypto]==2.10.1

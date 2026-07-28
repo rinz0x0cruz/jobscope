@@ -4,13 +4,8 @@
 #
 #    pip-compile --allow-unsafe --cert=None --client-cert=None --index-url=None --output-file=requirements.lock --pip-args=None --strip-extras requirements.txt
 #
-annotated-types==0.7.0
-    # via pydantic
 beautifulsoup4==4.15.0
-    # via
-    #   markdownify
-    #   python-jobspy
-    #   yfinance
+    # via yfinance
 certifi==2026.6.17
     # via requests
 cffi==2.1.0
@@ -39,21 +34,16 @@ lxml==6.1.1
     # via yfinance
 markdown==3.8.1
     # via -r requirements.txt
-markdownify==0.13.1
-    # via python-jobspy
 multitasking==0.0.13
     # via yfinance
 numpy==1.26.3
     # via
     #   pandas
-    #   python-jobspy
     #   yfinance
 packaging==26.2
     # via pytest
 pandas==2.3.3
-    # via
-    #   python-jobspy
-    #   yfinance
+    # via yfinance
 peewee==4.2.3
     # via yfinance
 platformdirs==4.10.0
@@ -64,10 +54,6 @@ pluggy==1.6.0
     # via pytest
 pycparser==3.0
     # via cffi
-pydantic==2.13.4
-    # via python-jobspy
-pydantic-core==2.46.4
-    # via pydantic
 pyee==11.0.1
     # via playwright
 pygments==2.20.0
@@ -80,8 +66,6 @@ pytest==9.0.3
     # via -r requirements.txt
 python-dateutil==2.9.0.post0
     # via pandas
-python-jobspy==1.1.80
-    # via -r requirements.txt
 pytz==2026.2
     # via
     #   pandas
@@ -90,13 +74,10 @@ pyyaml==6.0.2
     # via
     #   -r requirements.txt
     #   detect-secrets
-regex==2024.11.6
-    # via python-jobspy
 requests==2.33.0
     # via
     #   -r requirements.txt
     #   detect-secrets
-    #   python-jobspy
     #   yfinance
 ruff==0.12.4
     # via -r requirements.txt
@@ -105,21 +86,13 @@ sgmllib3k==1.0.0
 six==1.17.0
     # via
     #   html5lib
-    #   markdownify
     #   python-dateutil
 soupsieve==2.8.4
     # via beautifulsoup4
-tls-client==1.0.1
-    # via python-jobspy
 typing-extensions==4.16.0
     # via
     #   beautifulsoup4
-    #   pydantic
-    #   pydantic-core
     #   pyee
-    #   typing-inspection
-typing-inspection==0.4.2
-    # via pydantic
 tzdata==2026.3
     # via pandas
 urllib3==2.7.0

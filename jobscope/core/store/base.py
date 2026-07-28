@@ -284,6 +284,8 @@ CREATE TABLE IF NOT EXISTS outreach_campaign_targets (
     body TEXT NOT NULL DEFAULT '',
     resume_path TEXT NOT NULL DEFAULT '',
     resume_sha256 TEXT NOT NULL DEFAULT '',
+    policy_json TEXT NOT NULL DEFAULT '{}',
+    policy_sha256 TEXT NOT NULL DEFAULT '',
     approval_hash TEXT NOT NULL DEFAULT '',
     approved_at TEXT NOT NULL DEFAULT '',
     scheduled_at TEXT NOT NULL DEFAULT '',
@@ -291,6 +293,9 @@ CREATE TABLE IF NOT EXISTS outreach_campaign_targets (
     sent_at TEXT NOT NULL DEFAULT '',
     replied_at TEXT NOT NULL DEFAULT '',
     reply_event_id TEXT NOT NULL DEFAULT '',
+    feedback_event_id TEXT NOT NULL DEFAULT '',
+    feedback_kind TEXT NOT NULL DEFAULT '',
+    feedback_at TEXT NOT NULL DEFAULT '',
     error_code TEXT NOT NULL DEFAULT '',
     error_detail TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
@@ -319,6 +324,16 @@ CREATE TABLE IF NOT EXISTS outreach_suppressions (
     created_at TEXT NOT NULL,
     UNIQUE (kind, value)
 );
+CREATE TABLE IF NOT EXISTS outreach_delivery_feedback (
+    event_id TEXT PRIMARY KEY,
+    target_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('hard_bounce', 'transient_bounce', 'complaint')),
+    feedback_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (target_id) REFERENCES outreach_campaign_targets(id)
+);
+CREATE INDEX IF NOT EXISTS idx_outreach_delivery_feedback_target
+    ON outreach_delivery_feedback(target_id, feedback_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company);
 CREATE INDEX IF NOT EXISTS idx_mail_events_job ON mail_events(job_id);
@@ -373,7 +388,9 @@ class _StoreBase:
         self.path = path
         self.conn = sqlite3.connect(path, timeout=5)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
+        self.conn.execute("PRAGMA synchronous = FULL")
         self.conn.execute("PRAGMA busy_timeout = 5000")
         existing_tables = {
             row["name"] for row in self.conn.execute(
@@ -431,11 +448,22 @@ class _StoreBase:
                 "PRAGMA table_info(outreach_campaign_targets)"
             )
         }
-        for col in ("resume_sha256", "outbound_message_id", "reply_event_id"):
+        for col in (
+            "resume_sha256", "outbound_message_id", "reply_event_id",
+            "feedback_event_id", "feedback_kind", "feedback_at",
+        ):
             if col not in campaign_target:
                 self.conn.execute(
                     f"ALTER TABLE outreach_campaign_targets ADD COLUMN {col} "
                     "TEXT NOT NULL DEFAULT ''"
+                )
+        for col, ddl in (
+            ("policy_json", "TEXT NOT NULL DEFAULT '{}'") ,
+            ("policy_sha256", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if col not in campaign_target:
+                self.conn.execute(
+                    f"ALTER TABLE outreach_campaign_targets ADD COLUMN {col} {ddl}"
                 )
         campaign = {
             r["name"] for r in self.conn.execute(

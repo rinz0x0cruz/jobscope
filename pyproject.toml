@@ -12,7 +12,6 @@ license = "MIT"
 authors = [{ name = "rinz0x0cruz" }]
 keywords = ["jobs", "resume", "job-search", "ats", "automation", "career"]
 dependencies = [
-    "python-jobspy==1.1.80",
     "pyyaml==6.0.2",
     "requests==2.33.0",
     "pyjwt[crypto]==2.10.1",
