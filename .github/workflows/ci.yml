@@ -186,7 +186,9 @@ jobs:
           docker tag "$tested" "$repository:$GITHUB_SHA"
           output="$(docker push "$repository:$GITHUB_SHA" 2>&1)"
           printf '%s\n' "$output"
-          digest="$(printf '%s\n' "$output" | awk '/digest:/ { print $2 }' | tail -n 1)"
+          # `docker push` prints "<tag>: digest: sha256:<64 hex> size: <n>", so a
+          # positional field is brittle: match the digest itself.
+          digest="$(printf '%s\n' "$output" | grep -oE 'sha256:[0-9a-f]{64}' | tail -n 1)"
           test -n "$digest"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           printf 'Tested hosted image: `%s@%s`\n' "$repository" "$digest" >> "$GITHUB_STEP_SUMMARY"
