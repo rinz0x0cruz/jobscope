@@ -55,7 +55,5 @@ def required_experience_years(job: Job) -> Optional[float]:
 
     rank = _job_seniority(job)
     tmin = _SENIORITY_MIN_YEARS.get(rank) if rank is not None else None
-    ai_years = getattr(job, "ai_required_years", None)
-
-    vals = [v for v in (explicit, qualitative, tmin, ai_years) if v is not None]
+    vals = [v for v in (explicit, qualitative, tmin) if v is not None]
     return float(max(vals)) if vals else None

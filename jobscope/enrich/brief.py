@@ -15,8 +15,15 @@ from jobscope.analyze.match import clearance_flags, ghost_flags, no_sponsorship
 
 def build(cfg: dict, store, company: str, job, enr: dict) -> dict[str, Any]:
     facts, risks = _facts_and_risks(job, enr)
-    text = _ai_brief(cfg, store, company, job, facts, risks) or _deterministic(facts, risks)
-    return {"text": text, "facts": facts, "risks": risks, "ai": bool(ai.available(cfg))}
+    advice = _ai_brief(cfg, store, company, job, facts, risks)
+    return {
+        "text": _deterministic(facts, risks),
+        "facts": facts,
+        "risks": risks,
+        "advisory": advice or "",
+        "provenance": ai.provenance(cfg, "company_brief") if advice else {},
+        "ai": bool(advice),
+    }
 
 
 def _facts_and_risks(job, enr: dict) -> tuple[list[str], list[str]]:
@@ -100,4 +107,11 @@ def _ai_brief(cfg, store, company, job, facts, risks):
         "FACTS:\n- " + "\n- ".join(facts) + "\n"
         "RISKS/UNKNOWNS:\n- " + ("\n- ".join(risks) if risks else "none detected")
     )
-    return ai.chat(cfg, store, system, user)
+    source = "\n".join([company, job.title, *facts, *risks])
+    return ai.chat(
+        cfg, store, system, user, purpose="company_brief",
+        validator=ai.grounded_text_validator(
+            source, max_words=180, per_line=True,
+        ),
+        max_output_chars=2400,
+    )

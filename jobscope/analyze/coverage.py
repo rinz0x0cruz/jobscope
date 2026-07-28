@@ -176,17 +176,17 @@ def _assess_deterministic(resume: Resume, reqs: list[dict]) -> list[dict]:
 
 
 def _assess_ai(cfg, store, resume: Resume, reqs: list[dict]) -> list[dict] | None:
-    """Optional semantic re-judging. Returns per-requirement verdicts or None.
+    """Optional semantic advice. Canonical verdicts remain deterministic.
 
     The requirements are handled strictly as DATA (OWASP LLM01); the model is told
     to use only the provided candidate facts and never invent experience.
     """
     from jobscope.core import ai
-    if not ai.available(cfg):
+    if not ai.available(cfg, "coverage_advice"):
         return None
     numbered = "\n".join(f"{i}. {r['text']}" for i, r in enumerate(reqs))
-    facts = (f"Candidate: {resume.full_name or 'candidate'}; "
-             f"seniority {resume.seniority or '?'}; ~{resume.years_experience:g}y.\n"
+    facts = (f"Candidate seniority {resume.seniority or '?'}; "
+             f"~{resume.years_experience:g}y.\n"
              f"Skills: {', '.join(resume.skills[:40])}.\n"
              f"Titles: {', '.join(resume.titles[:8])}.\n"
              f"Summary: {(resume.summary or '')[:600]}")
@@ -200,7 +200,10 @@ def _assess_ai(cfg, store, resume: Resume, reqs: list[dict]) -> list[dict] | Non
                 '{"i": <index int>, "status": "covered|partial|missing", '
                 '"evidence": "<=8 words", "suggestion": "<=14 word tailoring tip or empty"}.'),
         user=f"CANDIDATE FACTS:\n{facts}\n\nREQUIREMENTS:\n{numbered}",
+        purpose="coverage_advice",
         strategy=ai.strategy_for(cfg, "classify"),
+        validator=lambda value: bool(_parse_verdicts(value)),
+        max_output_chars=6000,
     )
     parsed = _parse_verdicts(out)
     if not parsed:
@@ -220,17 +223,26 @@ def _assess_ai(cfg, store, resume: Resume, reqs: list[dict]) -> list[dict] | Non
 def _parse_verdicts(text: str | None) -> dict[int, dict]:
     if not text:
         return {}
-    m = re.search(r"\[.*\]", text, re.DOTALL)
-    if not m:
-        return {}
     try:
-        arr = json.loads(m.group(0))
+        arr = json.loads(text.strip())
     except (ValueError, TypeError):
         return {}
     out: dict[int, dict] = {}
     for item in arr if isinstance(arr, list) else []:
-        if isinstance(item, dict) and isinstance(item.get("i"), int):
-            out[item["i"]] = item
+        if (
+            not isinstance(item, dict)
+            or set(item) - {"i", "status", "evidence", "suggestion"}
+            or set(item) < {"i", "status", "evidence", "suggestion"}
+            or isinstance(item.get("i"), bool) or not isinstance(item.get("i"), int)
+            or item["i"] < 0 or item["i"] in out
+            or item.get("status") not in _WEIGHT
+            or not isinstance(item.get("evidence"), str)
+            or len(item["evidence"]) > 80 or len(item["evidence"].split()) > 8
+            or not isinstance(item.get("suggestion"), str)
+            or len(item["suggestion"]) > 160 or len(item["suggestion"].split()) > 14
+        ):
+            return {}
+        out[item["i"]] = item
     return out
 
 
@@ -255,9 +267,9 @@ def coverage_report(cfg, store, resume: Resume, job) -> dict:
                 "covered": 0, "partial": 0, "missing": 0, "coverage_pct": 0.0,
                 "requirements": [], "suggestions": []}
 
+    results = _assess_deterministic(resume, reqs)
     ai_results = _assess_ai(cfg, store, resume, reqs)
-    results = ai_results if ai_results is not None else _assess_deterministic(resume, reqs)
-    mode = "ai" if ai_results is not None else "deterministic"
+    mode = "deterministic+advisory" if ai_results is not None else "deterministic"
 
     counts = {"covered": 0, "partial": 0, "missing": 0}
     for r in results:
@@ -275,7 +287,16 @@ def coverage_report(cfg, store, resume: Resume, job) -> dict:
         "coverage_pct": pct,
         "requirements": results,
         "suggestions": _suggestions(results),
+        "advisory_requirements": ai_results or [],
+        "advisory_provenance": _advisory_provenance(cfg, ai_results),
     }
+
+
+def _advisory_provenance(cfg: dict, results: list[dict] | None) -> dict:
+    if not results:
+        return {}
+    from jobscope.core import ai
+    return ai.provenance(cfg, "coverage_advice")
 
 
 def _suggestions(results: list[dict], limit: int = 8) -> list[str]:
@@ -320,6 +341,11 @@ def render_report(report: dict) -> str:
         out.append("  suggested tailoring:")
         for tip in report["suggestions"]:
             out.append(f"    - {tip}")
+    if report.get("advisory_requirements"):
+        out.append("  local model advisory (does not affect coverage):")
+        for item in report["advisory_requirements"][:8]:
+            tip = item.get("suggestion") or item.get("status") or "review"
+            out.append(f"    - {item['text']}: {tip}")
     return "\n".join(out)
 
 

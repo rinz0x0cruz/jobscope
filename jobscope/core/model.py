@@ -140,7 +140,7 @@ class Resume:
 
 @dataclass
 class Job:
-    """A single normalized job posting (superset of the JobSpy schema)."""
+    """A single normalized job posting."""
 
     id: str = ""
     source: str = ""
@@ -149,7 +149,7 @@ class Job:
     location: str = ""
     is_remote: bool = False
     remote_scope: str = ""            # "" = not remote/unknown; "global" = remote anywhere; else a region e.g. "Ireland"
-    raw_is_remote: Optional[bool] = None   # raw JobSpy flag preserved; None when not from JobSpy (e.g. ATS)
+    raw_is_remote: Optional[bool] = None   # legacy source flag; reviewed ATS adapters leave this unset
     url: str = ""
     description: str = ""
     salary_min: Optional[float] = None
@@ -275,5 +275,6 @@ STATUSES = ["new", "prepared", "applied", "interview", "rejected", "offer", "ski
 # funnel statuses above; several map onto one status via mailrules.signal_to_status).
 SIGNALS = [
     "confirmation", "recruiter", "assessment", "interview", "offer", "rejection",
-    "campaign_reply", "campaign_optout", "other",
+    "campaign_reply", "campaign_optout", "campaign_hard_bounce",
+    "campaign_transient_bounce", "campaign_complaint", "other",
 ]

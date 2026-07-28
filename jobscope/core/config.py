@@ -21,25 +21,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "links": {},
     },
     "search": {
-        "sites": ["indeed", "linkedin", "google"],
         "terms": ["software engineer"],
-        "google_term": "",
         "location": "Remote",
         "country_indeed": "India",
-        "results_wanted": 25,
-        "hours_old": 168,
         "is_remote": True,
-        "distance": 50,
-        "linkedin_fetch_description": True,
-        "proxies": [],
         "profiles": [],
         "companies": [],
         "home_country": "India",   # geo scope: the country you can work onsite in (see core.geo)
         "scope_to_home": True,     # drop roles outside {home onsite, global/home-eligible remote}
-    },
-    "discovery": {
-        "enabled": True,
-        "interval_hours": 24,
     },
     "match": {
         "weights": {
@@ -91,11 +80,30 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "ai": {
         "enabled": False,
-        "provider": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "provider": "ollama",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "model": "qwen2.5:7b-instruct-q4_K_M",
+        "local_models": ["qwen2.5:7b-instruct-q4_K_M"],
+        "local_purposes": [
+            "application_answer_advice", "company_brief", "coverage_advice",
+            "match_advice", "outreach_draft_advice", "seniority_advice",
+            "tailor_advice",
+        ],
+        "remote": {
+            "enabled": False,
+            "purposes": {},
+        },
+        "budget": {
+            "max_calls": 4,
+            "max_input_chars": 24000,
+            "max_input_tokens": 6000,
+            "max_output_tokens": 2400,
+            "max_retries": 0,
+            "max_fanout": 4,
+            "wall_seconds": 30,
+        },
         "temperature": 0.3,
-        "max_tokens": 1200,
+        "max_tokens": 600,
         "api_key_env": "JOBSCOPE_AI_API_KEY",
     },
     # Optional: route the AI layer through a quorum deliberation (multi-model or
@@ -108,10 +116,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "strategy_generative": "council",  # summary / cover letter / "why here" (higher quality)
         "strategy_classify": "ensemble",   # seniority / email labels (self-consistency vote)
         "rate_limit_rpm": 18,  # pace below OpenRouter's 20 RPM free ceiling
-        "fallbacks": [         # exact refs only; never a random free router
-            "openrouter:google/gemma-4-26b-a4b-it:free",
-            "openrouter:nvidia/nemotron-3-super-120b-a12b:free",
-        ],
+        "max_fanout": 1,
+        "fallbacks": [],
     },
     "email": {
         "enabled": False,
@@ -130,6 +136,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "imap_host": "imap.gmail.com",
         "imap_port": 993,
         "folder": "INBOX",
+        "sent_folder": "[Gmail]/Sent Mail",
         "include_spam": False,   # also sweep the spam folder -- a real application email misfiled as spam is still caught
         "spam_folder": "[Gmail]/Spam",  # Gmail's IMAP spam folder (localize if your account isn't English)
         "lookback_days": 90,     # first run scans this far back; later runs are incremental
@@ -200,7 +207,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # and can sync Gmail + rescore without rebuilding or publishing.
     "serve": {
         "refresh_enabled": True,     # show/allow the local Gmail refresh button
-        "refresh_full_scan": False,  # also re-scrape job boards (429-prone) before matching
         "inbox_days": 7,             # Gmail lookback window for the button's inbox sync
         "build_on_start": False,     # rebuild the SPA when `serve` starts (else serve the last build)
         "web_dist": None,            # override the served SPA dir (default: <repo>/web/dist)
@@ -208,6 +214,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 CONFIG_CANDIDATES = ("config.yaml", "config.yml", "config.json")
+RETIRED_SEARCH_KEYS = frozenset({
+    "sites", "google_term", "results_wanted", "hours_old", "distance",
+    "linkedin_fetch_description", "proxies",
+})
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -249,6 +259,22 @@ def _parse_file(path: str) -> dict:
         return yaml.safe_load(fh) or {}
 
 
+def _strip_retired_discovery(cfg: dict[str, Any]) -> dict[str, Any]:
+    cfg.pop("discovery", None)
+    search = cfg.get("search")
+    if not isinstance(search, dict):
+        return cfg
+    for key in RETIRED_SEARCH_KEYS:
+        search.pop(key, None)
+    profiles = search.get("profiles")
+    if isinstance(profiles, list):
+        for profile in profiles:
+            if isinstance(profile, dict):
+                for key in RETIRED_SEARCH_KEYS:
+                    profile.pop(key, None)
+    return cfg
+
+
 def load_config(path: str | None = None) -> dict[str, Any]:
     """Return the effective config (defaults deep-merged with a user file)."""
     _load_dotenv()
@@ -258,8 +284,8 @@ def load_config(path: str | None = None) -> dict[str, Any]:
                 path = candidate
                 break
     if path and os.path.exists(path):
-        return _deep_merge(DEFAULT_CONFIG, _parse_file(path))
-    return json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy
+        return _strip_retired_discovery(_deep_merge(DEFAULT_CONFIG, _parse_file(path)))
+    return _strip_retired_discovery(json.loads(json.dumps(DEFAULT_CONFIG)))
 
 
 KEYRING_SERVICE = "jobscope"

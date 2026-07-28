@@ -1,5 +1,4 @@
-"""Integration: the AI/quorum seniority tie-breaker demotes ambiguous leakers, and
-is a strict no-op when AI is off."""
+"""AI seniority opinions are advisory and cannot change canonical matching."""
 import os
 
 from jobscope.core import ai
@@ -29,23 +28,24 @@ def _ambiguous_job(url):
                            "build and operate the security paved road " * 4).ensure_id()
 
 
-def test_tiebreak_demotes_ambiguous_senior(monkeypatch, tmp_path):
+def test_seniority_advice_cannot_demote_or_persist(monkeypatch, tmp_path, capsys):
     db = str(tmp_path / "t.db")
     store = Store(db)
     store.save_resume(parse_resume(FIX))
     job = _ambiguous_job("a1")
     store.upsert_job(job)
 
-    monkeypatch.setattr(ai, "available", lambda cfg: True)
+    monkeypatch.setattr(ai, "available", lambda *_args: True)
     monkeypatch.setattr(ai, "chat", lambda *a, **k: '{"level": "senior", "required_years": 6}')
 
     match.run(_cfg(db), store)
 
     j = store.get_job(job.id)
-    assert j.ai_seniority == "senior"
-    assert j.ai_required_years == 6.0
-    assert j.tier == "Skip"                     # 6y > cap 3 -> filtered
-    assert "AI:senior" in (j.rationale or "")
+    assert (j.ai_seniority or "") == ""
+    assert j.ai_required_years is None
+    assert j.tier != "Skip"
+    assert "AI:" not in (j.rationale or "")
+    assert "model suggests senior / ~6y" in capsys.readouterr().out
 
 
 def test_tiebreak_noop_when_ai_off(monkeypatch, tmp_path):
@@ -55,7 +55,7 @@ def test_tiebreak_noop_when_ai_off(monkeypatch, tmp_path):
     job = _ambiguous_job("b1")
     store.upsert_job(job)
 
-    monkeypatch.setattr(ai, "available", lambda cfg: False)
+    monkeypatch.setattr(ai, "available", lambda *_args: False)
     called = []
     monkeypatch.setattr(ai, "chat", lambda *a, **k: called.append(1) or None)
 

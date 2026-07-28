@@ -105,7 +105,7 @@ def test_deterministic_assess_covered_partial_missing():
 
 def test_coverage_report_deterministic_offline(monkeypatch):
     from jobscope.core import ai
-    monkeypatch.setattr(ai, "available", lambda cfg: False)
+    monkeypatch.setattr(ai, "available", lambda *_args: False)
     rep = coverage.coverage_report({}, None, _resume(), _job())
     assert rep["mode"] == "deterministic"
     assert rep["total"] == rep["covered"] + rep["partial"] + rep["missing"]
@@ -113,16 +113,20 @@ def test_coverage_report_deterministic_offline(monkeypatch):
     assert rep["suggestions"]  # missing/partial items produce tips
 
 
-def test_ai_path_overrides_then_falls_back(monkeypatch):
+def test_ai_path_is_separate_advice_then_falls_back(monkeypatch):
     from jobscope.core import ai
     resume, job = _resume(), _job()
     n = len(coverage.extract_requirements(job))
-    monkeypatch.setattr(ai, "available", lambda cfg: True)
+    baseline = coverage.coverage_report({}, None, resume, job)
+    monkeypatch.setattr(ai, "available", lambda *_args: True)
     arr = [{"i": i, "status": "covered", "evidence": "resume", "suggestion": ""}
            for i in range(n)]
-    monkeypatch.setattr(ai, "chat", lambda *a, **k: "```json\n" + json.dumps(arr) + "\n```")
+    monkeypatch.setattr(ai, "chat", lambda *a, **k: json.dumps(arr))
     rep = coverage.coverage_report({}, None, resume, job)
-    assert rep["mode"] == "ai" and rep["covered"] == n and rep["coverage_pct"] == 100.0
+    assert rep["mode"] == "deterministic+advisory"
+    assert rep["coverage_pct"] == baseline["coverage_pct"]
+    assert rep["covered"] == baseline["covered"]
+    assert len(rep["advisory_requirements"]) == n
 
     monkeypatch.setattr(ai, "chat", lambda *a, **k: "sorry, no json here")
     rep2 = coverage.coverage_report({}, None, resume, job)
@@ -132,7 +136,7 @@ def test_ai_path_overrides_then_falls_back(monkeypatch):
 def test_ai_incomplete_response_falls_back(monkeypatch):
     from jobscope.core import ai
     resume, job = _resume(), _job()
-    monkeypatch.setattr(ai, "available", lambda cfg: True)
+    monkeypatch.setattr(ai, "available", lambda *_args: True)
     # only one verdict for many requirements -> incomplete -> deterministic wins
     monkeypatch.setattr(ai, "chat",
                         lambda *a, **k: '[{"i":0,"status":"covered","evidence":"x"}]')
@@ -140,10 +144,12 @@ def test_ai_incomplete_response_falls_back(monkeypatch):
     assert rep["mode"] == "deterministic"
 
 
-def test_parse_verdicts_handles_fences_and_garbage():
-    txt = 'noise ```json\n[{"i":0,"status":"covered","evidence":"aws"}]\n``` tail'
+def test_parse_verdicts_requires_strict_complete_item_schema():
+    txt = '[{"i":0,"status":"covered","evidence":"aws","suggestion":""}]'
     out = coverage._parse_verdicts(txt)
     assert out[0]["status"] == "covered"
+    assert coverage._parse_verdicts(f"```json\n{txt}\n```") == {}
+    assert coverage._parse_verdicts('[{"i":0,"status":"covered","evidence":"aws"}]') == {}
     assert coverage._parse_verdicts("garbage") == {}
     assert coverage._parse_verdicts(None) == {}
 
@@ -161,7 +167,7 @@ def test_render_marks_and_no_requirements():
 
 def test_run_offline_end_to_end(monkeypatch):
     from jobscope.core import ai
-    monkeypatch.setattr(ai, "available", lambda cfg: False)
+    monkeypatch.setattr(ai, "available", lambda *_args: False)
     with tempfile.TemporaryDirectory() as tmp:
         cfg = load_config(None)
         cfg["output"]["db_path"] = os.path.join(tmp, "c.db")

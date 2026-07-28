@@ -8,7 +8,6 @@ years, or ``None`` when AI is unavailable or the reply can't be parsed. The call
 from __future__ import annotations
 
 import json
-import re
 from typing import Optional
 
 from jobscope.core import ai
@@ -39,33 +38,43 @@ def classify_seniority(cfg: dict, store, job: Job) -> Optional[dict]:
     if not title and not desc:
         return None
     user = f"Title: {title}\n\nDescription:\n{desc or '(none)'}"
-    raw = ai.chat(cfg, store, _SYSTEM, user, temperature=0.0,
-                  strategy=ai.strategy_for(cfg, "classify"))
+    raw = ai.chat(
+        cfg, store, _SYSTEM, user, purpose="seniority_advice",
+        temperature=0.0, strategy=ai.strategy_for(cfg, "classify"),
+        validator=lambda value: _parse(value) is not None,
+        max_output_chars=500,
+    )
     if not raw:
         return None
     return _parse(raw)
 
 
 def _parse(raw: str) -> Optional[dict]:
-    m = re.search(r"\{.*\}", raw, re.S)
-    if not m:
-        return None
     try:
-        data = json.loads(m.group(0))
+        data = json.loads(raw.strip())
     except (ValueError, TypeError):
         return None
-    if not isinstance(data, dict):
+    if (
+        not isinstance(data, dict)
+        or set(data) - {"level", "required_years", "discipline"}
+        or set(data) < {"level", "required_years"}
+    ):
         return None
     level = str(data.get("level", "")).strip().lower()
     if level not in _VALID or level not in SENIORITY_RANK:
         return None
+    if isinstance(data.get("required_years"), bool):
+        return None
     try:
-        years = float(data.get("required_years"))
-    except (TypeError, ValueError):
-        years = float(SENIORITY_RANK.get(level, 0) * 2)  # fall back from the level
-    years = max(0.0, min(20.0, years))
+        years = float(data["required_years"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not years.is_integer() or not 0 <= years <= 20:
+        return None
     out = {"level": level, "required_years": years}
     disc = str(data.get("discipline", "")).strip().lower()
-    if disc in _VALID_DISC:
+    if "discipline" in data and disc not in _VALID_DISC:
+        return None
+    if disc:
         out["discipline"] = disc
     return out

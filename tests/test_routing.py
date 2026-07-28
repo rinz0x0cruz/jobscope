@@ -1,6 +1,4 @@
-"""Integration: the AI ``discipline`` hint breaks the resume-routing tie for a
-lean-AMBIGUOUS posting, and is a strict no-op when AI is off (routing stays the
-deterministic best-fit). ai.chat / ai.available are monkeypatched -- no network."""
+"""AI discipline advice cannot change deterministic resume routing."""
 from jobscope.core import ai
 from jobscope.analyze import match
 from jobscope.core.config import load_config
@@ -59,31 +57,31 @@ def _seeded_store(db):
     return store
 
 
-def test_ai_discipline_flips_ambiguous_route_to_technical(monkeypatch, tmp_path):
+def test_ai_discipline_cannot_flip_ambiguous_route(monkeypatch, tmp_path, capsys):
     db = str(tmp_path / "route.db")
     store = _seeded_store(db)
     job = _ambiguous_job("r1")
     store.upsert_job(job)
 
-    monkeypatch.setattr(ai, "available", lambda cfg: True)
+    monkeypatch.setattr(ai, "available", lambda *_args: True)
     monkeypatch.setattr(ai, "chat", lambda *a, **k:
                         '{"level":"mid","required_years":4,"discipline":"technical"}')
 
     match.run(_cfg(db), store)
 
     j = store.get_job(job.id)
-    # deterministic best-fit would route to "advisory"; the AI discipline overrides it
-    assert j.resume_base == "technical"
-    assert "AI-route:technical" in (j.rationale or "")
+    assert j.resume_base == "advisory"
+    assert "AI-route" not in (j.rationale or "")
+    assert "model suggests mid / ~4y / technical" in capsys.readouterr().out
 
 
-def test_ai_discipline_advisory_route(monkeypatch, tmp_path):
+def test_ai_discipline_advice_preserves_matching_route(monkeypatch, tmp_path):
     db = str(tmp_path / "route2.db")
     store = _seeded_store(db)
     job = _ambiguous_job("r2")
     store.upsert_job(job)
 
-    monkeypatch.setattr(ai, "available", lambda cfg: True)
+    monkeypatch.setattr(ai, "available", lambda *_args: True)
     monkeypatch.setattr(ai, "chat", lambda *a, **k:
                         '{"level":"mid","required_years":4,"discipline":"advisory"}')
 
@@ -91,7 +89,7 @@ def test_ai_discipline_advisory_route(monkeypatch, tmp_path):
 
     j = store.get_job(job.id)
     assert j.resume_base == "advisory"
-    assert "AI-route:advisory" in (j.rationale or "")
+    assert "AI-route" not in (j.rationale or "")
 
 
 def test_routing_deterministic_when_ai_off(monkeypatch, tmp_path):
@@ -100,7 +98,7 @@ def test_routing_deterministic_when_ai_off(monkeypatch, tmp_path):
     job = _ambiguous_job("r3")
     store.upsert_job(job)
 
-    monkeypatch.setattr(ai, "available", lambda cfg: False)
+    monkeypatch.setattr(ai, "available", lambda *_args: False)
     called = []
     monkeypatch.setattr(ai, "chat", lambda *a, **k: called.append(1) or None)
 

@@ -14,10 +14,9 @@ def test_parse_valid_json(monkeypatch):
     assert classify.classify_seniority({}, None, _job()) == {"level": "senior", "required_years": 6.0}
 
 
-def test_extracts_json_from_prose(monkeypatch):
+def test_rejects_json_wrapped_in_prose(monkeypatch):
     monkeypatch.setattr(ai, "chat", lambda *a, **k: 'Sure:\n{"level":"mid","required_years":3}\ndone')
-    out = classify.classify_seniority({}, None, _job())
-    assert out["level"] == "mid" and out["required_years"] == 3.0
+    assert classify.classify_seniority({}, None, _job()) is None
 
 
 def test_rejects_out_of_vocab(monkeypatch):
@@ -30,14 +29,14 @@ def test_rejects_non_json(monkeypatch):
     assert classify.classify_seniority({}, None, _job()) is None
 
 
-def test_clamps_years(monkeypatch):
+def test_rejects_out_of_range_years(monkeypatch):
     monkeypatch.setattr(ai, "chat", lambda *a, **k: '{"level": "principal", "required_years": 99}')
-    assert classify.classify_seniority({}, None, _job())["required_years"] == 20.0
+    assert classify.classify_seniority({}, None, _job()) is None
 
 
-def test_years_fallback_from_level(monkeypatch):
+def test_rejects_missing_required_years(monkeypatch):
     monkeypatch.setattr(ai, "chat", lambda *a, **k: '{"level": "senior"}')
-    assert classify.classify_seniority({}, None, _job())["required_years"] == 6.0  # rank 3 * 2
+    assert classify.classify_seniority({}, None, _job()) is None
 
 
 def test_none_when_ai_off(monkeypatch):
@@ -66,12 +65,10 @@ def test_parses_discipline_advisory_case_insensitive(monkeypatch):
     assert classify.classify_seniority({}, None, _job())["discipline"] == "advisory"
 
 
-def test_discipline_omitted_when_invalid(monkeypatch):
+def test_invalid_discipline_fails_whole_output(monkeypatch):
     monkeypatch.setattr(ai, "chat", lambda *a, **k:
                         '{"level":"senior","required_years":6,"discipline":"wizard"}')
-    out = classify.classify_seniority({}, None, _job())
-    assert "discipline" not in out
-    assert out == {"level": "senior", "required_years": 6.0}            # legacy shape kept
+    assert classify.classify_seniority({}, None, _job()) is None
 
 
 def test_discipline_absent_keeps_legacy_shape(monkeypatch):

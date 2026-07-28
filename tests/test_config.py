@@ -2,7 +2,11 @@ import pathlib
 
 import yaml
 
-from jobscope.core.config import DEFAULT_CONFIG, _deep_merge, load_config
+from jobscope.core.config import (
+    DEFAULT_CONFIG,
+    _deep_merge,
+    load_config,
+)
 
 EXAMPLE_CONFIG = pathlib.Path(__file__).resolve().parents[1] / "config.example.yaml"
 
@@ -10,7 +14,7 @@ EXAMPLE_CONFIG = pathlib.Path(__file__).resolve().parents[1] / "config.example.y
 def test_deep_merge_overrides_leaf_keeps_siblings():
     merged = _deep_merge(DEFAULT_CONFIG, {"search": {"location": "Berlin"}})
     assert merged["search"]["location"] == "Berlin"
-    assert merged["search"]["results_wanted"] == DEFAULT_CONFIG["search"]["results_wanted"]
+    assert merged["search"]["terms"] == DEFAULT_CONFIG["search"]["terms"]
 
 
 def test_default_weights_sum_to_one():
@@ -19,8 +23,12 @@ def test_default_weights_sum_to_one():
 
 def test_load_config_defaults_when_missing():
     cfg = load_config("does-not-exist.yaml")
-    assert cfg["ai"]["provider"] == "openrouter"
-    assert cfg["ai"]["model"] == "nvidia/nemotron-3-ultra-550b-a55b:free"
+    assert cfg["ai"]["enabled"] is False
+    assert cfg["ai"]["provider"] == "ollama"
+    assert cfg["ai"]["base_url"] == "http://127.0.0.1:11434/v1"
+    assert cfg["ai"]["model"] in cfg["ai"]["local_models"]
+    assert cfg["ai"]["remote"] == {"enabled": False, "purposes": {}}
+    assert cfg["quorum"]["enabled"] is False
     assert cfg["output"]["db_path"].endswith(".db")
 
 
@@ -33,6 +41,7 @@ def test_load_config_is_a_copy():
 # --- P-C config-drift guard ------------------------------------------------
 # config.example.yaml must document every key path that DEFAULT_CONFIG defines,
 # so the shipped example never silently drifts behind jobscope/config.py.
+
 
 def _missing_key_paths(default, example, prefix=""):
     """Dotted key paths present in ``default`` but absent from ``example``.

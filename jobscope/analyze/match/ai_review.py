@@ -46,7 +46,10 @@ def review_job(cfg: dict, store, job: Job, resume: Resume,
         f"skills: {', '.join(resume.skills[:25])}.\n"
         f"JOB: {job.title} at {job.company}.\n{(job.description or '')[:1500]}"
     )
-    verdict = ai.score(cfg, store, task, candidate, rubric=_RUBRIC)
+    verdict = ai.score(
+        cfg, store, task, candidate, rubric=_RUBRIC,
+        purpose="match_advice",
+    )
     if not verdict:
         return None
     ai_score = float(verdict.get("score", 0.0))

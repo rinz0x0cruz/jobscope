@@ -14,53 +14,38 @@ profile:
   links: {}                           # e.g. {linkedin: "...", github: "...", website: "..."}
 
 search:
-  # JobSpy sites: indeed, linkedin, google, glassdoor, bayt, naukri.
-  # zip_recruiter omitted by default -- Cloudflare WAF returns 403 (re-add if you use proxies).
-  sites: ["indeed", "linkedin", "google"]
+  # Terms and markets filter user-selected Greenhouse, Lever, and Ashby boards.
+  # Jobscope does not scrape aggregators or arbitrary careers pages.
   terms:
     - "application security engineer"
     - "security engineer"
     - "product security"
     - "threat hunter"
-  google_term: ""                     # optional google-jobs specific phrasing
   location: "Remote"
   country_indeed: "India"
   home_country: "India"               # geo scope target: the country you can work onsite in
   scope_to_home: true                 # drop roles outside {home onsite, global/home-eligible remote}
-  results_wanted: 25                  # per term/source cycle; scan commits 10 per run and resumes
-  hours_old: 168                      # last 7 days
   is_remote: true
-  distance: 50
-  linkedin_fetch_description: true    # slower, but gets full description + salary
-  proxies: []                         # optional ['user:pass@host:port', ...] to protect your IP on big scans
-  # Optional: run several searches in one scan. Each profile reuses the fields
-  # above and overrides only what it lists (location / is_remote / hours_old /
-  # country_indeed / results_wanted). Handy to cover BOTH remote and on-site.
+  # Optional: define several preferred markets. These profiles filter each
+  # monitored board independently by location and work mode.
   # Leave empty for a single search from the fields above.
   profiles: []
   #   - name: "remote"
   #     location: "Remote"
   #     is_remote: true
-  #     hours_old: 168
   #   - name: "onsite-local"
   #     location: "India"        # or a city, e.g. "Pune, Maharashtra"
   #     is_remote: false         # include on-site / hybrid
-  #     hours_old: 720           # last 30 days
   #     country_indeed: "India"
   # Optional: pull specific companies' PUBLIC job boards (Greenhouse / Lever /
-  # Ashby) directly -- no login, no key. This surfaces roles at well-funded
-  # companies (e.g. unicorns) that keyword search on LinkedIn/Indeed rarely ranks
-  # into view. Board jobs are filtered by your locations + terms, then merged.
+  # Ashby) directly -- no login, no key. Board jobs are filtered by your
+  # locations + terms, then merged.
   # Entries are a known name (see jobscope/ats.py COMPANY_BOARDS) or an explicit
   # "Name|provider|slug" override. Leave empty to skip ATS boards.
   companies: []
   #   - databricks              # known: resolved to greenhouse/databricks
   #   - wiz
   #   - "Acme|lever|acme"       # explicit provider + board slug
-
-discovery:
-  enabled: true                         # broad JobSpy discovery remains a secondary source
-  interval_hours: 24                    # monitored portals scan more often; broad search runs at most daily
 
 match:
   # Deterministic fit score = 100 * weighted sum, minus a ghost/scam penalty.
@@ -98,7 +83,7 @@ filters:                              # jobs matching these are forced to Skip (
   max_years_experience: 0             # 0 = off; else drop roles asking clearly more (Senior/Staff titles, "N+ years") than this cap
 
 enrich:
-  compensation: true                  # JobSpy salary + Levels.fyi
+  compensation: true                  # structured posting salary + Levels.fyi
   stock: true                         # yfinance price / IPO status / peer comparison (no key)
   reddit: true                        # old.reddit JSON search (no key)
   news: true                          # company news via RSS
@@ -110,12 +95,18 @@ enrich:
 
 ai:
   enabled: false                      # false => deterministic only (still fully usable)
-  provider: "openrouter"              # groq | gemini | openrouter | ollama | openai
-  base_url: "https://openrouter.ai/api/v1"
-  model: "nvidia/nemotron-3-ultra-550b-a55b:free"
+  provider: "ollama"                  # first activation is local-only
+  base_url: "http://127.0.0.1:11434/v1"
+  model: "qwen2.5:7b-instruct-q4_K_M"
+  local_models: ["qwen2.5:7b-instruct-q4_K_M"]
+  local_purposes: [company_brief, coverage_advice, match_advice, seniority_advice, tailor_advice, application_answer_advice, outreach_draft_advice]
+  remote:
+    enabled: false                    # explicit OpenRouter purpose/model/provider routes only
+    purposes: {}
+  budget: {max_calls: 4, max_input_chars: 24000, max_input_tokens: 6000, max_output_tokens: 2400, max_retries: 0, max_fanout: 4, wall_seconds: 30}
   temperature: 0.3
-  max_tokens: 1200
-  api_key_env: "JOBSCOPE_AI_API_KEY"  # set this in .env
+  max_tokens: 600
+  api_key_env: "JOBSCOPE_AI_API_KEY"  # must be empty/unset for Ollama
 
 # Optional: route the AI layer through a quorum deliberation (multi-model or
 # self-refine) instead of one model. Off by default; needs the `quorum` package
@@ -128,9 +119,8 @@ quorum:
   strategy_generative: council        # summary / cover letter / "why here"
   strategy_classify: ensemble         # seniority + email labels (self-consistency)
   rate_limit_rpm: 18                   # pace below OpenRouter's 20 RPM free ceiling
-  fallbacks:                           # exact refs; never the random openrouter/free router
-    - openrouter:google/gemma-4-26b-a4b-it:free
-    - openrouter:nvidia/nemotron-3-super-120b-a12b:free
+  max_fanout: 1
+  fallbacks: []                        # fail closed; no hidden provider relaxation
   # members:                          # optional extra models; omit to self-refine ai.model
   #   - { name: a, provider: openrouter, model: google/gemma-4-31b-it:free }
 
@@ -158,6 +148,7 @@ inbox:
   #     lookback_days: 7               # optional: per-account override of the global lookback below
   imap_host: "imap.gmail.com"
   imap_port: 993
+  sent_folder: "[Gmail]/Sent Mail"  # read-only exact Message-ID reconciliation after ambiguous SMTP
   folder: "INBOX"
   include_spam: false                 # also scan the spam folder (catches a real application email Gmail misfiled as spam)
   spam_folder: "[Gmail]/Spam"         # Gmail's IMAP spam folder name (localize if your Gmail isn't in English)
@@ -214,7 +205,6 @@ retention:
 # Publication remains an explicit encrypted snapshot operation.
 serve:
   refresh_enabled: true      # show/allow the local Gmail refresh button
-  refresh_full_scan: false   # also re-scrape job boards (429-prone) before matching
   inbox_days: 7              # Gmail lookback window for the button's inbox sync
   build_on_start: false      # rebuild the SPA when `serve` starts (else serve the last build)
   web_dist: null             # override the served SPA dir (default: <repo>/web/dist)

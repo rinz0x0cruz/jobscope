@@ -32,7 +32,7 @@ def _title_seniority(title: str) -> Optional[int]:
     return best
 
 
-# LinkedIn "Seniority level" (via JobSpy `job_level`) -> rank. Only the confident
+# Source-provided seniority labels (`job_level`) -> rank. Only the confident
 # buckets; "mid-senior level" is intentionally omitted (too broad to trust).
 _JOB_LEVEL_RANK = {
     "internship": 0, "intern": 0,
@@ -70,9 +70,6 @@ def _job_seniority(job: Job) -> Optional[int]:
         if rx.search(title):
             ranks.append(rank)
             break
-    ai_lvl = SENIORITY_RANK.get((getattr(job, "ai_seniority", "") or "").lower())
-    if ai_lvl is not None:
-        ranks.append(ai_lvl)
     return max(ranks) if ranks else None
 
 
