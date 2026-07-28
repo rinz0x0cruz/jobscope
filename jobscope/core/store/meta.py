@@ -17,6 +17,65 @@ class MetaMixin:
             "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
         self.conn.commit()
 
+    def meta_compare_and_set(
+        self, key: str, expected: Optional[str], value: Optional[str],
+    ) -> bool:
+        """Atomically insert, replace, or delete one exact metadata value."""
+        if self.conn.in_transaction:
+            self.conn.commit()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            if expected is None:
+                if value is None:
+                    self.conn.rollback()
+                    return False
+                cursor = self.conn.execute(
+                    "INSERT INTO meta (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO NOTHING",
+                    (key, value),
+                )
+            elif value is None:
+                cursor = self.conn.execute(
+                    "DELETE FROM meta WHERE key = ? AND value = ?",
+                    (key, expected),
+                )
+            else:
+                cursor = self.conn.execute(
+                    "UPDATE meta SET value = ? WHERE key = ? AND value = ?",
+                    (value, key, expected),
+                )
+            self.conn.commit()
+            return cursor.rowcount == 1
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def meta_finalize_intent(
+        self, intent_key: str, expected_intent: str,
+        marker_key: str, marker_value: str,
+    ) -> bool:
+        """Atomically promote a marker and remove its exact completed intent."""
+        if self.conn.in_transaction:
+            self.conn.commit()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = self.conn.execute(
+                "DELETE FROM meta WHERE key = ? AND value = ?",
+                (intent_key, expected_intent),
+            )
+            if cursor.rowcount != 1:
+                self.conn.rollback()
+                return False
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                (marker_key, marker_value),
+            )
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            raise
+
     # ---- ai cache -------------------------------------------------------
     def ai_cache_get(self, key: str) -> Optional[str]:
         row = self.conn.execute("SELECT response FROM ai_cache WHERE key = ?", (key,)).fetchone()

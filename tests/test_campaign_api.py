@@ -181,6 +181,89 @@ def test_campaign_send_now_routes_to_isolated_manual_send(tmp_path, monkeypatch)
         thread.join(timeout=3)
 
 
+def test_campaign_api_resolves_transient_feedback_only_through_bounded_action(
+    tmp_path, monkeypatch,
+):
+    cfg = _cfg(tmp_path)
+    Store(cfg["output"]["db_path"]).close()
+    captured = {}
+
+    def resolve(_store, target_id, outcome):
+        captured.update(target_id=target_id, outcome=outcome)
+        return {"id": target_id, "error_code": ""}
+
+    monkeypatch.setattr("jobscope.apply.campaigns.resolve_feedback", resolve)
+    httpd, _, token, _ = serve._build_server(cfg, 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        code, result = _request(
+            "POST", base + "/api/campaigns/action", token=token,
+            body={
+                "action": "resolve_feedback", "target_id": "target:one",
+                "outcome": "hard_bounce",
+            },
+        )
+        assert code == 200 and result["target"]["id"] == "target:one"
+        assert captured == {"target_id": "target:one", "outcome": "hard_bounce"}
+
+        code, rejected = _request(
+            "POST", base + "/api/campaigns/action", token=token,
+            body={
+                "action": "resolve_feedback", "target_id": "target:one",
+                "outcome": "retry", "force": True,
+            },
+        )
+        assert code == 400 and "unknown action field" in rejected["error"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
+def test_campaign_api_reconciles_unknown_delivery_through_bounded_action(
+    tmp_path, monkeypatch,
+):
+    cfg = _cfg(tmp_path)
+    Store(cfg["output"]["db_path"]).close()
+    captured = {}
+
+    def reconcile(_cfg, _store, target_id):
+        captured["target_id"] = target_id
+        return {"ok": True, "code": "sent", "status": "sent", "count": 1}
+
+    monkeypatch.setattr("jobscope.apply.campaigns.reconcile_delivery", reconcile)
+    httpd, _, token, _ = serve._build_server(cfg, 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        code, result = _request(
+            "POST", base + "/api/campaigns/action", token=token,
+            body={"action": "reconcile_delivery", "target_id": "target:one"},
+        )
+
+        assert code == 200
+        assert result == {
+            "ok": True, "code": "sent", "status": "sent", "count": 1,
+        }
+        assert captured == {"target_id": "target:one"}
+
+        code, rejected = _request(
+            "POST", base + "/api/campaigns/action", token=token,
+            body={
+                "action": "reconcile_delivery", "target_id": "target:one",
+                "outcome": "sent",
+            },
+        )
+        assert code == 400 and "unknown action field" in rejected["error"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=3)
+
+
 def test_engagement_api_omits_outbound_secrets_and_summarizes_reply(tmp_path):
     cfg = _cfg(tmp_path)
     resume_path = tmp_path / "PRIVATE-RESUME-CANARY.md"
@@ -195,9 +278,15 @@ def test_engagement_api_omits_outbound_secrets_and_summarizes_reply(tmp_path):
             subject="Security introduction", body="PRIVATE-BODY-CANARY",
             resume_path=str(resume_path),
         )
-        store.approve_outreach_campaign_target(target["id"])
+        store.set_outreach_campaign_policy(target["id"], {
+            "policy_version": "outreach-policy-v1",
+            "purpose": "cold",
+            "contact_source": "test_fixture",
+        })
+        approved = store.approve_outreach_campaign_target(target["id"])
         assert store.claim_outreach_campaign_target_send(
             target["id"], "PRIVATE-MESSAGE-ID@example.test",
+            expected_approval_hash=approved["approval_hash"],
         )
         store.mark_outreach_campaign_target_sent(target["id"], "2026-07-17T05:30:00Z")
         reply = MailEvent(

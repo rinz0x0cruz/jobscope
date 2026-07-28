@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -15,6 +16,25 @@ from jobscope.core.store.outreach_campaigns import MAX_CAMPAIGN_DAILY_LIMIT
 
 _STALE_SEND_CLAIM = timedelta(minutes=15)
 OUTREACH_SNAPSHOT_META_KEY = "campaign:snapshot:v1"
+OUTREACH_POLICY_VERSION = "outreach-policy-v1"
+_RECIPIENT_KINDS = {
+    "prior_inbound_recruiter", "employer_published", "verified_business_contact",
+    "role_inbox",
+}
+_PURPOSES = {"cold", "followup"}
+_BASES = {"consent", "existing_relationship", "legitimate_interest"}
+_OPTOUT_METHODS = {"reply", "mailto", "unsubscribe_link"}
+_SOURCE_RECIPIENT_KIND = {
+    "recruiter": "prior_inbound_recruiter",
+    "mail_event": "prior_inbound_recruiter",
+    "prior_cold": "prior_inbound_recruiter",
+    "prior_outreach": "prior_inbound_recruiter",
+    "discovered": "employer_published",
+    "hunter": "verified_business_contact",
+    "apollo": "verified_business_contact",
+    "override": "verified_business_contact",
+    "role_inbox": "role_inbox",
+}
 
 
 def _utc(value: Optional[datetime] = None) -> datetime:
@@ -66,6 +86,71 @@ def _clock(value: str) -> time:
 
 def _campaign_defaults(cfg: dict) -> dict:
     return (cfg.get("apply", {}).get("outreach", {}).get("campaign", {}) or {})
+
+
+def normalize_policy(policy: dict, *, target: dict, campaign: dict) -> dict:
+    if not isinstance(policy, dict):
+        raise ValueError("compliance policy review is required")
+
+    def required(name: str) -> str:
+        value = str(policy.get(name) or "").strip()
+        if not value or value.casefold() == "unknown":
+            raise ValueError(f"policy {name.replace('_', ' ')} is required")
+        return value
+
+    sender_jurisdiction = required("sender_jurisdiction").upper()
+    recipient_jurisdiction = required("recipient_jurisdiction").upper()
+    recipient_kind = required("recipient_kind").lower()
+    contact_source = required("contact_source").lower()
+    contact_provenance_at = required("contact_provenance_at")
+    purpose = required("purpose").lower()
+    basis = required("basis").lower()
+    opt_out_method = required("opt_out_method").lower()
+    reviewer = required("reviewer")
+    policy_version = required("policy_version")
+    identity_footer = policy.get("identity_footer") is True
+    consent = str(policy.get("consent") or "").strip().lower()
+
+    if len(sender_jurisdiction) > 80 or len(recipient_jurisdiction) > 80:
+        raise ValueError("policy jurisdiction is too long")
+    if recipient_kind not in _RECIPIENT_KINDS:
+        raise ValueError("policy recipient kind is invalid")
+    expected_kind = _SOURCE_RECIPIENT_KIND.get(contact_source)
+    if expected_kind is None or recipient_kind != expected_kind:
+        raise ValueError("policy recipient kind does not match the contact source")
+    if purpose not in _PURPOSES or purpose != str(campaign.get("purpose") or "cold"):
+        raise ValueError("policy purpose does not match the campaign")
+    if basis not in _BASES:
+        raise ValueError("policy basis is invalid")
+    if consent not in {"yes", "no", "not_applicable"}:
+        raise ValueError("policy consent decision is required")
+    if basis == "consent" and consent != "yes":
+        raise ValueError("consent basis requires affirmative consent")
+    if opt_out_method not in _OPTOUT_METHODS:
+        raise ValueError("policy opt-out method is invalid")
+    if not identity_footer:
+        raise ValueError("policy identity/footer confirmation is required")
+    if policy_version != OUTREACH_POLICY_VERSION:
+        raise ValueError("policy version is unsupported")
+    if contact_source != str(target.get("selected_source") or "").strip().lower():
+        raise ValueError("policy contact source does not match the selected contact")
+    if _parse_iso(contact_provenance_at) is None:
+        raise ValueError("policy contact provenance date must be ISO-8601")
+
+    return {
+        "sender_jurisdiction": sender_jurisdiction,
+        "recipient_jurisdiction": recipient_jurisdiction,
+        "recipient_kind": recipient_kind,
+        "contact_source": contact_source,
+        "contact_provenance_at": _iso(_parse_iso(contact_provenance_at)),
+        "purpose": purpose,
+        "basis": basis,
+        "consent": consent,
+        "identity_footer": True,
+        "opt_out_method": opt_out_method,
+        "reviewer": reviewer[:200],
+        "policy_version": OUTREACH_POLICY_VERSION,
+    }
 
 
 def _summary_state(target: dict) -> str:
@@ -881,6 +966,93 @@ def _do_not_contact(cfg: dict, store, company: str, domain: str, email: str) -> 
     )
 
 
+def create_direct_intent(
+    cfg: dict,
+    store,
+    *,
+    company: str,
+    recipient: str,
+    subject: str,
+    body: str,
+    resume_path: str = "",
+    application_job_id: str = "",
+    contact_source: str = "override",
+    contact_confidence: str = "high",
+    contact_note: str = "user-selected direct outreach recipient",
+) -> dict:
+    """Persist one exact direct-outreach draft; never approve or send it."""
+    email = (recipient or "").strip().lower()
+    if not outreach.valid_recipient(email):
+        raise ValueError("recipient must be valid and non-automated")
+    domain = email.split("@", 1)[1]
+    display_company = (company or domain).strip()
+    company_key = normalize_company_key(display_company) or domain
+    if _do_not_contact(cfg, store, display_company, domain, email):
+        raise ValueError("recipient, domain, or company is suppressed")
+
+    direct_key = application_job_id or company_key
+    campaign = None
+    target = None
+    for candidate in store.outreach_campaigns():
+        criteria = candidate.get("criteria") or {}
+        if (criteria.get("direct_key") != direct_key
+                or candidate.get("status") not in {"draft", "paused"}):
+            continue
+        targets = store.outreach_campaign_targets(candidate["id"])
+        reusable = next((
+            item for item in targets
+            if item.get("state") not in {"sent", "replied", "opted_out"}
+            and item.get("error_code") not in {"sending", "delivery_unknown"}
+        ), None)
+        if reusable is not None:
+            campaign = candidate
+            target = reusable
+            break
+
+    if campaign is None:
+        defaults = _campaign_defaults(cfg)
+        campaign = store.create_outreach_campaign(
+            f"Direct outreach - {display_company}", 1, purpose="cold",
+            criteria={"direct": True, "direct_key": direct_key},
+            daily_limit=int(defaults.get("daily_limit", 2)),
+            min_spacing_hours=float(defaults.get("min_spacing_hours", 4)),
+            timezone=str(defaults.get("timezone", "Asia/Kolkata")),
+            send_window_start=str(defaults.get("send_window_start", "10:00")),
+            send_window_end=str(defaults.get("send_window_end", "17:00")),
+        )
+        target = store.upsert_outreach_campaign_target(
+            campaign["id"], display_company, company_key,
+            application_job_id=application_job_id, state="draft",
+            evidence={"direct_intent": True},
+        )
+
+    contact = {
+        "email": email,
+        "source": contact_source,
+        "confidence": contact_confidence,
+        "note": contact_note,
+    }
+    store.set_outreach_campaign_contacts(
+        target["id"], domain=domain, contacts=[contact], state="draft",
+    )
+    target = store.set_outreach_campaign_draft(
+        target["id"], selected_email=email,
+        selected_source=contact_source,
+        selected_confidence=contact_confidence,
+        selected_note=contact_note,
+        subject=subject or "", body=body or "", resume_path=resume_path,
+        domain=domain, contacts=[contact],
+    )
+    return {
+        "ok": True,
+        "sent": False,
+        "queued": True,
+        "campaign_id": campaign["id"],
+        "target_id": target["id"],
+        "target": target,
+    }
+
+
 def _permanent_guard(cfg: dict, store, target: dict) -> str:
     if target["company_key"] in _application_keys(store):
         return "application_history"
@@ -989,13 +1161,18 @@ def _next_schedule(campaign: dict, targets: list[dict], now: datetime) -> dateti
     raise RuntimeError("could not find an available campaign send slot")
 
 
-def approve_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = None) -> dict:
+def approve_target(
+    cfg: dict, store, target_id: str, *, policy: Optional[dict] = None,
+    now: Optional[datetime] = None,
+) -> dict:
     target = store.get_outreach_campaign_target(target_id)
     if target is None:
         raise KeyError(target_id)
     campaign = store.get_outreach_campaign(target["campaign_id"])
     if campaign is None:
         raise KeyError(target["campaign_id"])
+    normalized_policy = normalize_policy(policy or {}, target=target, campaign=campaign)
+    target = store.set_outreach_campaign_policy(target_id, normalized_policy)
     error = (
         _followup_guard(cfg, store, target, _utc(now))
         if campaign.get("purpose") == "followup"
@@ -1018,6 +1195,36 @@ def set_campaign_status(store, campaign_id: str, status: str) -> dict:
         raise ValueError("approve at least one target before starting the campaign")
     store.set_outreach_campaign_status(campaign_id, status)
     return get_campaign_detail(store, campaign_id)
+
+
+def activate_campaign(cfg: dict, store, campaign_id: str) -> dict:
+    """Activate only after the exact approved MIME set passes SMTP preflight."""
+    targets = [
+        target for target in store.outreach_campaign_targets(campaign_id)
+        if _summary_state(target) == "approved"
+    ]
+    if not targets:
+        raise ValueError("approve at least one target before starting the campaign")
+
+    readiness = sending_readiness(cfg, store)
+    if not readiness["ok"]:
+        raise ValueError("; ".join(readiness["errors"]))
+
+    from jobscope.deliver import email
+    largest_message_size = 0
+    for target in targets:
+        message = email.build_message(
+            cfg, target["subject"], target["body"],
+            to=target["selected_email"], attachments=[target["resume_path"]],
+            message_id=_outbound_message_id(cfg, target),
+            in_reply_to=target.get("parent_message_id") or "",
+            references=target.get("root_message_id") or target.get("parent_message_id") or "",
+        )
+        largest_message_size = max(largest_message_size, len(message.as_bytes()))
+    preflight = email.preflight(cfg, message_size=largest_message_size)
+    if not preflight.get("ok"):
+        raise ValueError(f"SMTP preflight failed: {preflight.get('code') or 'unknown'}")
+    return set_campaign_status(store, campaign_id, "active")
 
 
 def _local_day_bounds(campaign: dict, now: datetime) -> tuple[str, str, date]:
@@ -1055,9 +1262,13 @@ def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = N
     )
     blocker = store.outreach_campaign_delivery_blocker()
     if blocker:
+        code = {
+            "delivery_unknown": "delivery_unknown",
+            "transient_bounce": "provider_feedback_review_required",
+        }.get(blocker, "send_in_progress")
         return {
             "ok": False, "sent": False,
-            "code": "delivery_unknown" if blocker == "delivery_unknown" else "send_in_progress",
+            "code": code,
         }
     target = store.get_outreach_campaign_target(target_id)
     if target is None:
@@ -1073,6 +1284,14 @@ def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = N
         return {"ok": False, "sent": False, "code": "delivery_unknown"}
     if target.get("error_code") == "sending":
         return {"ok": False, "sent": False, "code": "send_in_progress"}
+    try:
+        normalized_policy = normalize_policy(
+            target.get("policy") or {}, target=target, campaign=campaign,
+        )
+    except ValueError:
+        return {"ok": False, "sent": False, "code": "policy_review_required"}
+    if normalized_policy != (target.get("policy") or {}):
+        return {"ok": False, "sent": False, "code": "policy_review_required"}
     if target["state"] != "approved" or not store.outreach_campaign_approval_valid(target_id):
         return {"ok": False, "sent": False, "code": "approval_required"}
     scheduled = _parse_iso(target.get("scheduled_at") or "")
@@ -1122,8 +1341,19 @@ def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = N
     if not outreach_cfg.get("enabled") or not cfg.get("email", {}).get("enabled"):
         return {"ok": False, "sent": False, "code": "sending_disabled"}
     message_id = _outbound_message_id(cfg, target)
-    if not store.claim_outreach_campaign_target_send(target_id, message_id):
-        return {"ok": False, "sent": False, "code": "send_in_progress"}
+    approval_hash = str(target.get("approval_hash") or "")
+    if not store.claim_outreach_campaign_target_send(
+        target_id, message_id, expected_approval_hash=approval_hash,
+    ):
+        refreshed = store.get_outreach_campaign_target(target_id) or {}
+        refreshed_guard = (
+            _followup_guard(cfg, store, refreshed, current)
+            if campaign.get("purpose") == "followup" else _permanent_guard(cfg, store, refreshed)
+        )
+        return {
+            "ok": False, "sent": False,
+            "code": refreshed_guard or "approval_or_claim_invalid",
+        }
 
     try:
         from jobscope.deliver import email
@@ -1138,10 +1368,15 @@ def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = N
         if exc.outcome_unknown:
             store.mark_outreach_campaign_delivery_unknown(target_id, str(exc))
             return {"ok": False, "sent": False, "code": "delivery_unknown"}
+        error_code = {
+            "pre_send_failure": "smtp_pre_send_failure",
+            "transient_rejection": "smtp_transient_rejection",
+            "permanent_rejection": "smtp_permanent_rejection",
+        }.get(exc.outcome, "smtp_failed")
         store.set_outreach_campaign_target_state(
-            target_id, "failed", error_code="smtp_failed", error_detail=str(exc),
+            target_id, "failed", error_code=error_code, error_detail=str(exc),
         )
-        return {"ok": False, "sent": False, "code": "smtp_failed"}
+        return {"ok": False, "sent": False, "code": error_code}
     if not sent:
         store.set_outreach_campaign_target_state(
             target_id, "failed", error_code="smtp_failed", error_detail="SMTP send failed",
@@ -1159,9 +1394,13 @@ def send_next_approved(cfg: dict, store, *, campaign_id: str = "",
     )
     blocker = store.outreach_campaign_delivery_blocker()
     if blocker:
+        code = {
+            "delivery_unknown": "delivery_unknown",
+            "transient_bounce": "provider_feedback_review_required",
+        }.get(blocker, "send_in_progress")
         return {
             "ok": False, "sent": False,
-            "code": "delivery_unknown" if blocker == "delivery_unknown" else "send_in_progress",
+            "code": code,
         }
     due = store.due_outreach_campaign_targets(_iso(current), campaign_id=campaign_id)
     if not due:
@@ -1173,11 +1412,178 @@ def resolve_delivery(store, target_id: str, outcome: str) -> dict:
     return store.resolve_outreach_campaign_delivery(target_id, outcome)
 
 
+def reconcile_delivery(cfg: dict, store, target_id: str) -> dict:
+    """Resolve an unknown campaign send using exact read-only Sent evidence."""
+    target = store.get_outreach_campaign_target(target_id)
+    if target is None:
+        raise KeyError(target_id)
+    if target.get("error_code") != "delivery_unknown":
+        raise ValueError("target is not awaiting delivery resolution")
+    message_id = str(target.get("outbound_message_id") or "").strip().strip("<>")
+    if not message_id:
+        return {"ok": False, "code": "missing_message_id"}
+
+    from jobscope.ingest import inbox
+    evidence = inbox.find_sent_message(cfg, message_id)
+    if not evidence.get("ok"):
+        return {
+            "ok": False, "code": evidence.get("code") or "sent_reconciliation_failed",
+        }
+    status = str(evidence.get("status") or "")
+    count = int(evidence.get("count") or 0)
+    if status == "multiple":
+        return {
+            "ok": False, "code": "multiple_sent_matches",
+            "status": status, "count": count,
+        }
+    if status not in {"sent", "not_found"}:
+        return {"ok": False, "code": "invalid_sent_evidence"}
+    resolved = store.resolve_outreach_campaign_delivery(
+        target_id, "sent" if status == "sent" else "not_sent",
+    )
+    return {
+        "ok": True, "code": status, "status": status,
+        "count": count, "target": resolved,
+    }
+
+
+def resolve_feedback(store, target_id: str, outcome: str) -> dict:
+    return store.resolve_outreach_campaign_transient_bounce(target_id, outcome)
+
+
+def export_target_eml(cfg: dict, store, target_id: str, path: str = "") -> dict:
+    """Export the exact saved target as MIME without approval, SMTP, inbox, or AI."""
+    target = store.get_outreach_campaign_target(target_id)
+    if target is None:
+        raise KeyError(target_id)
+    campaign = store.get_outreach_campaign(target["campaign_id"])
+    if campaign is None:
+        raise KeyError(target["campaign_id"])
+    if not target.get("selected_email") or not target.get("subject") or not target.get("body"):
+        raise ValueError("recipient, subject, and body are required for EML export")
+    resume = _resume_for_campaign(store, campaign)
+    sender = str(cfg.get("email", {}).get("from_addr") or "").strip()
+    sender = sender or str(getattr(resume, "email", "") or "").strip()
+    if not sender:
+        raise ValueError("sender address is required for EML export")
+    if not path:
+        filename = re.sub(r"[^A-Za-z0-9._-]+", "-", target_id).strip("-")
+        path = os.path.join("data", "outreach-eml", f"{filename}.eml")
+    attachments = [target["resume_path"]] if target.get("resume_path") else None
+    message_id = (
+        target.get("outbound_message_id") or
+        (_outbound_message_id(cfg, target) if target.get("approval_hash") else "")
+    )
+    from jobscope.deliver import email
+    destination = email.write_eml(
+        cfg, path, target["subject"], target["body"],
+        to=target["selected_email"], from_addr=sender,
+        attachments=attachments, message_id=message_id,
+        in_reply_to=target.get("parent_message_id") or "",
+        references=target.get("root_message_id") or target.get("parent_message_id") or "",
+    )
+    return {"ok": True, "path": destination, "target_id": target_id}
+
+
 _REPLY_SIGNALS = {"recruiter", "assessment", "interview", "offer"}
+_FEEDBACK_SIGNALS = {
+    "campaign_hard_bounce": "hard_bounce",
+    "campaign_transient_bounce": "transient_bounce",
+    "campaign_complaint": "complaint",
+}
+_OUTBOUND_ID_RE = re.compile(
+    r"jobscope-campaign-[0-9a-f]{24}@[A-Za-z0-9.-]+",
+    re.IGNORECASE,
+)
 _OPTOUT_PHRASES = (
     "do not contact", "don't contact", "remove me", "stop emailing", "unsubscribe",
     "opt out", "opt-out",
 )
+
+
+def _provider_feedback_kind(event: dict) -> str:
+    explicit = _FEEDBACK_SIGNALS.get(str(event.get("signal") or ""))
+    if explicit:
+        return explicit
+    text = f"{event.get('subject') or ''} {event.get('snippet') or ''}".casefold()
+    if any(value in text for value in (
+        "abuse complaint", "spam complaint", "feedback report", "reported as spam",
+    )):
+        return "complaint"
+    if any(value in text for value in (
+        "status: 5.", "permanent failure", "user unknown", "mailbox not found",
+        "recipient address rejected", "undeliverable",
+    )):
+        return "hard_bounce"
+    if any(value in text for value in (
+        "status: 4.", "temporary failure", "delivery delayed", "mailbox full",
+        "try again later",
+    )):
+        return "transient_bounce"
+    return ""
+
+
+def _provider_feedback_message_id(event: dict) -> str:
+    thread_id = str(event.get("thread_id") or "").strip().strip("<>")
+    if _OUTBOUND_ID_RE.fullmatch(thread_id):
+        return thread_id
+    text = f"{event.get('subject') or ''}\n{event.get('snippet') or ''}"
+    match = _OUTBOUND_ID_RE.search(text)
+    return match.group(0) if match else ""
+
+
+def classify_provider_feedback(
+    subject: str, body: str, thread_id: str, known_message_ids: set[str],
+) -> tuple[str, str]:
+    """Return a campaign feedback signal and exact known outbound Message-ID."""
+    event = {
+        "signal": "other",
+        "subject": subject,
+        "snippet": body,
+        "thread_id": thread_id,
+    }
+    kind = _provider_feedback_kind(event)
+    message_id = _provider_feedback_message_id(event)
+    normalized_known = {
+        str(value).strip().strip("<>") for value in known_message_ids if value
+    }
+    if not kind or message_id not in normalized_known:
+        return "", ""
+    signal = {
+        "hard_bounce": "campaign_hard_bounce",
+        "transient_bounce": "campaign_transient_bounce",
+        "complaint": "campaign_complaint",
+    }[kind]
+    return signal, message_id
+
+
+def reconcile_provider_feedback(store) -> dict:
+    """Apply DSNs and complaints once, correlated by stable outbound Message-ID."""
+    stats = {
+        "hard_bounce": 0,
+        "transient_bounce": 0,
+        "complaint": 0,
+        "duplicate": 0,
+        "ambiguous": 0,
+    }
+    for event in store.mail_events():
+        kind = _provider_feedback_kind(event)
+        if not kind:
+            continue
+        message_id = _provider_feedback_message_id(event)
+        target = store.outreach_campaign_target_by_message_id(message_id)
+        event_id = str(event.get("id") or "")
+        event_at = _parse_iso(event.get("date") or event.get("first_seen") or "")
+        sent_at = _parse_iso((target or {}).get("sent_at") or "")
+        if (not target or not event_id or event_at is None or sent_at is None
+                or event_at <= sent_at):
+            stats["ambiguous"] += 1
+            continue
+        applied, _updated = store.apply_outreach_campaign_feedback(
+            target["id"], event_id, kind, _iso(event_at),
+        )
+        stats[kind if applied else "duplicate"] += 1
+    return stats
 
 
 def is_optout_text(subject: str, body: str = "") -> bool:
@@ -1321,6 +1727,7 @@ def sync_replies(cfg: dict, store, *, fetch: bool = True) -> dict:
                 inbox_code = 1
                 inbox_status = "error"
                 error = str(exc)[:200]
+    feedback = reconcile_provider_feedback(store)
     stats = reconcile_replies(store)
     checked_at = _iso(_utc())
     store.meta_set("campaign:replies:last_checked_at", checked_at)
@@ -1332,19 +1739,33 @@ def sync_replies(cfg: dict, store, *, fetch: bool = True) -> dict:
         "pending": pending,
         "replied": stats["replied"],
         "opted_out": stats["opted_out"],
+        "feedback": feedback,
         "error": error,
     }
 
 
 def tick(cfg: dict, store, *, campaign_id: str = "",
          now: Optional[datetime] = None) -> dict:
-    """One scheduler tick: reconcile replies, then send at most one due email."""
+    """Reconcile replies and report due work without sending email."""
     tracking = sync_replies(cfg, store, fetch=True)
-    delivery = send_next_approved(cfg, store, campaign_id=campaign_id, now=now)
+    due = store.due_outreach_campaign_targets(
+        _iso(_utc(now)), campaign_id=campaign_id,
+    )
+    sync_required = bool(
+        tracking.get("pending")
+        and tracking.get("inbox_status") != "ok"
+    )
+    code = "reply_sync_required" if sync_required else "reconciliation_only"
+    delivery = {
+        "ok": not sync_required,
+        "sent": False,
+        "code": code,
+        "due_count": len(due),
+    }
     return {
-        "ok": bool(delivery.get("ok")),
+        "ok": not sync_required,
         "tracking": tracking,
         "delivery": delivery,
-        "sent": bool(delivery.get("sent")),
-        "code": delivery.get("code") or "",
+        "sent": False,
+        "code": code,
     }

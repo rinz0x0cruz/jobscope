@@ -13,7 +13,9 @@ def _store():
 def test_store_configures_single_host_concurrency():
     store = _store()
 
+    assert store.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     assert store.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert store.conn.execute("PRAGMA synchronous").fetchone()[0] == 2
     assert store.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
     store.close()
 
@@ -120,6 +122,44 @@ def test_meta_roundtrip():
     assert store.meta_get("last_review", "x") == "x"
     store.meta_set("last_review", "2026-07-01T00:00:00Z")
     assert store.meta_get("last_review") == "2026-07-01T00:00:00Z"
+    store.close()
+
+
+def test_meta_compare_and_set_is_atomic_across_connections(tmp_path):
+    path = str(tmp_path / "cas.db")
+    with Store(path) as first, Store(path) as second:
+        first.meta_set("digest:intent", "ready")
+
+        outcomes = [
+            first.meta_compare_and_set("digest:intent", "ready", "claim-a"),
+            second.meta_compare_and_set("digest:intent", "ready", "claim-b"),
+        ]
+
+        assert outcomes == [True, False]
+        assert first.meta_get("digest:intent") == "claim-a"
+        assert second.meta_get("digest:intent") == "claim-a"
+
+
+def test_meta_finalize_intent_is_atomic_and_conflict_safe():
+    store = _store()
+    store.meta_set("digest:last", "2026-07-01T00:00:00Z")
+    store.meta_set("digest:intent", "accepted-v1")
+
+    assert store.meta_finalize_intent(
+        "digest:intent", "accepted-v1",
+        "digest:last", "2026-07-02T00:00:00Z",
+    ) is True
+    assert store.meta_get("digest:last") == "2026-07-02T00:00:00Z"
+    assert store.meta_get("digest:intent") is None
+
+    store.meta_set("digest:intent", "newer-intent")
+    store.meta_set("digest:last", "2026-07-03T00:00:00Z")
+    assert store.meta_finalize_intent(
+        "digest:intent", "stale-intent",
+        "digest:last", "2026-07-01T00:00:00Z",
+    ) is False
+    assert store.meta_get("digest:last") == "2026-07-03T00:00:00Z"
+    assert store.meta_get("digest:intent") == "newer-intent"
     store.close()
 
 

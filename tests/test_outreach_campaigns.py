@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
+from email import policy
+from email.parser import BytesParser
 import os
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +13,37 @@ from jobscope.core.store import Store
 
 
 NOW = datetime(2026, 7, 17, 5, 30, tzinfo=timezone.utc)  # 11:00 Asia/Kolkata
+
+
+def _policy_for(store, target_id: str) -> dict:
+    target = store.get_outreach_campaign_target(target_id)
+    campaign = store.get_outreach_campaign(target["campaign_id"])
+    source = target.get("selected_source") or "test_fixture"
+    recipient_kind = {
+        "recruiter": "prior_inbound_recruiter",
+        "mail_event": "prior_inbound_recruiter",
+        "discovered": "employer_published",
+        "role_inbox": "role_inbox",
+    }.get(source, "verified_business_contact")
+    return {
+        "sender_jurisdiction": "IN",
+        "recipient_jurisdiction": "IN",
+        "recipient_kind": recipient_kind,
+        "contact_source": source,
+        "contact_provenance_at": "2026-07-17T05:00:00Z",
+        "purpose": campaign.get("purpose") or "cold",
+        "basis": "existing_relationship" if recipient_kind == "prior_inbound_recruiter" else "legitimate_interest",
+        "consent": "not_applicable",
+        "identity_footer": True,
+        "opt_out_method": "reply",
+        "reviewer": "test reviewer",
+        "policy_version": campaigns.OUTREACH_POLICY_VERSION,
+    }
+
+
+def _approve_store_target(store, target_id: str) -> dict:
+    store.set_outreach_campaign_policy(target_id, _policy_for(store, target_id))
+    return store.approve_outreach_campaign_target(target_id)
 
 
 @pytest.fixture
@@ -63,7 +97,9 @@ def test_create_discover_approve_and_send_one_target(seeded, monkeypatch):
     assert drafted["selected_email"] == "security.recruiter@acme.example"
     assert drafted["selected_source"] == "hunter"
 
-    approved = campaigns.approve_target(cfg, store, target["id"], now=NOW)
+    approved = campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
     assert approved["state"] == "approved" and approved["scheduled_at"] == "2026-07-17T05:30:00Z"
     campaigns.set_campaign_status(store, created["campaign"]["id"], "active")
 
@@ -82,6 +118,71 @@ def test_create_discover_approve_and_send_one_target(seeded, monkeypatch):
     assert campaigns.send_next_approved(cfg, store, now=NOW)["code"] == "nothing_due"
 
 
+def test_activation_preflights_largest_exact_approved_message(seeded, monkeypatch):
+    cfg, store = seeded
+    created = campaigns.create_campaign(
+        cfg, store, "Activation gate", 1, candidates=["Acme Security"], now=NOW,
+    )
+    target = created["targets"][0]
+    store.set_outreach_campaign_contacts(
+        target["id"], domain="acme.example",
+        contacts=[{"email": "recruiter@acme.example", "source": "hunter"}],
+        state="draft",
+    )
+    campaigns.update_draft(
+        cfg, store, target["id"], selected_email="recruiter@acme.example",
+    )
+    campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
+    monkeypatch.setattr(
+        "jobscope.core.config.smtp_password", lambda _cfg: "resolved",
+    )
+    seen = []
+    monkeypatch.setattr(
+        "jobscope.deliver.email.preflight",
+        lambda _cfg, **kwargs: seen.append(kwargs["message_size"]) or {
+            "ok": True, "code": "ready",
+        },
+    )
+
+    detail = campaigns.activate_campaign(cfg, store, created["campaign"]["id"])
+
+    assert detail["campaign"]["status"] == "active"
+    assert len(seen) == 1 and seen[0] > 0
+
+
+def test_activation_keeps_campaign_inactive_when_preflight_fails(seeded, monkeypatch):
+    cfg, store = seeded
+    created = campaigns.create_campaign(
+        cfg, store, "Activation gate", 1, candidates=["Acme Security"], now=NOW,
+    )
+    target = created["targets"][0]
+    store.set_outreach_campaign_contacts(
+        target["id"], domain="acme.example",
+        contacts=[{"email": "recruiter@acme.example", "source": "hunter"}],
+        state="draft",
+    )
+    campaigns.update_draft(
+        cfg, store, target["id"], selected_email="recruiter@acme.example",
+    )
+    campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
+    monkeypatch.setattr(
+        "jobscope.core.config.smtp_password", lambda _cfg: "resolved",
+    )
+    monkeypatch.setattr(
+        "jobscope.deliver.email.preflight",
+        lambda *_args, **_kwargs: {"ok": False, "code": "auth_required"},
+    )
+
+    with pytest.raises(ValueError, match="SMTP preflight failed: auth_required"):
+        campaigns.activate_campaign(cfg, store, created["campaign"]["id"])
+
+    assert store.get_outreach_campaign(created["campaign"]["id"])["status"] == "draft"
+
+
 def test_manual_send_does_not_activate_the_campaign(seeded, monkeypatch):
     cfg, store = seeded
     created = campaigns.create_campaign(
@@ -96,7 +197,9 @@ def test_manual_send_does_not_activate_the_campaign(seeded, monkeypatch):
     campaigns.update_draft(
         cfg, store, target["id"], selected_email="recruiter@acme.example",
     )
-    campaigns.approve_target(cfg, store, target["id"], now=NOW)
+    campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
     sent = []
     monkeypatch.setattr(
         "jobscope.deliver.email.send", lambda *args, **kwargs: sent.append(kwargs) or True,
@@ -110,6 +213,186 @@ def test_manual_send_does_not_activate_the_campaign(seeded, monkeypatch):
     assert result["ok"] and result["sent"]
     assert sent[0]["to"] == "recruiter@acme.example"
     assert store.get_outreach_campaign(target["campaign_id"])["status"] == "draft"
+
+
+def test_draft_eml_export_works_with_smtp_inbox_and_ai_disabled(seeded, monkeypatch):
+    cfg, store = seeded
+    cfg["email"]["enabled"] = False
+    cfg["inbox"]["enabled"] = False
+    cfg["ai"]["enabled"] = False
+    target = campaigns.create_campaign(
+        cfg, store, "Offline export", 1, candidates=["Acme Security"], now=NOW,
+    )["targets"][0]
+    contacts = [{
+        "email": "recruiter@acme.example", "source": "recruiter",
+        "confidence": "high", "note": "prior inbound recruiter",
+    }]
+    store.set_outreach_campaign_contacts(
+        target["id"], domain="acme.example", contacts=contacts, state="draft",
+    )
+    drafted = campaigns.update_draft(
+        cfg, store, target["id"], selected_email="recruiter@acme.example",
+        subject="Exact reviewed subject", body="Exact reviewed body",
+    )
+    monkeypatch.setattr(
+        "jobscope.deliver.email.send",
+        lambda *_args, **_kwargs: pytest.fail("EML export attempted SMTP"),
+    )
+    destination = Path(store.get_resume().source_path).parent / "review.eml"
+
+    result = campaigns.export_target_eml(cfg, store, drafted["id"], str(destination))
+
+    message = BytesParser(policy=policy.default).parsebytes(destination.read_bytes())
+    assert result["path"] == str(destination.resolve())
+    assert message["From"] == "jane@example.com"
+    assert message["To"] == "recruiter@acme.example"
+    assert message["Subject"] == "Exact reviewed subject"
+    assert "Exact reviewed body" in message.get_body(preferencelist=("plain",)).get_content()
+    assert [part.get_filename() for part in message.iter_attachments()] == ["resume.md"]
+    with pytest.raises(FileExistsError):
+        campaigns.export_target_eml(cfg, store, drafted["id"], str(destination))
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("sender_jurisdiction", "unknown", "sender jurisdiction is required"),
+        ("recipient_jurisdiction", "", "recipient jurisdiction is required"),
+        ("recipient_kind", "unknown", "recipient kind is required"),
+    ],
+)
+def test_unknown_policy_classification_cannot_be_approved(
+    seeded, field, value, message,
+):
+    cfg, store = seeded
+    target = campaigns.create_campaign(
+        cfg, store, "Policy review", 1, candidates=["Acme Security"], now=NOW,
+    )["targets"][0]
+    contacts = [{"email": "recruiter@acme.example", "source": "hunter",
+                 "confidence": "medium", "note": "verified business contact"}]
+    store.set_outreach_campaign_contacts(
+        target["id"], domain="acme.example", contacts=contacts, state="draft",
+    )
+    campaigns.update_draft(
+        cfg, store, target["id"], selected_email="recruiter@acme.example",
+    )
+    policy_value = _policy_for(store, target["id"])
+    policy_value[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        campaigns.approve_target(cfg, store, target["id"], policy=policy_value, now=NOW)
+
+    stored = store.get_outreach_campaign_target(target["id"])
+    assert stored["state"] == "draft" and stored["approval_hash"] == ""
+
+
+def test_content_policy_and_thread_edits_explicitly_invalidate_approval(seeded):
+    cfg, store = seeded
+    target = campaigns.create_campaign(
+        cfg, store, "Invalidation", 1, candidates=["Acme Security"], now=NOW,
+    )["targets"][0]
+    contacts = [{"email": "recruiter@acme.example", "source": "hunter",
+                 "confidence": "medium", "note": "verified business contact"}]
+    store.set_outreach_campaign_contacts(
+        target["id"], domain="acme.example", contacts=contacts, state="draft",
+    )
+    campaigns.update_draft(
+        cfg, store, target["id"], selected_email="recruiter@acme.example",
+    )
+    approved = campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
+    assert approved["state"] == "approved"
+
+    edited = store.set_outreach_campaign_draft(
+        target["id"], domain="acme.example", contacts=contacts,
+        selected_email="recruiter@acme.example", selected_source="hunter",
+        selected_confidence="medium", selected_note="verified business contact",
+        subject=approved["subject"], body=approved["body"] + " edited",
+        resume_path=approved["resume_path"],
+    )
+    assert edited["state"] == "draft" and edited["approval_hash"] == ""
+
+    approved = campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
+    policy_value = dict(approved["policy"])
+    policy_value["reviewer"] = "second reviewer"
+    edited = store.set_outreach_campaign_policy(target["id"], policy_value)
+    assert edited["state"] == "draft" and edited["approval_hash"] == ""
+
+    approved = store.approve_outreach_campaign_target(target["id"])
+    edited = store.upsert_outreach_campaign_target(
+        approved["campaign_id"], approved["company"], approved["company_key"],
+        parent_message_id="new-parent@example.com",
+        root_message_id="new-root@example.com",
+        evidence=approved["evidence"], state="draft",
+    )
+    assert edited["state"] == "draft"
+    assert edited["approval_hash"] == "" and edited["scheduled_at"] == ""
+
+
+def test_atomic_claim_rechecks_suppression_added_after_approval(seeded):
+    cfg, store = seeded
+    target = campaigns.create_campaign(
+        cfg, store, "Atomic suppression", 1, candidates=["Acme Security"], now=NOW,
+    )["targets"][0]
+    contacts = [{"email": "recruiter@acme.example", "source": "hunter",
+                 "confidence": "medium", "note": "verified business contact"}]
+    store.set_outreach_campaign_contacts(
+        target["id"], domain="acme.example", contacts=contacts, state="draft",
+    )
+    campaigns.update_draft(
+        cfg, store, target["id"], selected_email="recruiter@acme.example",
+    )
+    approved = campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
+    store.add_outreach_suppression(
+        "email", approved["selected_email"], reason="late opt-out", source="event:late",
+    )
+
+    assert not store.claim_outreach_campaign_target_send(
+        target["id"], "atomic-suppression@example.com",
+        expected_approval_hash=approved["approval_hash"],
+    )
+    assert store.get_outreach_campaign_target(target["id"])["error_code"] == ""
+
+
+def test_atomic_claim_rechecks_reply_added_after_approval(seeded):
+    _cfg, store = seeded
+    campaign = store.create_outreach_campaign("Atomic reply", 1, purpose="followup")
+    target = store.upsert_outreach_campaign_target(
+        campaign["id"], "Acme Security", "acme security",
+        parent_message_id="prior@example.com", followup_number=1,
+        evidence={"anchor": "2026-07-01T00:00:00Z"}, state="draft",
+    )
+    contacts = [{"email": "recruiter@acme.example", "source": "recruiter",
+                 "confidence": "high", "note": "prior inbound recruiter"}]
+    store.set_outreach_campaign_contacts(
+        target["id"], domain="acme.example", contacts=contacts, state="draft",
+    )
+    store.set_outreach_campaign_draft(
+        target["id"], domain="acme.example", contacts=contacts,
+        selected_email="recruiter@acme.example", selected_source="recruiter",
+        selected_confidence="high", selected_note="prior inbound recruiter",
+        subject="Re: Prior", body="Following up",
+        resume_path=store.get_resume().source_path,
+    )
+    store.set_outreach_campaign_policy(target["id"], _policy_for(store, target["id"]))
+    approved = store.approve_outreach_campaign_target(target["id"])
+    store.upsert_mail_event(MailEvent(
+        account="jane@example.com", message_id="<late-reply@acme.example>",
+        thread_id="prior@example.com", from_addr="recruiter@acme.example",
+        from_domain="acme.example", subject="Re: Prior",
+        date="2026-07-17T05:20:00Z", signal="campaign_reply",
+    ).ensure_id())
+
+    assert not store.claim_outreach_campaign_target_send(
+        target["id"], "atomic-reply@example.com",
+        expected_approval_hash=approved["approval_hash"],
+    )
+    assert store.get_outreach_campaign_target(target["id"])["error_code"] == ""
 
 
 def test_engagement_activity_groups_threads_without_outbound_secrets(seeded):
@@ -131,9 +414,10 @@ def test_engagement_activity_groups_threads_without_outbound_secrets(seeded):
             body="PRIVATE-OUTBOUND-BODY-CANARY",
             resume_path=resume_path,
         )
-        store.approve_outreach_campaign_target(target["id"])
+        approved = _approve_store_target(store, target["id"])
         assert store.claim_outreach_campaign_target_send(
             target["id"], f"PRIVATE-MESSAGE-ID-{followup_number}@example.test",
+            expected_approval_hash=approved["approval_hash"],
         )
         store.mark_outreach_campaign_target_sent(target["id"], sent_at)
         return store.get_outreach_campaign_target(target["id"])
@@ -224,8 +508,11 @@ def test_engagement_activity_dedupes_case_variant_direct_send(seeded):
         target["id"], selected_email="recruiter@acme.example",
         subject="Re: application", body="Private body",
     )
-    store.approve_outreach_campaign_target(target["id"])
-    assert store.claim_outreach_campaign_target_send(target["id"], "message@example.test")
+    approved = _approve_store_target(store, target["id"])
+    assert store.claim_outreach_campaign_target_send(
+        target["id"], "message@example.test",
+        expected_approval_hash=approved["approval_hash"],
+    )
     store.mark_outreach_campaign_target_sent(target["id"], campaign_sent_at)
 
     thread = campaigns.engagement_activity(store)[0]
@@ -244,8 +531,11 @@ def test_engagement_activity_handles_source_cycle_and_same_company_roots(seeded)
             target["id"], selected_email="recruiter@acme.example",
             subject=key, body="private",
         )
-        store.approve_outreach_campaign_target(target["id"])
-        assert store.claim_outreach_campaign_target_send(target["id"], f"{key}@example.test")
+        approved = _approve_store_target(store, target["id"])
+        assert store.claim_outreach_campaign_target_send(
+            target["id"], f"{key}@example.test",
+            expected_approval_hash=approved["approval_hash"],
+        )
         store.mark_outreach_campaign_target_sent(target["id"], when)
         return target["id"]
 
@@ -282,8 +572,11 @@ def test_engagement_activity_surfaces_delivery_unknown_without_marking_sent(seed
         target["id"], selected_email="recruiter@acme.example",
         subject="Security introduction", body="private",
     )
-    store.approve_outreach_campaign_target(target["id"])
-    assert store.claim_outreach_campaign_target_send(target["id"], "unknown@example.test")
+    approved = _approve_store_target(store, target["id"])
+    assert store.claim_outreach_campaign_target_send(
+        target["id"], "unknown@example.test",
+        expected_approval_hash=approved["approval_hash"],
+    )
     store.mark_outreach_campaign_delivery_unknown(target["id"], "private provider detail")
 
     thread = campaigns.engagement_activity(store)[0]
@@ -566,8 +859,11 @@ def test_cold_followup_locks_original_recipient_and_threads_reply(seeded):
         selected_email="agent@agency.example", subject="Security opportunity",
         body="Original note", resume_path=store.get_resume().source_path,
     )
-    store.approve_outreach_campaign_target(source["id"])
-    assert store.claim_outreach_campaign_target_send(source["id"], "cold@example.com")
+    approved = _approve_store_target(store, source["id"])
+    assert store.claim_outreach_campaign_target_send(
+        source["id"], "cold@example.com",
+        expected_approval_hash=approved["approval_hash"],
+    )
     store.mark_outreach_campaign_target_sent(source["id"], "2026-07-01T00:00:00Z")
 
     created = campaigns.create_followup_campaign(
@@ -611,8 +907,11 @@ def test_cold_followup_respects_latest_application_state(
         selected_email="agent@agency.example", subject="Security opportunity",
         body="Original note", resume_path=store.get_resume().source_path,
     )
-    store.approve_outreach_campaign_target(source["id"])
-    assert store.claim_outreach_campaign_target_send(source["id"], "cold@example.com")
+    approved = _approve_store_target(store, source["id"])
+    assert store.claim_outreach_campaign_target_send(
+        source["id"], "cold@example.com",
+        expected_approval_hash=approved["approval_hash"],
+    )
     store.mark_outreach_campaign_target_sent(source["id"], "2026-07-01T00:00:00Z")
     job = next(job for job in store.jobs() if job.company == "Acme Security")
     store.conn.execute(
@@ -648,7 +947,9 @@ def test_application_followup_approve_send_and_reply_end_to_end(seeded, monkeypa
         include_cold=False, now=NOW,
     )
     target = created["targets"][0]
-    approved = campaigns.approve_target(cfg, store, target["id"], now=NOW)
+    approved = campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
     campaigns.set_campaign_status(store, created["campaign"]["id"], "active")
     sent = []
     monkeypatch.setattr(
@@ -687,7 +988,9 @@ def test_send_rechecks_application_history_after_approval(seeded, monkeypatch):
     campaigns.update_draft(
         cfg, store, target["id"], selected_email="recruiter@acme.example",
     )
-    campaigns.approve_target(cfg, store, target["id"], now=NOW)
+    campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
     campaigns.set_campaign_status(store, target["campaign_id"], "active")
 
     job = next(job for job in store.jobs() if job.company == "Acme Security")
@@ -721,7 +1024,9 @@ def test_send_rejects_resume_changed_after_approval(seeded, monkeypatch):
     drafted = campaigns.update_draft(
         cfg, store, target["id"], selected_email="recruiter@acme.example",
     )
-    campaigns.approve_target(cfg, store, target["id"], now=NOW)
+    campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
     campaigns.set_campaign_status(store, target["campaign_id"], "active")
     with open(drafted["resume_path"], "a", encoding="utf-8") as handle:
         handle.write("\nchanged after approval")
@@ -749,7 +1054,9 @@ def test_sendmail_unknown_outcome_is_locked_and_never_auto_retried(seeded, monke
     campaigns.update_draft(
         cfg, store, target["id"], selected_email="recruiter@acme.example",
     )
-    campaigns.approve_target(cfg, store, target["id"], now=NOW)
+    campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
     campaigns.set_campaign_status(store, target["campaign_id"], "active")
 
     from jobscope.deliver import email
@@ -777,6 +1084,121 @@ def test_sendmail_unknown_outcome_is_locked_and_never_auto_retried(seeded, monke
     campaigns.set_campaign_status(store, target["campaign_id"], "paused")
     with pytest.raises(ValueError, match="approve at least one target"):
         campaigns.set_campaign_status(store, target["campaign_id"], "active")
+
+
+@pytest.mark.parametrize(
+    ("outcome", "code", "expected_state", "expected_error"),
+    [
+        ("pre_send_failure", "smtp_pre_send_failure", "failed", "smtp_pre_send_failure"),
+        ("transient_rejection", "smtp_transient_rejection", "failed", "smtp_transient_rejection"),
+        ("permanent_rejection", "smtp_permanent_rejection", "failed", "smtp_permanent_rejection"),
+        ("partial_recipient", "delivery_unknown", "approved", "delivery_unknown"),
+    ],
+)
+def test_campaign_preserves_actionable_smtp_failure_class(
+    seeded, monkeypatch, outcome, code, expected_state, expected_error,
+):
+    cfg, store = seeded
+    target = campaigns.create_campaign(
+        cfg, store, "SMTP outcome", 1, candidates=["Acme Security"], now=NOW,
+    )["targets"][0]
+    contacts = [{
+        "email": "recruiter@acme.example", "source": "hunter",
+        "confidence": "medium", "note": "security recruiter",
+    }]
+    store.set_outreach_campaign_contacts(
+        target["id"], domain="acme.example", contacts=contacts, state="draft",
+    )
+    campaigns.update_draft(
+        cfg, store, target["id"], selected_email="recruiter@acme.example",
+    )
+    campaigns.approve_target(
+        cfg, store, target["id"], policy=_policy_for(store, target["id"]), now=NOW,
+    )
+    campaigns.set_campaign_status(store, target["campaign_id"], "active")
+    from jobscope.deliver import email
+    monkeypatch.setattr(
+        email, "send",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            email.EmailDeliveryError("SMTPDataError (550)", outcome=outcome)
+        ),
+    )
+
+    result = campaigns.send_target(cfg, store, target["id"], now=NOW)
+
+    assert result["code"] == code
+    stored = store.get_outreach_campaign_target(target["id"])
+    assert stored["state"] == expected_state and stored["error_code"] == expected_error
+    assert store.due_outreach_campaign_targets("9999-12-31T23:59:59Z") == []
+
+
+@pytest.mark.parametrize(
+    ("status", "count", "expected_ok", "expected_state", "expected_error"),
+    [
+        ("not_found", 0, True, "draft", ""),
+        ("sent", 1, True, "sent", ""),
+        ("multiple", 2, False, "approved", "delivery_unknown"),
+    ],
+)
+def test_reconcile_unknown_campaign_delivery_by_exact_sent_evidence(
+    seeded, monkeypatch, status, count, expected_ok, expected_state, expected_error,
+):
+    cfg, store = seeded
+    campaign = store.create_outreach_campaign("Unknown delivery", 1)
+    target = store.upsert_outreach_campaign_target(
+        campaign["id"], "Acme Security", "acme-security",
+    )
+    store.set_outreach_campaign_draft(
+        target["id"], selected_email="recruiter@acme.example",
+        subject="Subject", body="Body",
+    )
+    approved = _approve_store_target(store, target["id"])
+    message_id = "jobscope-campaign-reconcile@example.com"
+    assert store.claim_outreach_campaign_target_send(
+        target["id"], message_id,
+        expected_approval_hash=approved["approval_hash"],
+    )
+    store.mark_outreach_campaign_delivery_unknown(
+        target["id"], "SMTPServerDisconnected",
+    )
+    seen = []
+    monkeypatch.setattr(
+        "jobscope.ingest.inbox.find_sent_message",
+        lambda _cfg, value: seen.append(value) or {
+            "ok": True, "code": status, "status": status, "count": count,
+        },
+    )
+
+    result = campaigns.reconcile_delivery(cfg, store, target["id"])
+
+    assert result["ok"] is expected_ok
+    assert result["status"] == status and result["count"] == count
+    assert seen == [message_id]
+    stored = store.get_outreach_campaign_target(target["id"])
+    assert stored["state"] == expected_state
+    assert stored["error_code"] == expected_error
+    assert stored["outbound_message_id"] == message_id
+
+
+def test_reconcile_delivery_requires_a_recorded_message_id(seeded):
+    cfg, store = seeded
+    campaign = store.create_outreach_campaign("Unknown delivery", 1)
+    target = store.upsert_outreach_campaign_target(
+        campaign["id"], "Acme Security", "acme-security",
+    )
+    store.set_outreach_campaign_draft(
+        target["id"], selected_email="recruiter@acme.example",
+        subject="Subject", body="Body",
+    )
+    approved = _approve_store_target(store, target["id"])
+    assert store.claim_outreach_campaign_target_send(
+        target["id"], "", expected_approval_hash=approved["approval_hash"],
+    )
+    store.mark_outreach_campaign_delivery_unknown(target["id"], "SMTPServerDisconnected")
+
+    assert campaigns.reconcile_delivery(cfg, store, target["id"]) == {
+        "ok": False, "code": "missing_message_id",
+    }
 
 
 def test_send_next_recovers_only_stale_claims_before_selecting_due_work():

@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import html as _html
+import json
 from dataclasses import dataclass
 from typing import Optional
 
 from jobscope.core.model import STATUSES, Application
 from jobscope.core.store import now_iso
+
+_DIGEST_INTENT_KEY = "digest:intent:v1"
+_DIGEST_STALE_AFTER = _dt.timedelta(minutes=15)
+_DIGEST_MAX_ROWS = 25
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,30 +103,143 @@ def run_new(store) -> int:
     return 0
 
 
-def send_digest_result(cfg: dict, store) -> DigestResult:
+def send_digest_result(cfg: dict, store, *, retry_intent: bool = False) -> DigestResult:
     """Email a digest of newly-matched Strong/Good roles since the last digest.
 
-    Deterministic and opt-in: a no-op unless ``email.enabled``. The very first
-    run only baselines the ``digest:last`` marker (so we never email the whole
-    backlog at once); every run after emails just the roles first seen since the
-    marker, then advances it once the send succeeds. A transient send failure
-    leaves the marker untouched, so the same roles are retried next run. Reuses
-    the ``email.*`` config, so it adds no new config keys. Returns the number of
-    roles attempted and whether delivery completed. Disabled/baseline/no-new paths
-    are successful no-ops.
+    The selected content and Message-ID are persisted before SMTP. Known
+    pre-send/rejection failures may be explicitly retried with that same ID;
+    interrupted or ambiguous attempts remain blocked until Sent reconciliation.
     """
     if not (cfg.get("email", {}) or {}).get("enabled"):
         return DigestResult(0, True, "disabled")
+    raw_intent = store.meta_get(_DIGEST_INTENT_KEY)
+    if raw_intent:
+        try:
+            intent = _decode_digest_intent(raw_intent)
+        except ValueError:
+            return DigestResult(0, False, "invalid durable digest intent; SMTP blocked")
+        if intent["state"] == "accepted":
+            finalized = _finalize_digest_acceptance(store, raw_intent, intent)
+            return DigestResult(
+                len(intent["job_ids"]), finalized,
+                "accepted digest finalized" if finalized
+                else "accepted digest state could not be finalized",
+            )
+        elif intent["state"] == "sending":
+            if _digest_attempt_stale(intent):
+                unknown = {**intent, "state": "delivery_unknown"}
+                unknown_raw = _encode_digest_intent(unknown)
+                store.meta_compare_and_set(_DIGEST_INTENT_KEY, raw_intent, unknown_raw)
+            return DigestResult(
+                len(intent["job_ids"]), False,
+                "digest delivery outcome unresolved; reconcile Sent mail before retry",
+            )
+        elif intent["state"] == "delivery_unknown":
+            return DigestResult(
+                len(intent["job_ids"]), False,
+                "digest delivery outcome unresolved; reconcile Sent mail before retry",
+            )
+        elif intent["state"] == "retryable" and not retry_intent:
+            return DigestResult(
+                len(intent["job_ids"]), False,
+                "digest retry requires an explicit `new --email` command",
+            )
+    else:
+        intent = None
+
     last = store.meta_get("digest:last")
-    if not last:
+    if intent is None and not last:
         store.meta_set("digest:last", now_iso())   # baseline; skip the initial flood
         return DigestResult(0, True, "baseline")
+    if intent is None:
+        cutoff = now_iso()
+        fresh, origins_by_job, remaining = _fresh_digest_jobs(store, last, cutoff)
+        if not fresh:
+            return DigestResult(0, True, "no new matches")
+        subject = f"jobscope: {len(fresh)} job{'s' if len(fresh) != 1 else ''} to review"
+        text, html = _digest_body(fresh, origins_by_job or None, remaining=remaining)
+        intent = {
+            "version": 1,
+            "state": "ready",
+            "marker": last,
+            "next_marker": cutoff,
+            "job_ids": [job.id for job in fresh],
+            "message_id": _digest_message_id(cfg, last, [job.id for job in fresh]),
+            "subject": subject,
+            "text": text,
+            "html": html,
+            "created_at": cutoff,
+            "attempted_at": "",
+            "last_outcome": "",
+        }
+        raw_intent = _encode_digest_intent(intent)
+        if not store.meta_compare_and_set(_DIGEST_INTENT_KEY, None, raw_intent):
+            return DigestResult(
+                len(fresh), False, "another digest operation created the durable intent",
+            )
+
+    sending = {
+        **intent,
+        "state": "sending",
+        "attempted_at": now_iso(),
+        "last_outcome": "",
+    }
+    sending_raw = _encode_digest_intent(sending)
+    if not store.meta_compare_and_set(_DIGEST_INTENT_KEY, raw_intent, sending_raw):
+        return DigestResult(
+            len(intent["job_ids"]), False, "another digest operation claimed delivery",
+        )
+
+    from jobscope.deliver import email as _email
+    try:
+        sent = _email.send(
+            cfg, intent["subject"], intent["text"], intent["html"],
+            message_id=intent["message_id"], raise_errors=True,
+        )
+    except _email.EmailDeliveryError as exc:
+        state = "delivery_unknown" if exc.outcome_unknown else "retryable"
+        failed = {**sending, "state": state, "last_outcome": exc.outcome}
+        store.meta_compare_and_set(
+            _DIGEST_INTENT_KEY, sending_raw, _encode_digest_intent(failed),
+        )
+        detail = (
+            "delivery outcome unknown; reconcile Sent mail before retry"
+            if exc.outcome_unknown else f"SMTP {exc.outcome}; intent retained for explicit retry"
+        )
+        return DigestResult(len(intent["job_ids"]), False, detail)
+    if not sent:
+        retryable = {**sending, "state": "retryable", "last_outcome": "pre_send_failure"}
+        store.meta_compare_and_set(
+            _DIGEST_INTENT_KEY, sending_raw, _encode_digest_intent(retryable),
+        )
+        return DigestResult(
+            len(intent["job_ids"]), False,
+            "SMTP pre-send failure; intent retained for explicit retry",
+        )
+
+    accepted = {**sending, "state": "accepted", "last_outcome": "accepted"}
+    accepted_raw = _encode_digest_intent(accepted)
+    if not store.meta_compare_and_set(_DIGEST_INTENT_KEY, sending_raw, accepted_raw):
+        return DigestResult(
+            len(intent["job_ids"]), False,
+            "submission accepted but durable state conflicted; retry blocked",
+        )
+    if not _finalize_digest_acceptance(store, accepted_raw, accepted):
+        return DigestResult(
+            len(intent["job_ids"]), False,
+            "submission accepted but durable finalization conflicted; retry blocked",
+        )
+    return DigestResult(
+        len(intent["job_ids"]), True, "accepted by submission MTA")
+
+
+def _fresh_digest_jobs(store, last: str, cutoff: str) -> tuple[list, dict[str, list[str]], int]:
     all_reviews = store.list_job_reviews()
     origins_by_job: dict[str, list[str]] = {}
     if all_reviews:
         pending = {
             review["job_id"]: review for review in all_reviews
-            if review["state"] == "pending" and review["first_seen"] > last
+            if review["state"] == "pending" and last < review["first_seen"] <= cutoff
         }
         fresh = [
             job for job in store.jobs(order_by_score=True)
@@ -131,29 +250,132 @@ def send_digest_result(cfg: dict, store) -> DigestResult:
             0 if "monitored" in origins_by_job.get(job.id, []) else 1,
             -float(job.score or 0),
         ))
-        fresh = fresh[:25]
-    else:
-        # Pre-monitoring databases keep the historical behavior until seeded.
-        fresh = [job for job in store.jobs(order_by_score=True)
-                 if job.tier in ("Strong", "Good") and job.first_seen and job.first_seen > last][:25]
-    if not fresh:
-        return DigestResult(0, True, "no new matches")
-    from jobscope.deliver import email as _email
-    subject = f"jobscope: {len(fresh)} job{'s' if len(fresh) != 1 else ''} to review"
-    text, html = _digest_body(fresh, origins_by_job or None)
-    sent = _email.send(cfg, subject, text, html)
-    if sent:
-        store.meta_set("digest:last", now_iso())
-    return DigestResult(
-        len(fresh), sent, "sent" if sent else "SMTP delivery failed; marker retained")
+        return fresh[:_DIGEST_MAX_ROWS], origins_by_job, max(0, len(fresh) - _DIGEST_MAX_ROWS)
+    fresh = [
+        job for job in store.jobs(order_by_score=True)
+        if job.tier in ("Strong", "Good") and job.first_seen
+        and last < job.first_seen <= cutoff
+    ]
+    return fresh[:_DIGEST_MAX_ROWS], origins_by_job, max(0, len(fresh) - _DIGEST_MAX_ROWS)
+
+
+def _digest_message_id(cfg: dict, marker: str, job_ids: list[str]) -> str:
+    sender = str((cfg.get("email", {}) or {}).get("from_addr") or "")
+    domain = sender.rsplit("@", 1)[-1].lower() if "@" in sender else "localhost"
+    basis = marker + "\0" + "\0".join(sorted(job_ids))
+    digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
+    return f"jobscope-digest-{digest}@{domain}"
+
+
+def _encode_digest_intent(intent: dict) -> str:
+    return json.dumps(intent, sort_keys=True, separators=(",", ":"))
+
+
+def _decode_digest_intent(raw: str) -> dict:
+    try:
+        intent = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid digest intent") from exc
+    required = {
+        "version", "state", "marker", "next_marker", "job_ids", "message_id",
+        "subject", "text", "html", "created_at", "attempted_at", "last_outcome",
+    }
+    states = {"ready", "retryable", "sending", "delivery_unknown", "accepted"}
+    if (
+        not isinstance(intent, dict)
+        or set(intent) != required
+        or intent.get("version") != 1
+        or intent.get("state") not in states
+        or not isinstance(intent.get("job_ids"), list)
+        or not intent.get("job_ids")
+        or any(not isinstance(value, str) or not value for value in intent["job_ids"])
+        or any(not isinstance(intent.get(key), str) for key in required - {"version", "job_ids"})
+        or not intent.get("message_id")
+    ):
+        raise ValueError("invalid digest intent")
+    return intent
+
+
+def _digest_attempt_stale(intent: dict) -> bool:
+    try:
+        attempted = _dt.datetime.fromisoformat(intent["attempted_at"].replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError):
+        return True
+    return _dt.datetime.now(_dt.UTC) - attempted >= _DIGEST_STALE_AFTER
+
+
+def _finalize_digest_acceptance(store, raw_intent: str, intent: dict) -> bool:
+    return store.meta_finalize_intent(
+        _DIGEST_INTENT_KEY, raw_intent, "digest:last", intent["next_marker"],
+    )
 
 
 def send_digest(cfg: dict, store) -> int:
     """Compatibility wrapper returning the number of roles attempted."""
-    return send_digest_result(cfg, store).attempted
+    return send_digest_result(cfg, store, retry_intent=True).attempted
 
 
-def _digest_body(jobs: list, origins_by_job: dict[str, list[str]] | None = None) -> tuple[str, str]:
+def reconcile_digest_delivery(cfg: dict, store) -> dict:
+    """Resolve one ambiguous digest attempt by exact read-only Sent lookup."""
+    raw_intent = store.meta_get(_DIGEST_INTENT_KEY)
+    if not raw_intent:
+        return {"ok": False, "code": "no_unresolved_digest"}
+    try:
+        intent = _decode_digest_intent(raw_intent)
+    except ValueError:
+        return {"ok": False, "code": "invalid_digest_intent"}
+    if intent["state"] == "sending":
+        if not _digest_attempt_stale(intent):
+            return {"ok": False, "code": "digest_send_in_progress"}
+        unknown = {**intent, "state": "delivery_unknown"}
+        unknown_raw = _encode_digest_intent(unknown)
+        if not store.meta_compare_and_set(_DIGEST_INTENT_KEY, raw_intent, unknown_raw):
+            return {"ok": False, "code": "digest_state_conflict"}
+        intent, raw_intent = unknown, unknown_raw
+    if intent["state"] != "delivery_unknown":
+        return {"ok": False, "code": "no_unresolved_digest"}
+
+    from jobscope.ingest import inbox
+    evidence = inbox.find_sent_message(cfg, intent["message_id"])
+    if not evidence.get("ok"):
+        return {
+            "ok": False, "code": evidence.get("code") or "sent_reconciliation_failed",
+            "message_id": intent["message_id"],
+        }
+    status = str(evidence.get("status") or "")
+    count = int(evidence.get("count") or 0)
+    if status == "multiple":
+        return {
+            "ok": False, "code": "multiple_sent_matches", "status": status,
+            "count": count, "message_id": intent["message_id"],
+        }
+    if status == "sent":
+        accepted = {**intent, "state": "accepted", "last_outcome": "accepted"}
+        accepted_raw = _encode_digest_intent(accepted)
+        if not store.meta_compare_and_set(
+            _DIGEST_INTENT_KEY, raw_intent, accepted_raw,
+        ):
+            return {"ok": False, "code": "digest_state_conflict"}
+        if not _finalize_digest_acceptance(store, accepted_raw, accepted):
+            return {"ok": False, "code": "digest_state_conflict"}
+    elif status == "not_found":
+        retryable = {
+            **intent, "state": "retryable", "last_outcome": "not_found_in_sent",
+        }
+        if not store.meta_compare_and_set(
+            _DIGEST_INTENT_KEY, raw_intent, _encode_digest_intent(retryable),
+        ):
+            return {"ok": False, "code": "digest_state_conflict"}
+    else:
+        return {"ok": False, "code": "invalid_sent_evidence"}
+    return {
+        "ok": True, "code": status, "status": status, "count": count,
+        "message_id": intent["message_id"],
+    }
+
+
+def _digest_body(jobs: list, origins_by_job: dict[str, list[str]] | None = None,
+                 *, remaining: int = 0) -> tuple[str, str]:
     """Render the (plain-text, HTML) bodies for the new-match digest."""
     groups: list[tuple[str, list]]
     if origins_by_job:
@@ -194,6 +416,10 @@ def _digest_body(jobs: list, origins_by_job: dict[str, list[str]] | None = None)
             *rows,
             "</table>",
         ])
+    if remaining > 0:
+        note = f"{remaining} more new match(es) remain in your review queue."
+        text_parts.extend(["", note])
+        html_parts.append(f"<p>{_html.escape(note)}</p>")
     return "\n".join(text_parts) + "\n", "".join(html_parts)
 
 
