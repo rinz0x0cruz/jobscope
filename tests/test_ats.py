@@ -1,9 +1,8 @@
 """Tests for ATS-direct company board fetching (HTTP is mocked; no network)."""
-import json
 import os
 import tempfile
-import threading
-import time
+
+import pytest
 
 from jobscope.ingest import ats
 from jobscope.core.config import load_config
@@ -48,34 +47,6 @@ ASHBY = {
     ]
 }
 
-PHENOM = {
-    "refineSearch": {
-        "status": 200,
-        "hits": 2,
-        "totalHits": 2,
-        "data": {"jobs": [
-            {
-                "jobId": "P-100131",
-                "title": "SASE ENGINEER",
-                "location": "Noida, India",
-                "multi_location": ["Noida, India", "Bengaluru, India"],
-                "postedDate": "2026-07-01T00:00:00.000+0000",
-                "descriptionTeaser": "Security platform engineering",
-                "ml_job_parser": {"descriptionTeaser_ats": "SIEM and SASE operations"},
-            },
-            {
-                "jobId": "P-100130",
-                "title": "Platform Support Engineer L2",
-                "location": "Bengaluru, India",
-                "multi_location": [],
-                "postedDate": "2026-06-30T00:00:00.000+0000",
-                "descriptionTeaser": "SIEM platform support",
-            },
-        ]},
-    },
-}
-
-
 def _fake_get_json(url, **_kw):
     if "greenhouse" in url:
         return GREENHOUSE
@@ -83,8 +54,6 @@ def _fake_get_json(url, **_kw):
         return LEVER
     if "ashby" in url:
         return ASHBY
-    if "phenompeople" in url:
-        return PHENOM
     return None
 
 
@@ -114,10 +83,8 @@ def test_resolve_known_and_explicit_override():
     assert ats._resolve("Acme|lever|acme-co") == ("Acme", "lever", "acme-co")
     assert ats._resolve("Acme:ashby:acme") == ("Acme", "ashby", "acme")
     assert ats._resolve("totally-unknown-co") is None
-    assert ats._resolve("NTT DATA") == ("NTT DATA", "phenom", "NTT1GLOBAL")
-    assert ats.board_url("phenom", "NTT1GLOBAL") == (
-        "https://careers.services.global.ntt/global/en/search-results"
-    )
+    assert ats._resolve("NTT DATA") is None
+    assert ats.board_url("phenom", "NTT1GLOBAL") == ""
 
 
 def test_greenhouse_run_filters_by_location_and_role(monkeypatch):
@@ -193,123 +160,6 @@ def test_ashby_remote_flag(monkeypatch):
     assert jobs[0].title == "Product Security Engineer"
 
 
-def test_phenom_fetches_bounded_category_and_normalizes_jobs(monkeypatch):
-    calls = []
-
-    def fetch(url, **kwargs):
-        calls.append((url, kwargs["params"]))
-        return PHENOM
-
-    _patch_json(monkeypatch, fetch)
-    result = ats.fetch_company_result("NTT DATA", "phenom", "NTT1GLOBAL")
-
-    assert result.status == ats.BoardStatus.OK and len(result.jobs) == 2
-    assert result.attempts == 1 and len(calls) == 1
-    assert json.loads(calls[0][1]["payload"])["selected_fields"] == {
-        "category": ["Information Security"],
-    }
-    sase = next(job for job in result.jobs if job.title == "SASE ENGINEER")
-    assert sase.location == "Noida, India | Bengaluru, India"
-    assert sase.description == "SIEM and SASE operations"
-    assert sase.date_posted == "2026-07-01"
-    assert sase.url.endswith("/job/P-100131/SASE-ENGINEER")
-
-
-def test_phenom_first_page_failure_is_error_not_partial(monkeypatch):
-    calls = []
-
-    def fetch(*_args, **_kwargs):
-        calls.append(1)
-        return None, "HTTP 503", 3, 503
-
-    monkeypatch.setattr(ats, "_load_json", fetch)
-
-    result = ats.fetch_company_result("NTT DATA", "phenom", "NTT1GLOBAL")
-
-    assert result.status == ats.BoardStatus.ERROR
-    assert result.jobs == [] and not result.successful
-    assert result.attempts == 3 and result.status_code == 503
-    assert len(calls) == 1
-
-
-def test_phenom_later_page_failure_preserves_partial_jobs(monkeypatch):
-    calls = []
-    first_page = {
-        "refineSearch": {
-            "totalHits": 60,
-            "data": {"jobs": PHENOM["refineSearch"]["data"]["jobs"]},
-        },
-    }
-
-    def fetch(_url, **kwargs):
-        start = json.loads(kwargs["params"]["payload"])["from"]
-        calls.append(start)
-        if start == 0:
-            return first_page, "", 1, 200
-        return None, "HTTP 503", 3, 503
-
-    monkeypatch.setattr(ats, "_load_json", fetch)
-
-    result = ats.fetch_company_result("NTT DATA", "phenom", "NTT1GLOBAL")
-
-    assert result.status == ats.BoardStatus.PARTIAL
-    assert result.successful and len(result.jobs) == 2
-    assert result.attempts == 4 and result.status_code == 503
-    assert calls == [0, 50]
-
-
-def test_phenom_hydrates_full_description_after_filtering(monkeypatch):
-    detail = {
-        "jobDetail": {"data": {"job": {
-            "description": "<p>Monitor SIEM alerts &amp; support incident response.</p>",
-        }}},
-    }
-    html = f"<script>phApp.ddo = {json.dumps(detail)};</script>"
-    monkeypatch.setattr(ats.httpx, "get_text_result", lambda *_a, **_k: (
-        ats.httpx.HttpResult(True, 200, 1, html, "")
-    ))
-    job = Job(
-        title="Associate Information Security Analyst",
-        url="https://careers.services.global.ntt/global/en/job/R-1/role",
-        description="short teaser",
-    )
-
-    hydrated = ats.hydrate_company_jobs("phenom", [job])
-
-    assert hydrated[0].description == "Monitor SIEM alerts & support incident response."
-
-
-def test_phenom_hydration_is_bounded_parallel_and_preserves_order(monkeypatch):
-    active = 0
-    peak = 0
-    lock = threading.Lock()
-
-    def fetch(url, **_kwargs):
-        nonlocal active, peak
-        with lock:
-            active += 1
-            peak = max(peak, active)
-        time.sleep(0.04)
-        with lock:
-            active -= 1
-        detail = {"jobDetail": {"data": {"job": {"description": f"<p>{url}</p>"}}}}
-        return ats.httpx.HttpResult(
-            True, 200, 1, f"<script>phApp.ddo = {json.dumps(detail)};</script>", "",
-        )
-
-    monkeypatch.setattr(ats.httpx, "get_text_result", fetch)
-    jobs = [Job(title=f"Role {index}", url=f"https://example.test/{index}") for index in range(8)]
-    stats = {}
-
-    hydrated = ats.hydrate_company_jobs("phenom", jobs, stats=stats)
-
-    assert peak == 4
-    assert hydrated is jobs
-    assert [job.title for job in hydrated] == [f"Role {index}" for index in range(8)]
-    assert [job.description for job in hydrated] == [f"https://example.test/{index}" for index in range(8)]
-    assert stats == {"attempted": 8, "hydrated": 8, "failed": 0}
-
-
 def test_board_fetch_result_distinguishes_empty_error_and_invalid(monkeypatch):
     _patch_json(monkeypatch, lambda *_a, **_k: {"jobs": []})
     empty = ats.fetch_company_result("Acme", "greenhouse", "acme")
@@ -342,6 +192,34 @@ def test_board_fetch_result_preserves_partial_jobs(monkeypatch):
 
 def test_board_fetch_result_rejects_unsupported_provider():
     result = ats.fetch_company_result("Acme", "workday", "acme")
+
+    assert result.status == ats.BoardStatus.UNSUPPORTED
+    assert not result.successful and result.jobs == []
+
+
+def test_unreviewed_source_host_is_blocked_before_http(monkeypatch):
+    monkeypatch.setattr(
+        ats.httpx, "get_json_result",
+        lambda *_args, **_kwargs: pytest.fail("unreviewed host reached HTTP client"),
+    )
+
+    data, error, attempts, status_code = ats._load_json(
+        "https://greenhouse.example.test/v1/boards/acme/jobs",
+        params={}, provider="greenhouse",
+    )
+
+    assert data is None
+    assert error == "blocked unreviewed greenhouse source host"
+    assert attempts == 0 and status_code is None
+
+
+def test_phenom_is_quarantined_without_request(monkeypatch):
+    monkeypatch.setattr(
+        ats.httpx, "get_json_result",
+        lambda *_args, **_kwargs: pytest.fail("quarantined provider reached HTTP client"),
+    )
+
+    result = ats.fetch_company_result("NTT DATA", "phenom", "NTT1GLOBAL")
 
     assert result.status == ats.BoardStatus.UNSUPPORTED
     assert not result.successful and result.jobs == []

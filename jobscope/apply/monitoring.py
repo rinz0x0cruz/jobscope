@@ -82,7 +82,6 @@ def _prepare_actions(cfg: dict, store, actions: Any) -> list[dict[str, Any]]:
             resolution = ats.resolve_board_result(
                 company, provider=provider or None, slug=slug or None,
                 careers_url=careers_url, probe=False,
-                inspect_careers_page=False,
             )
             prepared.append({
                 "type": action_type,

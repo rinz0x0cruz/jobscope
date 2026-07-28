@@ -230,10 +230,7 @@ def scan_monitor(
         result["funnel"]["details_attempted"] = hydration.get("attempted", 0)
         result["funnel"]["details_hydrated"] = hydration.get("hydrated", 0)
         result["funnel"]["details_failed"] = hydration.get("failed", 0)
-        result["funnel"]["details_truncated"] = (
-            max(0, len(candidates) - hydration.get("attempted", 0))
-            if monitor["provider"] == "phenom" else 0
-        )
+        result["funnel"]["details_truncated"] = 0
         scored = score_jobs(cfg, store, candidates)
     except ValueError as exc:
         result["error"] = str(exc)

@@ -13,13 +13,11 @@ from __future__ import annotations
 
 import datetime as _dt
 import html as _html
-import json
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 from jobscope.core import geo, httpx
 from jobscope.core.model import Job, derive_remote_scope
@@ -77,22 +75,13 @@ COMPANY_BOARDS: dict[str, tuple[str, str]] = {
     "tines": ("greenhouse", "tines"),
     "material": ("ashby", "materialsecurity"),
     "orca": ("greenhouse", "orcasecurity"),
-    "ntt data": ("phenom", "NTT1GLOBAL"),
 }
 
-
-_PHENOM_BOARDS = {
-    "ntt1global": {
-        "site": "https://careers.services.global.ntt/global/en",
-        "category": "Information Security",
-    },
+AUTOMATIC_SOURCE_HOSTS = {
+    "greenhouse": frozenset({"boards-api.greenhouse.io"}),
+    "lever": frozenset({"api.lever.co"}),
+    "ashby": frozenset({"api.ashbyhq.com"}),
 }
-_PHENOM_HOSTS = {
-    "careers.services.global.ntt": "NTT1GLOBAL",
-}
-_PHENOM_PAGE_SIZE = 50
-_PHENOM_MAX_JOBS = 500
-_PHENOM_MAX_DETAILS = 25
 
 
 class BoardStatus(StrEnum):
@@ -175,7 +164,20 @@ def _mk(company: str, title: str, location: str, url: str, desc: str, date_poste
     return job.ensure_id()
 
 
-def _load_json(url: str, *, params: dict) -> tuple[Any | None, str, int, int | None]:
+def _load_json(url: str, *, params: dict, provider: str) -> tuple[Any | None, str, int, int | None]:
+    try:
+        parsed = urlparse(url)
+        allowed = (
+            parsed.scheme == "https"
+            and not parsed.username
+            and not parsed.password
+            and parsed.port in {None, 443}
+            and (parsed.hostname or "").lower() in AUTOMATIC_SOURCE_HOSTS.get(provider, ())
+        )
+    except ValueError:
+        allowed = False
+    if not allowed:
+        return None, f"blocked unreviewed {provider or '<empty>'} source host", 0, None
     result = httpx.get_json_result(url, params=params)
     if not result.ok:
         status = f"HTTP {result.status_code}" if result.status_code is not None else "network error"
@@ -202,6 +204,7 @@ def _greenhouse(company: str, slug: str) -> BoardFetchResult:
     data, error, attempts, status_code = _load_json(
         f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
         params={"content": "true"},
+        provider="greenhouse",
     )
     if error:
         return BoardFetchResult(
@@ -233,7 +236,8 @@ def _greenhouse(company: str, slug: str) -> BoardFetchResult:
 
 def _lever(company: str, slug: str) -> BoardFetchResult:
     data, error, attempts, status_code = _load_json(
-        f"https://api.lever.co/v0/postings/{slug}", params={"mode": "json"})
+        f"https://api.lever.co/v0/postings/{slug}", params={"mode": "json"},
+        provider="lever")
     if error:
         return BoardFetchResult(
             company, "lever", slug, BoardStatus.ERROR, detail=error,
@@ -273,6 +277,7 @@ def _ashby(company: str, slug: str) -> BoardFetchResult:
     data, error, attempts, status_code = _load_json(
         f"https://api.ashbyhq.com/posting-api/job-board/{slug}",
         params={"includeCompensation": "false"},
+        provider="ashby",
     )
     if error:
         return BoardFetchResult(
@@ -305,120 +310,10 @@ def _ashby(company: str, slug: str) -> BoardFetchResult:
         attempts=attempts, status_code=status_code)
 
 
-def _phenom(company: str, slug: str) -> BoardFetchResult:
-    board = _PHENOM_BOARDS.get((slug or "").lower())
-    if not board:
-        return BoardFetchResult(
-            company, "phenom", slug, BoardStatus.UNSUPPORTED,
-            detail=f"unknown Phenom tenant: {slug or '<empty>'}",
-        )
-    endpoint = f"https://content-ir.phenompeople.com/api/{slug}/refineSearch"
-    selected_fields = {"category": [board["category"]]} if board.get("category") else {}
-    jobs_by_id: dict[str, Job] = {}
-    malformed = 0
-    attempts = 0
-    status_code: int | None = None
-    total_hits: int | None = None
-    for start in range(0, _PHENOM_MAX_JOBS, _PHENOM_PAGE_SIZE):
-        payload = {
-            "ddoKey": "refineSearch",
-            "from": start,
-            "size": _PHENOM_PAGE_SIZE,
-            "global": True,
-            "keywords": "",
-            "all_fields": ["city", "state", "category", "type", "orgFunction", "country"],
-            "selected_fields": selected_fields,
-            "sortBy": "",
-            "subsearch": "",
-            "jdsource": "facets",
-            "siteType": "external",
-            "forceSpellCheck": True,
-            "jobs": True,
-            "counts": True,
-            "isSliderEnable": False,
-        }
-        data, error, page_attempts, page_status = _load_json(
-            endpoint,
-            params={
-                "locale": "en_global",
-                "siteType": "external",
-                "deviceType": "desktop",
-                "payload": json.dumps(payload, separators=(",", ":")),
-            },
-        )
-        attempts += page_attempts
-        status_code = page_status
-        if error:
-            status = BoardStatus.PARTIAL if jobs_by_id else BoardStatus.ERROR
-            return BoardFetchResult(
-                company, "phenom", slug, status, list(jobs_by_id.values()), error,
-                attempts, status_code,
-            )
-        search = data.get("refineSearch") if isinstance(data, dict) else None
-        rows = ((search.get("data") or {}).get("jobs") if isinstance(search, dict) else None)
-        if not isinstance(rows, list):
-            return BoardFetchResult(
-                company, "phenom", slug,
-                BoardStatus.PARTIAL if jobs_by_id else BoardStatus.INVALID,
-                list(jobs_by_id.values()), "response does not contain a jobs list",
-                attempts, status_code,
-            )
-        try:
-            total_hits = int(search.get("totalHits") or 0)
-        except (TypeError, ValueError):
-            total_hits = None
-        for posting in rows:
-            try:
-                job_id = str(posting.get("jobId") or posting.get("reqId") or "").strip()
-                title = str(posting.get("title") or "").strip()
-                if not job_id or not title:
-                    raise ValueError("job id and title required")
-                locations = posting.get("multi_location") or []
-                location = " | ".join(str(item).strip() for item in locations if str(item).strip())
-                location = location or str(posting.get("location") or "").strip()
-                parser = posting.get("ml_job_parser") or {}
-                description = (
-                    parser.get("descriptionTeaser_ats")
-                    or parser.get("descriptionTeaser_keyword")
-                    or posting.get("descriptionTeaser")
-                    or ""
-                )
-                url_title = re.sub(r"[^A-Za-z0-9]+", "-", title).strip("-")
-                job = _mk(
-                    company, title, location,
-                    f"{board['site']}/job/{job_id}/{url_title}",
-                    str(description), str(posting.get("postedDate") or ""),
-                )
-                jobs_by_id[job_id] = job
-            except (AttributeError, TypeError, ValueError):
-                malformed += 1
-        if not rows or total_hits is None or len(jobs_by_id) >= total_hits:
-            break
-    jobs = list(jobs_by_id.values())
-    expected = min(total_hits or len(jobs), _PHENOM_MAX_JOBS)
-    if len(jobs) < expected:
-        return BoardFetchResult(
-            company, "phenom", slug, BoardStatus.PARTIAL, jobs,
-            f"received {len(jobs)} of {expected} expected jobs",
-            attempts, status_code,
-        )
-    if total_hits is not None and total_hits > _PHENOM_MAX_JOBS:
-        return BoardFetchResult(
-            company, "phenom", slug, BoardStatus.PARTIAL, jobs,
-            f"board has {total_hits} jobs; capped at {_PHENOM_MAX_JOBS}",
-            attempts, status_code,
-        )
-    return _finish_result(
-        company, "phenom", slug, jobs, malformed,
-        attempts=attempts, status_code=status_code,
-    )
-
-
 _FETCHERS = {
     "greenhouse": _greenhouse,
     "lever": _lever,
     "ashby": _ashby,
-    "phenom": _phenom,
 }
 SUPPORTED_PROVIDERS = frozenset(_FETCHERS)
 
@@ -477,9 +372,6 @@ def board_url(provider: str, slug: str) -> str:
         "lever": "https://jobs.lever.co/{slug}",
         "ashby": "https://jobs.ashbyhq.com/{slug}",
     }
-    if (provider == "phenom"):
-        board = _PHENOM_BOARDS.get((slug or "").lower())
-        return f"{board['site']}/search-results" if board else ""
     template = templates.get((provider or "").lower())
     return template.format(slug=slug) if template and slug else ""
 
@@ -502,8 +394,6 @@ def parse_board_url(url: str) -> tuple[str, str] | None:
         return "lever", parts[0]
     if host == "jobs.ashbyhq.com" and parts:
         return "ashby", parts[0]
-    if host in _PHENOM_HOSTS:
-        return "phenom", _PHENOM_HOSTS[host]
     return None
 
 
@@ -513,19 +403,6 @@ def _unsupported_ats_url(url: str) -> bool:
     except ValueError:
         return False
     return any(host == suffix or host.endswith(f".{suffix}") for suffix in _UNSUPPORTED_ATS_HOSTS)
-
-
-def _board_from_careers_page(url: str) -> tuple[str, str] | None:
-    result = httpx.get_text_result(url)
-    if not result.ok or not isinstance(result.data, str):
-        return None
-    candidates = re.findall(r"(?is)href\s*=\s*['\"]([^'\"]+)['\"]", result.data)
-    candidates += re.findall(r"https?://[^\s'\"<>]+", result.data)
-    for candidate in candidates:
-        parsed = parse_board_url(urljoin(url, _html.unescape(candidate)))
-        if parsed:
-            return parsed
-    return None
 
 
 def _slug_variants(name: str) -> list[str]:
@@ -544,8 +421,7 @@ def _slug_variants(name: str) -> list[str]:
 
 def resolve_board_result(name: str, *, provider: str | None = None,
                          slug: str | None = None, careers_url: str = "",
-                         probe: bool = True,
-                         inspect_careers_page: bool = True) -> BoardResolution:
+                         probe: bool = True) -> BoardResolution:
     """Resolve a company and optional careers URL to a typed board outcome.
 
     Priority: an explicit ``provider`` + ``slug`` -> a ``Name|provider|slug`` override
@@ -582,9 +458,7 @@ def resolve_board_result(name: str, *, provider: str | None = None,
         )
     if careers_url:
         direct = parse_board_url(careers_url)
-        discovered = direct or (
-            _board_from_careers_page(careers_url) if inspect_careers_page else None
-        )
+        discovered = direct
         if discovered:
             discovered_provider, discovered_slug = discovered
             return BoardResolution(
@@ -611,7 +485,7 @@ def resolve_board_result(name: str, *, provider: str | None = None,
                 )
     return BoardResolution(
         display, ResolutionStatus.UNRESOLVED, careers_url=careers_url,
-        detail="no public Greenhouse, Lever, Ashby, or curated Phenom board found",
+        detail="no public Greenhouse, Lever, or Ashby board found",
     )
 
 
@@ -760,43 +634,10 @@ def filter_profile_jobs_with_funnel(
 def hydrate_company_jobs(
     provider: str, jobs: list[Job], *, stats: dict[str, int] | None = None,
 ) -> list[Job]:
-    """Best-effort detail hydration after geo/title filtering has bounded the set."""
+    """Compatibility hook; reviewed adapters already return posting details."""
     if stats is not None:
         stats.update(attempted=0, hydrated=0, failed=0)
-    if (provider or "").lower() != "phenom":
-        return jobs
-    selected = jobs[:_PHENOM_MAX_DETAILS]
-    if not selected:
-        return jobs
-    with ThreadPoolExecutor(max_workers=min(4, len(selected))) as pool:
-        outcomes = list(pool.map(_hydrate_phenom_job, selected))
-    if stats is not None:
-        stats.update(
-            attempted=len(selected),
-            hydrated=sum(outcomes),
-            failed=len(selected) - sum(outcomes),
-        )
     return jobs
-
-
-def _hydrate_phenom_job(job: Job) -> bool:
-    marker = "phApp.ddo = "
-    result = httpx.get_text_result(job.url)
-    if not result.ok or not isinstance(result.data, str):
-        return False
-    start = result.data.find(marker)
-    if start < 0:
-        return False
-    try:
-        payload, _ = json.JSONDecoder().raw_decode(result.data[start + len(marker):])
-        detail = payload["jobDetail"]["data"]["job"]
-        description = _strip_html(detail.get("description") or "")
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-        return False
-    if not description:
-        return False
-    job.description = description
-    return True
 
 
 def run(cfg: dict, store) -> int:
