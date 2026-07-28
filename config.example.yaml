@@ -87,7 +87,7 @@ enrich:
   stock: true                         # yfinance price / IPO status / peer comparison (no key)
   reddit: true                        # old.reddit JSON search (no key)
   news: true                          # company news via RSS
-  glassdoor: true                     # best-effort public rating/search link; degrades when blocked
+  glassdoor: false                    # off: fetches Glassdoor's search page, which their terms don't permit
   contacts: true                      # legit-only referral leads + outreach drafts
   brief: true                         # blunt, risk-forward company brief (no marketing fluff)
   news_feeds: []                      # optional extra RSS feed URLs
