@@ -41,7 +41,7 @@ def _title_score(resume: Resume, job: Job) -> float:
     if not job_toks:
         return 0.0
     best = 0.0
-    candidates = list(resume.titles) + resume.skills[:0]  # titles only
+    candidates = list(resume.titles)
     for rtitle in candidates or []:
         rt = _tokens(rtitle)
         if not rt:

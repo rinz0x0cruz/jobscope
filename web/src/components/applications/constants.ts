@@ -60,36 +60,6 @@ export function signalColor(signal: string): string {
   return SIGNAL_COLOR[signal] ?? 'var(--mute)'
 }
 
-/** Statuses actually present, in canonical order, with unknowns appended. */
-export function presentStatuses(apps: Application[]): string[] {
-  const seen = new Set(apps.map((a) => a.status || 'new'))
-  const canonical: string[] = STATUS_ORDER.filter((s) => seen.has(s))
-  const extra = [...seen].filter((s) => !(STATUS_ORDER as readonly string[]).includes(s)).sort()
-  return [...canonical, ...extra]
-}
-
-export interface StatusCount {
-  status: string
-  label: string
-  color: string
-  count: number
-}
-
-/** Counts per status in canonical order (only statuses that appear). */
-export function statusCounts(apps: Application[]): StatusCount[] {
-  const m = new Map<string, number>()
-  for (const a of apps) {
-    const s = a.status || 'new'
-    m.set(s, (m.get(s) ?? 0) + 1)
-  }
-  return presentStatuses(apps).map((s) => ({
-    status: s,
-    label: statusLabel(s),
-    color: statusColor(s),
-    count: m.get(s) ?? 0,
-  }))
-}
-
 // Pipeline flow metrics — mirrors render.py pipeline():
 // Applied -> {Interview, Rejected, No response} -> {Offer, Rejected, In process}.
 export interface PipelineMetrics {

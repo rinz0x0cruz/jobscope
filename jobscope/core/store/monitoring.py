@@ -31,10 +31,6 @@ def normalize_company_key(company: str) -> str:
     return " ".join(tokens)
 
 
-def monitor_source_key(monitor_id: str) -> str:
-    return f"monitor:{monitor_id}"
-
-
 def _monitor_id(company_key: str) -> str:
     digest = hashlib.sha256(company_key.encode("utf-8")).hexdigest()[:16]
     return f"company:{digest}"

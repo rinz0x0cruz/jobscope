@@ -256,35 +256,3 @@ export async function profileUpload(
   })
   return (await r.json()) as ProfileUploadResult
 }
-
-// Free-text company search: resolve the employer's domain, discover HR contacts,
-// and draft a résumé-attached note. Local `serve` only (the public site 404s).
-export async function companyOutreachPreview(
-  company: string,
-  token: string,
-  opts?: { url?: string; to?: string },
-): Promise<CompanyOutreach> {
-  const r = await controlPlaneFetch('api/company-outreach', token, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      company,
-      ...(opts?.url ? { url: opts.url } : {}),
-      ...(opts?.to ? { to: opts.to } : {}),
-    }),
-  })
-  return (await r.json()) as CompanyOutreach
-}
-
-export async function companyOutreachSend(
-  company: string,
-  token: string,
-  payload: { to: string; subject: string; body: string; url?: string; force?: boolean },
-): Promise<OutreachSendResult> {
-  const r = await controlPlaneFetch('api/company-outreach', token, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ company, send: true, ...payload }),
-  })
-  return (await r.json()) as OutreachSendResult
-}

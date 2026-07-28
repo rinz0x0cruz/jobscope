@@ -227,13 +227,6 @@ def empty_public_data() -> dict:
             "activity_audit": _empty_activity_audit()}
 
 
-def write_public_shell(path: str) -> str:
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(empty_public_data(), handle, ensure_ascii=False, separators=(",", ":"))
-    return path
-
-
 def build_data(cfg: dict, store, public: bool = False) -> dict:
     """Assemble the dashboard payload (rows + overview) as a plain dict.
 
