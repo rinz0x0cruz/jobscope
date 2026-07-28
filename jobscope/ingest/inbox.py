@@ -27,6 +27,7 @@ import email.utils as _eu
 import hashlib
 import imaplib
 import re
+import ssl
 import time
 from dataclasses import dataclass
 from email.header import decode_header, make_header
@@ -39,6 +40,9 @@ from jobscope.core.store import now_iso
 from . import mailrules
 
 _HEADER_FIELDS = "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)])"
+_MESSAGE_ID_HEADER = "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])"
+_IMAP_TIMEOUT_SECONDS = 30
+_MAX_SENT_CANDIDATES = 100
 
 
 class _TransientIMAPError(RuntimeError):
@@ -53,6 +57,84 @@ class _InboxStateError(RuntimeError):
 class _AccountSyncResult:
     count: int
     ok: bool
+
+
+def find_sent_message(cfg: dict, message_id: str) -> dict:
+    """Count exact Message-ID copies in Sent without mutating the mailbox."""
+    normalized = (message_id or "").strip().strip("<>")
+    if (
+        len(normalized) > 320
+        or not re.fullmatch(
+            r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+",
+            normalized,
+        )
+    ):
+        return {"ok": False, "code": "invalid_message_id"}
+
+    icfg = cfg.get("inbox", {}) or {}
+    if not icfg.get("enabled"):
+        return {"ok": False, "code": "inbox_disabled"}
+    sender = str((cfg.get("email", {}) or {}).get("from_addr") or "").strip().casefold()
+    accounts = [
+        account for account in (icfg.get("accounts") or [])
+        if str(account.get("email") or "").strip().casefold() == sender
+    ]
+    if len(accounts) != 1:
+        return {"ok": False, "code": "sent_account_unconfigured"}
+    account = accounts[0]
+    address = str(account.get("email") or "").strip()
+    password = inbox_password(cfg, account)
+    if not password:
+        return {"ok": False, "code": "sent_account_unconfigured"}
+
+    folder = str(
+        account.get("sent_folder")
+        or icfg.get("sent_folder")
+        or "[Gmail]/Sent Mail"
+    ).strip()
+    if not folder:
+        return {"ok": False, "code": "sent_folder_unconfigured"}
+
+    connection = None
+    try:
+        connection = imaplib.IMAP4_SSL(
+            icfg.get("imap_host", "imap.gmail.com"),
+            int(icfg.get("imap_port", 993)),
+            ssl_context=ssl.create_default_context(),
+            timeout=_IMAP_TIMEOUT_SECONDS,
+        )
+        connection.login(address, password)
+        typ, _data = connection.select(folder, readonly=True)
+        if typ != "OK":
+            return {"ok": False, "code": "sent_folder_unavailable"}
+        typ, data = connection.uid(
+            "search", None, "HEADER", "Message-ID", f"<{normalized}>",
+        )
+        if (
+            typ != "OK" or not data or data[0] is None
+            or not isinstance(data[0], (bytes, str))
+        ):
+            return {"ok": False, "code": "sent_search_failed"}
+        candidates = list(dict.fromkeys(data[0].split()))
+        if len(candidates) > _MAX_SENT_CANDIDATES:
+            return {"ok": False, "code": "sent_search_too_broad"}
+        exact_uids = set()
+        for uid in candidates:
+            header = _fetch_message_id_header(connection, uid)
+            values = header.get_all("Message-ID", []) if header is not None else []
+            if any((value or "").strip().strip("<>") == normalized for value in values):
+                exact_uids.add(uid)
+        count = len(exact_uids)
+        status = "not_found" if count == 0 else "sent" if count == 1 else "multiple"
+        return {"ok": True, "code": status, "status": status, "count": count}
+    except (imaplib.IMAP4.error, OSError, _TransientIMAPError, ValueError):
+        return {"ok": False, "code": "sent_reconciliation_failed"}
+    finally:
+        if connection is not None:
+            try:
+                connection.logout()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def _purge_reconciliation_audit(cfg: dict, store) -> int:
@@ -187,14 +269,20 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
         job_id = (application.get("job_id") or "").strip()
         if company and job_id:
             _index_job(job_index, company, application.get("title") or "", job_id)
+    campaign_targets = [
+        target
+        for campaign in store.outreach_campaigns()
+        for target in store.outreach_campaign_targets(campaign["id"])
+    ]
     campaign_reply_watches = [
         {
             "domain": target.get("domain") or "",
             "sent_at": target.get("sent_at") or "",
             "outbound_message_id": target.get("outbound_message_id") or "",
+            "reply_pending": target.get("state") == "sent",
         }
-        for target in store.sent_outreach_campaign_targets()
-        if target.get("state") == "sent" and target.get("domain") and target.get("sent_at")
+        for target in campaign_targets
+        if target.get("sent_at") and target.get("outbound_message_id")
     ]
 
     track_new_ids = not (dry_run or backfill)
@@ -206,7 +294,11 @@ def _sync_account(cfg: dict, store, acct: dict, *, dry_run: bool, since: Optiona
     for attempt in range(1, attempts + 1):
         M = None
         try:
-            M = imaplib.IMAP4_SSL(host, port)
+            M = imaplib.IMAP4_SSL(
+                host, port,
+                ssl_context=ssl.create_default_context(),
+                timeout=_IMAP_TIMEOUT_SECONDS,
+            )
             M.login(addr, pw)
             kept = 0
             for folder in _folders_for(icfg):
@@ -377,6 +469,16 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
     from_name, from_addr = _eu.parseaddr(from_raw)
     from_domain = from_addr.split("@")[-1].lower() if "@" in from_addr else ""
     message_date = _parse_date(hdr.get("Date", ""))
+    thread_id = _thread_key(hdr, subject)
+    known_outbound_ids = {
+        str(watch.get("outbound_message_id") or "").strip().strip("<>")
+        for watch in campaign_reply_watches
+        if watch.get("outbound_message_id")
+    }
+    provider_feedback_candidate = (
+        thread_id in known_outbound_ids
+        or _is_provider_feedback_subject(subject)
+    )
     campaign_reply = _is_campaign_reply_candidate(
         from_addr, message_date, campaign_reply_watches,
     )
@@ -385,11 +487,13 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
     # and newsletter/content platforms (Substack/Medium/...) whose subjects
     # collide with lifecycle keywords (a "Coding Challenge" digest reads as an
     # assessment) -- dropped by domain even when they score a strong signal.
-    if mailrules.is_noise_sender(from_name, from_addr) or mailrules.is_newsletter_domain(from_domain):
+    if (not provider_feedback_candidate
+            and (mailrules.is_noise_sender(from_name, from_addr)
+                 or mailrules.is_newsletter_domain(from_domain))):
         return None
     # OTP / email-verification / password-reset mail is account plumbing, not an
     # application-status update -- drop it cheaply on the subject before any body fetch.
-    if mailrules.is_transactional(subject):
+    if not provider_feedback_candidate and mailrules.is_transactional(subject):
         return None
 
     # Cheap first pass on headers only; skip clearly-irrelevant mail from
@@ -400,17 +504,27 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
         sender_company
         and mailrules.best_company_match(sender_company, list(job_index))
     )
-    if (not campaign_reply and not mailrules.is_job_related(from_domain, sig)
+    if (not campaign_reply and not provider_feedback_candidate
+            and not mailrules.is_job_related(from_domain, sig)
             and not mailrules.is_ats_domain(from_domain)
             and not known_direct_sender):
         return None
 
     configured_limit = int(cfg.get("inbox", {}).get("classification_chars", 6000))
     snippet = _fetch_snippet(M, uid, limit=max(1500, min(configured_limit, 20000)))
-    if mailrules.is_transactional(subject, snippet):
+    if not provider_feedback_candidate and mailrules.is_transactional(subject, snippet):
         return None  # some OTP/verification mail carries the tell only in the body
-    sig, _scores, ambiguous, tied = mailrules.classify_scored(subject, snippet)
-    if not campaign_reply and not mailrules.is_job_related(from_domain, sig):
+    from jobscope.apply.campaigns import classify_provider_feedback
+    feedback_signal, feedback_message_id = classify_provider_feedback(
+        subject, snippet, thread_id, known_outbound_ids,
+    )
+    if feedback_signal:
+        sig, ambiguous, tied = feedback_signal, False, []
+        thread_id = feedback_message_id
+    else:
+        sig, _scores, ambiguous, tied = mailrules.classify_scored(subject, snippet)
+    if (not feedback_signal and not campaign_reply
+            and not mailrules.is_job_related(from_domain, sig)):
         return None
 
     if campaign_reply:
@@ -422,17 +536,15 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
 
     company, role = mailrules.parse_company_role(from_name, from_domain, subject, snippet)
 
-    # Deterministic weights decide the vast majority; only a genuine tie (>=2
-    # close verdicts) defers to the optional quorum layer (gated, None-safe).
-    if ambiguous and not sig.startswith("campaign_"):
-        sig = _quorum_pick(cfg, store, subject, snippet, tied) or sig
+    # Weighted rules remain authoritative even on close calls. Model output can
+    # never replace a mail signal or mutate application state.
 
     job_id = _link_job(company, role, job_index)
     if company:
         _index_job(job_index, company, role, job_id)
     ev = MailEvent(
         account=addr, uid=uid_s, message_id=(hdr.get("Message-ID") or "").strip(),
-        thread_id=_thread_key(hdr, subject),
+        thread_id=thread_id,
         from_addr=from_addr, from_name=from_name, from_domain=from_domain,
         subject=subject, date=message_date,
         company=company, role=role, signal=sig, job_id=job_id,
@@ -473,6 +585,8 @@ def _is_campaign_reply_candidate(
         return False
     from jobscope.apply.outreach import valid_company_recipient
     for watch in watches:
+        if not watch.get("reply_pending", True):
+            continue
         domain = str(watch.get("domain") or "")
         sent_raw = str(watch.get("sent_at") or "")
         if not valid_company_recipient(from_addr, domain):
@@ -488,6 +602,15 @@ def _is_campaign_reply_candidate(
         if event_at > sent_at:
             return True
     return False
+
+
+def _is_provider_feedback_subject(subject: str) -> bool:
+    value = (subject or "").casefold()
+    return any(marker in value for marker in (
+        "delivery status notification", "undeliverable", "delivery delayed",
+        "returned mail", "mail delivery failed", "spam complaint",
+        "abuse complaint", "feedback report",
+    ))
 
 
 def _link_job(company: str, role: str, job_index: dict) -> str:
@@ -552,30 +675,6 @@ def _apply_to_application(store, ev: MailEvent) -> None:
     ))
 
 
-def _quorum_pick(cfg: dict, store, subject: str, snippet: str,
-                 candidates: list[str]) -> Optional[str]:
-    """Break a keyword-scoring tie: ask the optional AI/quorum layer to choose
-    among the tied candidate labels. Returns a candidate or None (AI off/unsure).
-    Constrained to the tied labels so quorum only arbitrates, never invents."""
-    try:
-        from jobscope.core import ai
-    except ImportError:
-        return None
-    if not ai.available(cfg) or len(candidates) < 2:
-        return None
-    allowed = ", ".join(candidates)
-    system = ("You label job-application emails. The keyword classifier is torn "
-              f"between exactly these labels: {allowed}. Reply with one of them, "
-              "lowercase, no punctuation.")
-    user = f"Subject: {subject}\n\n{snippet[:1200]}"
-    out = ai.chat(cfg, store, system, user, cache=True,
-                  strategy=ai.strategy_for(cfg, "classify"))
-    if not out:
-        return None
-    word = out.strip().split()[0].lower().strip(".,!") if out.strip() else ""
-    return word if word in candidates else None
-
-
 # --- IMAP fetch + MIME helpers ---------------------------------------------
 def _fetch_headers(M, uid):
     try:
@@ -590,6 +689,22 @@ def _fetch_headers(M, uid):
     return _email.message_from_bytes(data[0][1])
 
 
+def _fetch_message_id_header(M, uid):
+    try:
+        typ, data = M.uid("fetch", uid, _MESSAGE_ID_HEADER)
+    except imaplib.IMAP4.abort:
+        raise
+    except (imaplib.IMAP4.error, OSError) as exc:
+        raise _TransientIMAPError(
+            f"IMAP Message-ID fetch failed for UID {uid!r}: {exc}",
+        ) from exc
+    if typ != "OK" or not data or not data[0] or not isinstance(data[0], tuple):
+        raise _TransientIMAPError(
+            f"IMAP Message-ID fetch failed for UID {uid!r}: {typ}",
+        )
+    return _email.message_from_bytes(data[0][1])
+
+
 def _fetch_snippet(M, uid, limit: int = 1500) -> str:
     try:
         typ, data = M.uid("fetch", uid, "(BODY.PEEK[])")
@@ -601,10 +716,16 @@ def _fetch_snippet(M, uid, limit: int = 1500) -> str:
     if typ != "OK" or not data or not data[0] or not isinstance(data[0], tuple):
         raise _TransientIMAPError(f"IMAP body fetch failed for UID {uid!r}: {typ}")
     msg = _email.message_from_bytes(data[0][1])
-    return _strip_html(_extract_text(msg))[:limit]
+    text, is_html = _extract_text_with_format(msg)
+    normalized = _strip_html(text) if is_html else re.sub(r"\s+", " ", text).strip()
+    return normalized[:limit]
 
 
 def _extract_text(msg) -> str:
+    return _extract_text_with_format(msg)[0]
+
+
+def _extract_text_with_format(msg) -> tuple[str, bool]:
     if msg.is_multipart():
         plain, html = "", ""
         for part in msg.walk():
@@ -615,8 +736,8 @@ def _extract_text(msg) -> str:
                 plain = _decode_part(part)
             elif ctype == "text/html" and not html:
                 html = _decode_part(part)
-        return plain or html
-    return _decode_part(msg)
+        return (plain, False) if plain else (html, True)
+    return _decode_part(msg), msg.get_content_type() == "text/html"
 
 
 def _decode_part(part) -> str:

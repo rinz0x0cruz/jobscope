@@ -2,8 +2,11 @@
 the monotonic status machine, dedup, and an end-to-end IMAP sync with a fake
 mailbox (no network)."""
 import os
+import ssl
 import tempfile
 from email.message import EmailMessage
+
+import pytest
 
 from jobscope.ingest import inbox, mailrules
 from jobscope.core.config import load_config
@@ -17,12 +20,17 @@ def _store():
     return Store(os.path.join(tmp, "t.db"))
 
 
-def _raw(from_, subject, body, msgid, date="Mon, 01 Jun 2026 10:00:00 +0000"):
+def _raw(
+    from_, subject, body, msgid,
+    date="Mon, 01 Jun 2026 10:00:00 +0000", in_reply_to="",
+):
     m = EmailMessage()
     m["From"] = from_
     m["Subject"] = subject
     m["Message-ID"] = msgid
     m["Date"] = date
+    if in_reply_to:
+        m["In-Reply-To"] = in_reply_to
     m.set_content(body)
     return m.as_bytes()
 
@@ -36,8 +44,10 @@ class FakeIMAP:
     instances: list["FakeIMAP"] = []
     uidvalidity: int | None = 1
 
-    def __init__(self, host, port):
+    def __init__(self, host, port, *, ssl_context=None, timeout=None):
         self.host, self.port = host, port
+        self.ssl_context = ssl_context
+        self.timeout = timeout
         self.selected = None
         self.readonly = None
         self.logged_out = False
@@ -100,6 +110,126 @@ def _cfg(monkeypatch):
     cfg["inbox"]["accounts"] = [{"email": "me@gmail.com", "password_env": "TEST_INBOX_PW"}]
     cfg["inbox"]["lookback_days"] = 365
     return cfg
+
+
+@pytest.mark.parametrize(
+    ("sent_messages", "status", "count"),
+    [
+        ({1: _raw("me@gmail.com", "Other", "Body", "<other@example.com>")},
+         "not_found", 0),
+        ({
+            1: _raw("me@gmail.com", "Digest", "Body", "<wanted@example.com>"),
+            2: _raw("me@gmail.com", "Other", "Body", "<other@example.com>"),
+        }, "sent", 1),
+        ({
+            1: _raw("me@gmail.com", "Digest", "Body", "<wanted@example.com>"),
+            2: _raw("me@gmail.com", "Digest duplicate", "Body", "<wanted@example.com>"),
+        }, "multiple", 2),
+    ],
+)
+def test_sent_reconciliation_exact_match_is_read_only(
+    monkeypatch, sent_messages, status, count,
+):
+    cfg = _cfg(monkeypatch)
+    cfg["email"]["from_addr"] = "me@gmail.com"
+    FakeIMAP.mailbox = {}
+    FakeIMAP.mailboxes = {"[Gmail]/Sent Mail": sent_messages}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+
+    result = inbox.find_sent_message(cfg, "<wanted@example.com>")
+
+    assert result == {"ok": True, "code": status, "status": status, "count": count}
+    connection = FakeIMAP.instances[0]
+    assert connection.readonly is True
+    assert connection.selected == "[Gmail]/Sent Mail"
+    assert connection.logged_out is True
+    assert connection.uid_calls[0] == (
+        "search", (None, "HEADER", "Message-ID", "<wanted@example.com>"),
+    )
+    assert all(call[0] in {"search", "fetch"} for call in connection.uid_calls)
+    assert all(
+        call[0] != "fetch" or "BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]" in str(call[1])
+        for call in connection.uid_calls
+    )
+
+
+def test_sent_reconciliation_rejects_invalid_id_before_connect(monkeypatch):
+    cfg = _cfg(monkeypatch)
+    cfg["email"]["from_addr"] = "me@gmail.com"
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+
+    assert inbox.find_sent_message(cfg, "bad\r\nUID STORE 1 +FLAGS") == {
+        "ok": False,
+        "code": "invalid_message_id",
+    }
+    assert FakeIMAP.instances == []
+
+
+def test_sent_reconciliation_reports_bounded_failure_when_fetch_breaks(monkeypatch):
+    cfg = _cfg(monkeypatch)
+    cfg["email"]["from_addr"] = "me@gmail.com"
+
+    class BrokenFetchIMAP(FakeIMAP):
+        def uid(self, command, *args):
+            if command.lower() == "fetch":
+                raise inbox.imaplib.IMAP4.error("private provider detail")
+            return super().uid(command, *args)
+
+    FakeIMAP.mailbox = {}
+    FakeIMAP.mailboxes = {
+        "[Gmail]/Sent Mail": {
+            1: _raw("me@gmail.com", "Digest", "Body", "<wanted@example.com>"),
+        },
+    }
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", BrokenFetchIMAP)
+
+    result = inbox.find_sent_message(cfg, "<wanted@example.com>")
+
+    assert result == {"ok": False, "code": "sent_reconciliation_failed"}
+    assert "private provider detail" not in repr(result)
+    assert FakeIMAP.instances[0].logged_out is True
+
+
+def test_sent_reconciliation_requires_an_unambiguous_configured_account(monkeypatch):
+    cfg = _cfg(monkeypatch)
+    cfg["email"]["from_addr"] = "other@gmail.com"
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+
+    assert inbox.find_sent_message(cfg, "<wanted@example.com>") == {
+        "ok": False,
+        "code": "sent_account_unconfigured",
+    }
+    cfg["inbox"]["enabled"] = False
+    cfg["email"]["from_addr"] = "me@gmail.com"
+    assert inbox.find_sent_message(cfg, "<wanted@example.com>") == {
+        "ok": False,
+        "code": "inbox_disabled",
+    }
+    assert FakeIMAP.instances == []
+
+
+def test_sent_reconciliation_refuses_an_overbroad_search(monkeypatch):
+    cfg = _cfg(monkeypatch)
+    cfg["email"]["from_addr"] = "me@gmail.com"
+    FakeIMAP.mailbox = {}
+    FakeIMAP.mailboxes = {
+        "[Gmail]/Sent Mail": {
+            uid: _raw("me@gmail.com", "Digest", "Body", f"<m{uid}@example.com>")
+            for uid in range(1, 102)
+        },
+    }
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+
+    assert inbox.find_sent_message(cfg, "<wanted@example.com>") == {
+        "ok": False,
+        "code": "sent_search_too_broad",
+    }
+    assert all(call[0] != "fetch" for call in FakeIMAP.instances[0].uid_calls)
 
 
 # --- mailrules: classification precedence -----------------------------------
@@ -263,49 +393,9 @@ def test_classify_scored_rejection_decisive_not_ambiguous():
     assert ambiguous is False
 
 
-# --- inbox: quorum tie-break wiring (gated, deterministic fallback) ----------
-def test_quorum_pick_returns_none_when_ai_unavailable(monkeypatch):
-    # Tie-break is gated: with AI/quorum off, the deterministic label stands.
-    from jobscope.core import ai
-    monkeypatch.setattr(ai, "available", lambda cfg: False)
-    assert inbox._quorum_pick({}, None, "Next round", "body", ["assessment", "interview"]) is None
-
-
-def test_quorum_pick_needs_two_candidates(monkeypatch):
-    # A lone candidate is not a tie, so the AI layer is never consulted.
-    from jobscope.core import ai
-    seen = {"chat": False}
-
-    def _chat(*a, **k):
-        seen["chat"] = True
-        return "interview"
-
-    monkeypatch.setattr(ai, "available", lambda cfg: True)
-    monkeypatch.setattr(ai, "chat", _chat)
-    assert inbox._quorum_pick({}, None, "s", "b", ["interview"]) is None
-    assert seen["chat"] is False
-
-
-def test_quorum_pick_arbitrates_only_among_tied(monkeypatch):
-    # Quorum may choose a tied label (case/punctuation-tolerant) but never one outside the set.
-    from jobscope.core import ai
-    monkeypatch.setattr(ai, "available", lambda cfg: True)
-    monkeypatch.setattr(ai, "strategy_for", lambda cfg, task: "ensemble")
-
-    monkeypatch.setattr(ai, "chat", lambda *a, **k: "Interview.")
-    assert inbox._quorum_pick({}, None, "s", "b", ["assessment", "interview"]) == "interview"
-
-    monkeypatch.setattr(ai, "chat", lambda *a, **k: "offer")  # outside the tied set -> rejected
-    assert inbox._quorum_pick({}, None, "s", "b", ["assessment", "interview"]) is None
-
-
-def test_quorum_pick_none_when_ai_returns_nothing(monkeypatch):
-    # An empty/None AI response falls back to the deterministic label.
-    from jobscope.core import ai
-    monkeypatch.setattr(ai, "available", lambda cfg: True)
-    monkeypatch.setattr(ai, "strategy_for", lambda cfg, task: "ensemble")
-    monkeypatch.setattr(ai, "chat", lambda *a, **k: None)
-    assert inbox._quorum_pick({}, None, "s", "b", ["assessment", "interview"]) is None
+# --- inbox: authority separation -------------------------------------------
+def test_inbox_module_has_no_model_signal_override():
+    assert not hasattr(inbox, "_quorum_pick")
 
 
 # --- mailrules: relevance gating --------------------------------------------
@@ -646,8 +736,16 @@ def _seed_sent_campaign(store, *, domain="acme.com", sent_at="2026-06-01T09:00:0
         target["id"], domain=domain, contacts=contacts,
         selected_email=f"recruiter@{domain}", subject="Hello", body="Body",
     )
-    store.approve_outreach_campaign_target(target["id"])
-    assert store.claim_outreach_campaign_target_send(target["id"])
+    store.set_outreach_campaign_policy(target["id"], {
+        "policy_version": "outreach-policy-v1",
+        "purpose": "cold",
+        "contact_source": "test_fixture",
+    })
+    approved = store.approve_outreach_campaign_target(target["id"])
+    assert store.claim_outreach_campaign_target_send(
+        target["id"], f"jobscope-campaign-{'d' * 24}@example.com",
+        expected_approval_hash=approved["approval_hash"],
+    )
     store.mark_outreach_campaign_target_sent(target["id"], sent_at)
     return target["id"]
 
@@ -696,6 +794,86 @@ def test_inbox_keeps_campaign_optout_without_storing_body(monkeypatch):
     assert campaigns.reconcile_replies(store) == {"replied": 0, "opted_out": 1}
     assert store.get_outreach_campaign_target(target_id)["state"] == "opted_out"
     assert store.is_outreach_suppressed("domain", "acme.com")
+    store.close()
+
+
+def test_inbox_ingests_known_campaign_dsn_and_reconciles_hard_bounce(monkeypatch):
+    from jobscope.apply import campaigns
+
+    outbound_id = f"jobscope-campaign-{'d' * 24}@example.com"
+    FakeIMAP.mailbox = {
+        1: _raw(
+            "Mail Delivery Subsystem <mailer-daemon@provider.example>",
+            "Delivery Status Notification (Failure)",
+            "Status: 5.1.1\nDiagnostic-Code: smtp; recipient address rejected",
+            "<dsn@provider.example>", in_reply_to=f"<{outbound_id}>",
+        ),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    cfg = _cfg(monkeypatch)
+    store = _store()
+    target_id = _seed_sent_campaign(store)
+
+    assert inbox.run(cfg, store) == 0
+    events = store.mail_events()
+    assert len(events) == 1
+    assert events[0]["signal"] == "campaign_hard_bounce"
+    assert events[0]["thread_id"] == outbound_id
+    assert events[0]["snippet"] == ""
+
+    feedback = campaigns.reconcile_provider_feedback(store)
+    target = store.get_outreach_campaign_target(target_id)
+    assert feedback["hard_bounce"] == 1
+    assert target["state"] == "failed" and target["error_code"] == "hard_bounce"
+    store.close()
+
+
+def test_inbox_extracts_original_message_id_from_dsn_body(monkeypatch):
+    outbound_id = f"jobscope-campaign-{'d' * 24}@example.com"
+    FakeIMAP.mailbox = {
+        1: _raw(
+            "Mail Delivery Subsystem <mailer-daemon@provider.example>",
+            "Delivery Status Notification (Failure)",
+            f"Status: 5.1.1\nOriginal-Message-ID: <{outbound_id}>",
+            "<body-dsn@provider.example>",
+        ),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    cfg = _cfg(monkeypatch)
+    store = _store()
+    _seed_sent_campaign(store)
+
+    assert inbox.run(cfg, store) == 0
+
+    events = store.mail_events()
+    assert len(events) == 1
+    assert events[0]["signal"] == "campaign_hard_bounce"
+    assert events[0]["thread_id"] == outbound_id
+    store.close()
+
+
+def test_inbox_drops_unrelated_dsn_without_known_message_id(monkeypatch):
+    FakeIMAP.mailbox = {
+        1: _raw(
+            "Mail Delivery Subsystem <mailer-daemon@provider.example>",
+            "Delivery Status Notification (Failure)",
+            "Status: 5.1.1\nDiagnostic-Code: smtp; recipient address rejected",
+            "<unrelated-dsn@provider.example>",
+        ),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    cfg = _cfg(monkeypatch)
+    store = _store()
+    _seed_sent_campaign(store)
+
+    assert inbox.run(cfg, store) == 0
+    assert store.mail_events() == []
     store.close()
 
 
@@ -910,6 +1088,99 @@ def test_inbox_end_to_end(monkeypatch):
     # Read-only mailbox: SELECT must have been issued with readonly=True.
     assert FakeIMAP.instances[0].readonly is True
     assert FakeIMAP.instances[0].logged_out is True
+    store.close()
+
+
+def test_inbox_constructs_verified_tls_with_finite_timeout(monkeypatch):
+    import ssl
+
+    _load_mailbox()
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+
+    assert inbox.run(cfg, store) == 0
+
+    connection = FakeIMAP.instances[0]
+    assert connection.ssl_context.check_hostname is True
+    assert connection.ssl_context.verify_mode == ssl.CERT_REQUIRED
+    assert connection.timeout == 30
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_detail"),
+    [
+        (ssl.SSLCertVerificationError("certificate verify failed"), "cannot reach imap.gmail.com:993"),
+        (ssl.CertificateError("hostname mismatch"), "cannot reach imap.gmail.com:993"),
+        (TimeoutError("connection timed out"), "cannot reach imap.gmail.com:993"),
+    ],
+)
+def test_tls_and_timeout_failures_preserve_watermarks(
+    monkeypatch, error, expected_detail,
+):
+    class FailingIMAP:
+        calls = []
+
+        def __init__(self, host, port, *, ssl_context=None, timeout=None):
+            self.calls.append((host, port, ssl_context, timeout))
+            raise error
+
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FailingIMAP)
+    monkeypatch.setattr(inbox.time, "sleep", lambda _seconds: None)
+    store = _store()
+    store.meta_set("inbox:me@gmail.com:last_uid", "41")
+    store.meta_set("inbox:me@gmail.com:uidvalidity", "7")
+    cfg = _cfg(monkeypatch)
+    cfg["inbox"]["imap_attempts"] = 2
+
+    assert inbox.run(cfg, store) == 1
+
+    assert len(FailingIMAP.calls) == 2
+    for host, port, context, timeout in FailingIMAP.calls:
+        assert (host, port, timeout) == ("imap.gmail.com", 993, 30)
+        assert context.check_hostname is True
+        assert context.verify_mode == ssl.CERT_REQUIRED
+    assert store.meta_get("inbox:me@gmail.com:last_uid") == "41"
+    assert store.meta_get("inbox:me@gmail.com:uidvalidity") == "7"
+    health = store.source_health("inbox:me@gmail.com")[0]
+    assert health["status"] == "error" and health["attempts"] == 2
+    assert expected_detail in health["detail"]
+    store.close()
+
+
+@pytest.mark.parametrize("operation", ["login", "search", "fetch"])
+def test_socket_operation_timeouts_are_bounded_and_preserve_watermarks(
+    monkeypatch, operation,
+):
+    _load_mailbox()
+
+    class TimeoutIMAP(FakeIMAP):
+        def login(self, user, pw):
+            if operation == "login":
+                raise TimeoutError("login timed out")
+            return super().login(user, pw)
+
+        def uid(self, command, *args):
+            if command.lower() == operation:
+                raise TimeoutError(f"{operation} timed out")
+            return super().uid(command, *args)
+
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", TimeoutIMAP)
+    monkeypatch.setattr(inbox.time, "sleep", lambda _seconds: None)
+    store = _store()
+    store.meta_set("inbox:me@gmail.com:last_uid", "41")
+    store.meta_set("inbox:me@gmail.com:uidvalidity", "7")
+    cfg = _cfg(monkeypatch)
+    cfg["inbox"]["imap_attempts"] = 2
+
+    assert inbox.run(cfg, store, backfill=True) == 1
+
+    assert len(FakeIMAP.instances) == 2
+    assert store.meta_get("inbox:me@gmail.com:last_uid") == "41"
+    assert store.meta_get("inbox:me@gmail.com:uidvalidity") == "7"
+    health = store.source_health("inbox:me@gmail.com")[0]
+    assert health["status"] == "error" and health["attempts"] == 2
     store.close()
 
 
