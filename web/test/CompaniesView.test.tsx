@@ -273,4 +273,38 @@ describe('CompaniesView', () => {
       { type: 'monitor.contacts', monitor_id: 'acme' },
     ]))
   })
+
+  it('fetches a typed company board on demand and lists the matched roles', async () => {
+    const onScout = vi.fn().mockResolvedValue({
+      ok: true, company: 'Saviynt', status: 'resolved', provider: 'lever', slug: 'saviynt',
+      careers_url: '', detail: '', count: 116, matched: 1,
+      results: [{
+        id: 'job-1', title: 'SOC Analyst II', location: 'Bengaluru',
+        url: 'https://jobs.lever.co/saviynt/abc', score: 36.7, tier: 'Stretch', rationale: 'ok',
+      }],
+    })
+    render(<CompaniesView
+      model={buildCompanies(dashboard({ companies: [] }))}
+      filter="all" onFilter={vi.fn()} onSelect={vi.fn()}
+      onOpenJob={vi.fn()} onActions={vi.fn().mockResolvedValue(undefined)} onScout={onScout}
+    />)
+
+    fireEvent.change(screen.getByLabelText('Company name'), { target: { value: 'saviynt' } })
+    fireEvent.click(screen.getByRole('button', { name: /Find jobs/ }))
+
+    await waitFor(() => expect(onScout).toHaveBeenCalledWith('saviynt', ''))
+    expect(await screen.findByText('SOC Analyst II')).toBeInTheDocument()
+    expect(screen.getByText(/1 of 116 match your profile/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Open the SOC Analyst II posting/ }))
+      .toHaveAttribute('href', 'https://jobs.lever.co/saviynt/abc')
+  })
+
+  it('hides the on-demand fetch when no serve session is wired', () => {
+    render(<CompaniesView
+      model={buildCompanies(dashboard({ companies: [] }))}
+      filter="all" onFilter={vi.fn()} onSelect={vi.fn()}
+      onOpenJob={vi.fn()} onActions={vi.fn().mockResolvedValue(undefined)}
+    />)
+    expect(screen.queryByRole('button', { name: /Find jobs/ })).toBeNull()
+  })
 })

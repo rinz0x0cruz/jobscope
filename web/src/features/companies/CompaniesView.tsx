@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { ArrowLeft, ArrowRight, Building2, ExternalLink, Loader2, Mail, Pause, Play, RefreshCw, Settings2, Trash2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Building2, ExternalLink, Loader2, Mail, Pause, Play, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { companyNameKey, monitorCheckAge, type CompaniesModel, type CompanyItem } from '@/lib/companies'
 import type { CompanyFilter } from '@/lib/urlState'
-import type { MonitoringAction, ScanDecisionFunnel } from '@/lib/companyActions'
+import type { CompanyResolution, MonitoringAction, ScanDecisionFunnel } from '@/lib/companyActions'
 import { WorkspaceHeader } from '@/ui'
 
 export interface CompaniesViewProps {
@@ -13,6 +14,8 @@ export interface CompaniesViewProps {
   onSelect: (companyId?: string) => void
   onOpenJob: (jobId: string) => void
   onActions: (actions: MonitoringAction[]) => Promise<void>
+  /** Fetch a company's public board on demand. Absent when not on local serve. */
+  onScout?: (company: string, careersUrl: string) => Promise<CompanyResolution | null>
   scanFunnels?: Record<string, ScanDecisionFunnel>
 }
 
@@ -24,11 +27,27 @@ const FILTERS: Array<{ value: CompanyFilter; label: string }> = [
   { value: 'setup', label: 'Needs setup' },
 ]
 
-export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, onOpenJob, onActions, scanFunnels = {} }: CompaniesViewProps) {
+export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, onOpenJob, onActions, onScout, scanFunnels = {} }: CompaniesViewProps) {
   const [company, setCompany] = useState('')
   const [careersUrl, setCareersUrl] = useState('')
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState<string>()
+  const [scouting, setScouting] = useState(false)
+  const [scout, setScout] = useState<CompanyResolution | null>(null)
+  const runScout = () => {
+    const name = company.trim()
+    if (!onScout || !name || scouting) return
+    setScouting(true)
+    setScout(null)
+    onScout(name, careersUrl.trim())
+      .then((result) => {
+        if (!result) toast.error('Job lookup needs the local jobscope serve session')
+        else if (!result.ok) toast.error(result.error || result.detail || 'No public board found')
+        else setScout(result)
+      })
+      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : 'Could not fetch the board'))
+      .finally(() => setScouting(false))
+  }
   const editPortal = (item: CompanyItem) => {
     setEditingId(item.id)
     setCompany(item.company)
@@ -96,8 +115,43 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
       >
         <input value={company} onChange={(event) => setCompany(event.target.value)} readOnly={Boolean(editingId)} aria-label="Company name" placeholder="Company name" className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong read-only:text-ink-3" />
         <input value={careersUrl} onChange={(event) => setCareersUrl(event.target.value)} aria-label="Careers portal URL" placeholder="Official careers URL (optional)" className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong" />
-        <button type="submit" disabled={saving || !company.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-white disabled:opacity-50">{saving ? <Loader2 size={14} className="animate-spin" /> : exactCompany ? <ArrowRight size={14} /> : <Building2 size={14} />} {editingId ? 'Save portal' : exactCompany ? 'View company' : 'Add company'}</button>
+        <div className="flex gap-2">
+          {onScout && !editingId && (
+            <button type="button" onClick={runScout} disabled={scouting || !company.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-white disabled:opacity-50">{scouting ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} Find jobs</button>
+          )}
+          <button type="submit" disabled={saving || !company.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-line bg-inset px-4 text-[12px] font-semibold text-ink disabled:opacity-50">{saving ? <Loader2 size={14} className="animate-spin" /> : exactCompany ? <ArrowRight size={14} /> : <Building2 size={14} />} {editingId ? 'Save portal' : exactCompany ? 'View company' : 'Add company'}</button>
+        </div>
       </form>
+      {(scouting || scout) && (
+        <section className="shrink-0 border-b border-line bg-inset/35 px-4 py-3 sm:px-7" aria-label="Open roles found">
+          <p aria-live="polite" className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase text-ink-3">
+            {scouting
+              ? <><Loader2 size={12} className="animate-spin" /> Fetching board…</>
+              : scout ? `${scout.company} · ${scout.provider}/${scout.slug} · ${scout.matched} of ${scout.count} match your profile` : null}
+          </p>
+          {scout && !scouting && scout.results.length === 0 && (
+            <p className="text-[12px] text-ink-3">
+              {scout.count} open role{scout.count === 1 ? '' : 's'} on the board, none matching your active profile.
+            </p>
+          )}
+          {scout && scout.results.length > 0 && (
+            <ul className="grid gap-2">
+              {scout.results.map((role) => (
+                <li key={role.id || role.url} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border border-line bg-panel px-3 py-2">
+                  <span className="text-[12px] font-semibold tabular-nums text-brand">{role.score.toFixed(1)}</span>
+                  <span className="min-w-0">
+                    <strong className="block truncate text-[13px] font-semibold text-ink">{role.title}</strong>
+                    <span className="mt-0.5 block truncate text-[11px] text-ink-3">{role.tier}{role.location ? ` · ${role.location}` : ''}</span>
+                  </span>
+                  <a href={role.url} target="_blank" rel="noreferrer noopener" aria-label={`Open the ${role.title} posting`} className="inline-flex items-center gap-1 text-[10px] font-medium text-brand">
+                    Open <ExternalLink size={12} aria-hidden="true" />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       {matchingCompanies.length > 0 && (
         <section className="shrink-0 border-b border-line bg-inset/35 px-4 py-3 sm:px-7" aria-label="Existing company matches">
           <p className="mb-2 text-[10px] font-semibold uppercase text-ink-3">

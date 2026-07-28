@@ -25,6 +25,7 @@ import {
   MONITORING_QUEUE_EVENT,
   projectMonitoringActions,
   queuedMonitoringActions,
+  resolveCompany,
   submitMonitoringActions,
   type MonitoringAction,
   type ScanDecisionFunnel,
@@ -306,6 +307,7 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
               onSelect={(company) => onStateChange({ company })}
               onOpenJob={open}
               onActions={(actions) => runMonitoringActions(actions)}
+              onScout={(company, careersUrl) => resolveCompany(company, careersUrl)}
               scanFunnels={scanFunnels}
             />
           </div>
