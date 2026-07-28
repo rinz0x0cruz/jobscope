@@ -18,7 +18,7 @@ structure the codebase has settled into. Keep it current (see
 |-----------|-----------------------|
 | **Deterministic-first** | `match`, `resume`, `mailrules`, `companies` are pure functions — no network, no LLM. Same input → same output. |
 | **Offline-first** | Base layers have zero third-party network deps; scrapers/enrichers are best-effort and never break a run. |
-| **AI-optional** | `ai.chat()` returns `None` when disabled; every AI caller has a deterministic fallback. The optional quorum backend accepts per-call `strategy`, `history`, and grounding `context` without changing the deterministic path. |
+| **AI-optional** | `ai.chat()` returns `None` when disabled, out of policy, or over budget; every AI caller has a deterministic fallback and model output never holds authority over persisted state. |
 | **Additive persistence** | `store` upgrades old databases in place via `ALTER TABLE ADD COLUMN`; never a destructive migration. |
 | **Best-effort enrichment** | Each enrich source is isolated; one failure is caught and does not stop the others. |
 
@@ -143,16 +143,16 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | [store/](jobscope/core/store/) | — | SQLite persistence + additive migrations, including `company_monitors`, monitor↔job provenance, and durable job reviews; concern mixins compose behind `Store` | model | `Store`, `now_iso()` |
 | [companies.py](jobscope/core/companies.py) | 128 | Curated prestige/size/funding tiers (deterministic) | — | `company_quality()`, `company_size()`, `company_funding()` |
 | [httpx.py](jobscope/core/httpx.py) | 37 | Thin `requests` wrapper (UA, timeout, JSON) | — | `get()`, `get_json()`, `get_text()` |
-| [ai.py](jobscope/core/ai.py) | 105 | OpenAI-compatible chat (Groq/Ollama) + optional quorum delegation with per-call strategy/history/context; bridges the keychain-resolved key into the environment for embedded quorum | config | `available()`, `strategy_for()`, `chat()` |
+| [ai.py](jobscope/core/ai.py) | 105 | Fail-closed advisory client: per-purpose local/remote policy, one shared call/token/wall budget, untrusted-data framing, output validation, bounded provenance | config | `available()`, `chat()`, `provenance()`, `grounded_text_validator()` |
 
 ### ingest — acquire jobs & signals
 
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
-| [scrape.py](jobscope/ingest/scrape.py) | — | Cadence-gated JobSpy discovery with committed ten-result term/source cursors; monitored sources are a separate mode | model, store | `run()`, `discovery_due()` |
-| [ats.py](jobscope/ingest/ats.py) | — | Typed Greenhouse/Lever/Ashby plus curated Phenom resolution, career-URL parsing, bounded pagination, and board fetch | httpx, model | `resolve_board_result()`, `fetch_company_result()` |
+| [scrape.py](jobscope/ingest/scrape.py) | — | Monitored-only scan entry point | monitor | `run()` |
+| [ats.py](jobscope/ingest/ats.py) | — | Typed Greenhouse/Lever/Ashby resolution and exact-host public board fetch | httpx, model | `resolve_board_result()`, `fetch_company_result()` |
 | [monitor.py](jobscope/ingest/monitor.py) | — | Seed/resolve/scan persistent company monitors; observable decision funnel, canonical skip reasons, health + fail-closed reconciliation | ats, review, store | `seed_monitors()`, `scan_active_monitors()` |
-| [inbox.py](jobscope/ingest/inbox.py) | 402 | Gmail IMAP sync (read-only, incremental) → weighted classify (+ optional quorum tie-break) → `mail_events`; drops transactional/OTP mail; `--reclassify` offline repair; recomputes the funnel after each sync | ats, config, model, store, mailrules, reconcile, (ai lazy) | `run()` |
+| [inbox.py](jobscope/ingest/inbox.py) | 402 | Gmail IMAP sync (read-only, incremental) → weighted deterministic classify → `mail_events`; drops transactional/OTP mail; `--reclassify` offline repair; recomputes the funnel after each sync | ats, config, model, store, mailrules, reconcile | `run()`, `find_sent_message()` |
 | [mailrules.py](jobscope/ingest/mailrules.py) | 643 | Deterministic **weighted-keyword** email classification (smart-quote-normalized scoring + ambiguity flag) + transactional/OTP detection + company/role parsing (pure, no I/O) | — | `classify_signal()`, `classify_scored()`, `is_job_related()`, `is_transactional()`, `parse_company_role()`, `signal_to_status()`, `advance_status()`, `normalize_company()` |
 | [reconcile.py](jobscope/ingest/reconcile.py) | 170 | Rebuild the funnel from the mail timeline — instance-split (reapply / concurrent roles) + conservative reclassify (drop OTP, downgrade false interview/assessment) | model, store, mailrules | `recompute()`, `reclassify()`, `split_instances()` |
 
@@ -161,7 +161,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
 | [match/](jobscope/analyze/match/) | 670 | **Package** — transparent fit scoring, tiers, filters, resume routing; split into `seniority`/`experience`/`filters`/`scoring`/`routing`/`run` submodules (all public + private names re-exported) | model, resume, (companies lazy) | `score_job()`, `apply_filters()`, `select_base()`, `run()`, `SENIORITY_RANK` |
-| [classify.py](jobscope/analyze/classify.py) | 61 | Optional AI/quorum seniority + discipline tie-breaker, routed through the classify strategy | ai, match, model | `classify_seniority()` |
+| [classify.py](jobscope/analyze/classify.py) | 61 | Strict-JSON advisory seniority/discipline opinion for ambiguous postings; never persisted | ai, match, model | `classify_seniority()` |
 | [resume.py](jobscope/analyze/resume.py) | 345 | Parse Markdown/JSON-Resume/PDF/text → `Resume` + skills; seeds the search profile on first import | match, model, (profile lazy) | `import_resume()`, `parse_resume()`, `SKILL_LEXICON` |
 | [profile.py](jobscope/analyze/profile.py) | — | Résumé-derived named **search profiles** (`data/profiles/`) with editable intent that drives `scan` | model, resume | `build_profile()`, `update_profile()`, `reset_profile()`, `load()`, `apply_to_search()` |
 | [atscheck.py](jobscope/analyze/atscheck.py) | 217 | Deterministic **ATS parse check** — extracted fields + friendliness score + formatting warnings (+ optional JD keyword coverage) | model, (tailor lazy) | `ats_report()`, `coverage()`, `run()` |
@@ -187,7 +187,7 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | Module | LOC | Responsibility | Internal imports | Key exports |
 |--------|-----|----------------|------------------|-------------|
 | [apply.py](jobscope/apply/apply.py) | 246 | Prep package + human-in-loop ATS autofill (Playwright); optional generative strategy for filled answers | ai, email, tailor, model, store | `prep()`, `apply()` |
-| [tailor.py](jobscope/apply/tailor.py) | 198 | Per-job resume + cover tailoring (deterministic + AI/quorum rewrite grounded with full JD/news context) | ai, pdf, model, resume, store | `run()`, `analyze()` |
+| [tailor.py](jobscope/apply/tailor.py) | 198 | Per-job resume + cover tailoring (deterministic template plus optional grounded local rewrite) | ai, pdf, model, resume, store | `run()`, `analyze()` |
 | [outreach.py](jobscope/apply/outreach.py) | 423 | Resolve a recruiter/HR contact (site-verified) + draft a tailored résumé email; preview/send guardrails; structured `/api/outreach` helpers | ai, email, tailor, model, store, httpx | `run()`, `api_preview()`, `api_send()`, `discover_emails()` |
 | [company_rank.py](jobscope/apply/company_rank.py) | — | Deterministic India/cybersecurity company ranking with explicit security-title and profile-fit gates | companies, geo, store | `rank_companies()`, `is_security_role()` |
 | [campaigns.py](jobscope/apply/campaigns.py) | — | Private cold/follow-up orchestration plus a derived, privacy-safe engagement read model; discovers, drafts, approves, paces one send, reconciles replies/opt-outs, and locks unknown SMTP outcomes | outreach, company_rank, model, store, email/render (lazy) | `create_campaign()`, `create_followup_campaign()`, `engagement_activity()`, `send_target()`, `sync_replies()`, `tick()` |
@@ -247,7 +247,7 @@ fallback with `GET /api/dashboard` data from current SQLite; Pages lazily fetche
 snapshot. `AuthGate` exposes no Pages surface until the payload is available; the public bundle is empty.
 
 **Company-first data flow:** `company_monitors` owns watched portals; `company_monitor_jobs` records
-provenance; `job_reviews` owns pending/saved/dismissed state. Monitor scans and daily broad discovery both
+provenance; `job_reviews` owns pending/saved/dismissed state. Monitor scans
 upsert raw jobs, deterministic matching assigns scores, then `review.sync_reviews()` creates only missing
 pending records. Existing saved/dismissed decisions are never reset. The encrypted payload emits `companies[]`
 and `reviews[]`; cached pre-feature payloads normalize existing rows to Saved/legacy.
@@ -292,7 +292,7 @@ Fan-in = how many modules import it; fan-out = how many it imports (internal onl
 | **cli/__init__.py** | 519 | 0 | ~28 | Orchestrator (`build_parser` + `cmd_*` + `main`); wide fan-out but **lazy imports** keep startup light. Healthy. |
 | **core/config.py** | 200 | ~6 | 0 | Pure config layer, including AI/quorum defaults. Healthy. |
 | **enrich/__init__.py** | 78 | 2 | 8 | Coordinator that **iterates the source registry** (P-B done); sources self-register via `@source(...)`. Healthy. |
-| **core/ai.py** | 105 | ~4 | 1 | Optional layer; all callers have deterministic fallbacks. Quorum-only `strategy`/`history`/`context` arguments are additive and ignored by the single-model fallback. Healthy. |
+| **core/ai.py** | 105 | ~4 | 1 | Optional layer; all callers have deterministic fallbacks. Policy, budget, and output validation are centralized here, so a caller cannot widen the boundary. Healthy. |
 
 ---
 
@@ -324,28 +324,28 @@ flowchart LR
 Stages communicate **only through the store** (no shared in-memory state), which keeps each
 stage independently runnable from its own subcommand.
 
-### Optional AI/quorum overlay (`core/ai.py`)
+### Optional advisory AI overlay (`core/ai.py`)
 
-All AI paths call [core/ai.py](jobscope/core/ai.py). `available(cfg)` gates the layer, and
-`chat()` returns `None` on disabled config, missing keys, import failure, HTTP failure, or an empty quorum
-result. Callers always keep a deterministic fallback.
+All AI paths call [core/ai.py](jobscope/core/ai.py). `available(cfg, purpose)` resolves one fail-closed
+route for an exact purpose, and `chat()` returns `None` on disabled config, hosted mode, policy mismatch,
+exhausted budget, backend failure, or output that fails schema/length/grounding validation. Callers always
+keep a deterministic fallback.
 
-When `quorum.enabled` is true and the optional `quorum` package is installed, `chat()` delegates to
-`quorum.api.chat(...)` before the single-model OpenAI-compatible path. The delegation is additive:
+- **Local first.** The supported activation is a pinned model from `ai.local_models` served by Ollama on a
+  loopback `http://<loopback>:<port>/v1` base URL with no API key present.
+- **Remote is explicit.** OpenRouter requires `ai.remote.enabled` plus a per-purpose model/provider
+  allowlist, and pins `order`/`only`, `allow_fallbacks: false`, `require_parameters: true`,
+  `data_collection: deny`, and `zdr: true`. PII-heavy purposes are never remote-eligible, and remote input
+  is redacted for emails, phone numbers, URLs, and bearer/API-key patterns.
+- **One budget.** Calls, input characters/tokens, reserved output tokens, retries, fan-out, and wall time
+  are reserved before any request, so exhaustion performs zero HTTP. The CLI and each refresh start a run.
+- **Untrusted text stays data.** Job, company, and mail text is encoded into a delimited JSON payload with
+  an explicit no-tools/no-secrets/no-authority instruction; `history`/`context` injection is refused.
+- **Quorum is rejected.** Its rounds, retries, and provider fallbacks cannot share the central ledger, so
+  `quorum.enabled` disables the route rather than silently relaxing the budget.
 
-- `strategy=ai.strategy_for(cfg, "generative")` routes summaries, cover letters, and filled answers through
-  `quorum.strategy_generative` (default `council`).
-- `strategy=ai.strategy_for(cfg, "classify")` routes seniority/discipline and ambiguous inbox-label calls
-  through `quorum.strategy_classify` (default `ensemble`).
-- `context=[...]` carries grounding data for generative calls (full job description and optional news hook);
-  quorum frames it as DATA, not instructions.
-- A `TypeError` retry preserves compatibility with older quorum builds that do not yet accept `strategy=`.
-- Before delegating, `chat()` bridges the resolved key into `os.environ[ai.api_key_env]` (keychain-first via
-  `config.api_key()`) so the **embedded** quorum backend — which reads provider keys from the environment —
-  authenticates without a separate `.env`. Nothing is written to disk; the value is only exported in-process.
-
-If quorum is absent or returns `None`, the single-model fallback ignores `strategy`/`history`/`context` and
-uses the existing prompt/cache path.
+Advisory output never mutates score, tier, resume routing, coverage percentage, mail signal, application
+state, send eligibility, or approved outbound content; provenance records only purpose/provider/model hash.
 
 ---
 
@@ -413,7 +413,7 @@ company details full-screen and exposes Settings through the More sheet. Respons
 must cover 390, 768, and wide desktop widths with zero horizontal overflow.
 
 The cloud workflow restores the encrypted DB, seeds monitors, validates/applies an optional bounded mutation
-batch, scans resolved monitors, cadence-gates broad discovery, syncs inbox/matches/reviews, saves the encrypted
+batch, scans resolved monitors, syncs inbox/matches/reviews, saves the encrypted
 DB with a lease, verifies the empty-shell/ciphertext artifact, and publishes. Mutation dispatches carry a unique
 run title; the browser acknowledges only the exact actions included in that successful run.
 

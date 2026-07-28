@@ -1,7 +1,7 @@
 # jobscope
 
 **Resume-driven company monitor, job scout, and application-prep tool.** Point it at your
-resume; it monitors selected employers' official career portals, keeps broad discovery separate,
+resume; it monitors selected employers' reviewed public ATS feeds,
 ranks fitting roles by a transparent fit score, enriches each
 with public intel (compensation, stock/IPO, Reddit sentiment, company news, referral
 leads), tailors your resume + cover letter per job, and assembles a **review-ready
@@ -64,7 +64,6 @@ python -m jobscope resume import data/resume.md   # parse it + seed an editable 
 python -m jobscope profile show                   # review roles/markets that drive scan
 python -m jobscope companies seed                 # import configured watchlist; application companies stay known
 python -m jobscope companies scan                 # check monitored supported career portals
-python -m jobscope scan --mode discovery          # optional broad LinkedIn/Indeed/Google discovery (daily cadence)
 python -m jobscope match                          # rank by fit score
 python -m jobscope reviews sync                   # monitored/discovery roles enter the review queue
 python -m jobscope enrich                         # comp / stock / reddit / news / contacts (top N)
@@ -91,7 +90,7 @@ work/professional experience section; headingless education/project dates are ig
 | `profile [build\|show] [--resume N] [--force]` | Editable search profile (target roles, preferred job markets, worldwide remote) that drives `scan`; résumé facts stay derived |
 | `companies [seed\|list\|scan\|apply]` | Persistent company watchlist. A targeted scan fetches supported official-portal jobs; **Find recruiter** is a separate explicit action. |
 | `scout <company> [--provider P --slug S]` | Preview one company's public ATS board and profile-ranked openings without monitoring it. |
-| `scan [--mode all\|monitored\|discovery] [--force-discovery]` | `all` checks monitored portals and runs broad JobSpy discovery only when its cadence is due; explicit modes isolate either source. |
+| `scan [--mode all\|monitored]` | Scan active user-selected company monitors through reviewed Greenhouse, Lever, or Ashby public APIs. |
 | `reviews [sync\|list] [--state S]` | Build/inspect the durable `pending` / `saved` / `dismissed` review queue without resetting prior decisions. |
 | `match` | Fit scoring + tiers, **multi-resume selection**, and **filters** (clearance/sponsorship/block-list) |
 | `pipeline` | scan -> match -> enrich -> prep top picks -> digest (one shot) |
@@ -110,6 +109,7 @@ work/professional experience section; headingless education/project dates are ig
 | `track [--set job_id=status] [--timeline job_id]` | Application funnel, rates, follow-up reminders, and a per-application email timeline |
 | `applications [audit\|recover]` | Inspect reconciliation counts/decisions or explicitly restore a recoverable application |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Sync Gmail over read-only IMAP and auto-advance the funnel from application emails |
+| `inbox-canary --account E` | Classify one configured account over verified TLS in a no-send, read-only throwaway database; deletes the database on exit. |
 | `export [--format json\|csv]` | Export ranked jobs |
 | `selftest` | Offline self-tests (no network, no keys) |
 | `doctor` | Offline config, SQLite, secret-reference, toolchain, refresh, and source-health checks |
@@ -142,19 +142,24 @@ non-ATS, and on the confirmed employer domain. Conventional role inboxes remain 
 never auto-selected.
 
 Every target is reviewed separately. Approval binds the exact recipient, subject, body, résumé attachment,
-and follow-up thread identity;
+follow-up thread identity, contact provenance, jurisdiction/classification decision, reviewer, and policy version;
 editing any of them clears approval. Each sent email carries a stable Jobscope `Message-ID`; the local inbox
 tracker links the immediate `In-Reply-To` parent exactly, with confirmed-domain + post-send timing as a
 fallback for new threads.
 The Outreach delivery history shows recipient, subject, send time, reply sender/subject/time, and opt-outs.
 
-The local scheduler runs a campaign tick: incrementally check configured inboxes for replies, then send at
-most one due approved draft. Defaults remain 2/day, at least 4 hours apart, from 10:00–17:00 Asia/Kolkata:
+The local scheduler runs a reconciliation-only campaign tick: it checks configured inboxes for replies,
+opt-outs, bounces, and complaints, reports due work, and never calls SMTP. Delivery is a separate explicit
+action on one policy-approved target. Drafts can be exported as `.eml` while SMTP, inbox, and AI are disabled:
 
 ```powershell
 python -m jobscope campaign ready
+python -m jobscope campaign start --campaign-id ID  # no-send SMTP preflight, then activate
 ./scripts/register-outreach-task.ps1
 python -m jobscope campaign replies          # check now; --no-fetch reconciles stored mail only
+python -m jobscope campaign reconcile-delivery --target-id ID  # exact read-only Sent lookup
+python -m jobscope new --reconcile-sent       # resolve an ambiguous digest by Message-ID
+python -m jobscope campaign export-eml --target-id ID --out review.eml
 ```
 
 Draft campaigns can be permanently deleted from their Outreach detail view. The CLI equivalent requires
@@ -164,8 +169,12 @@ when delivery history must be retained.
 
 SMTP cannot make delivery and the local SQLite update atomic. If the connection fails after delivery begins,
 Jobscope records **delivery unknown**, locks the target out of automatic retries, and keeps its Message-ID.
-Check the provider's Sent folder, then choose **Confirmed in Sent** or **Confirmed not sent** in Outreach;
-the latter returns the message to Draft and requires a fresh approval before any retry.
+Use **Check Sent** for an exact, read-only Message-ID lookup; zero, one, and multiple matches remain distinct.
+Manual **Confirmed in Sent** / **Confirmed not sent** controls remain available when provider evidence must be
+reviewed directly. The latter returns the message to Draft and requires a fresh approval before any retry.
+Digest delivery uses the same durable stable-ID barrier through `new --reconcile-sent`.
+Known pre-send or SMTP rejection failures retain that ID but are not retried by scheduled refreshes; run
+`python -m jobscope new --email` explicitly after correcting the cause.
 
 Writable campaign state, draft bodies, approvals, résumé paths/hashes, raw message IDs,
 suppression internals, and send logs stay out of Pages. After passphrase unlock, Pages can
@@ -179,11 +188,11 @@ Campaign auto-drafting selects only valid, non-automated recipients on the confi
 auto-selects a role inbox. Off-domain recruiter or agency contacts may remain visible as evidence, but cannot
 block a lower-ranked eligible Hunter, Apollo, or employer-published contact.
 
-Quorum is useful here, but bounded. When `ai.enabled` and `quorum.enabled` are both true, draft generation
-uses `quorum.strategy_generative` (normally `council`), and ambiguous ordinary inbox labels may use
-`quorum.strategy_classify` (normally `ensemble`). Company ranking, recipient validation, approval, sending,
-Message-ID/domain reply matching, and opt-out suppression remain deterministic. Quorum cannot mark a campaign
-replied or opted out, and Jobscope still works with AI entirely disabled.
+Optional AI is bounded here too. A local model may only redraft outreach copy, and its text is
+validated against the supplied facts before it is used. Company ranking, recipient validation,
+approval, sending, Message-ID/domain reply matching, and opt-out suppression remain deterministic.
+AI cannot mark a campaign replied or opted out, cannot approve or send, and Jobscope works
+identically with AI entirely disabled.
 
 ## Inbox: auto-track applications from Gmail
 
@@ -192,11 +201,11 @@ emails into funnel updates automatically — confirmations → `applied`,
 interview/assessment invites → `interview`, offers → `offer`, rejections →
 `rejected`. Classification is **deterministic** (sender-domain + keyword rules for
 Greenhouse / Lever / Ashby / Workday / iCIMS / Workable / LinkedIn / Indeed and
-friends); AI is never required — an optional model only refines the residual
-`other` bucket when `ai.enabled`.
+friends); no model participates in mail classification at all.
 
-It connects over **read-only IMAP** with a Gmail **App Password** — no Google
-Cloud project, no OAuth, and it never marks your mail as read. The first run scans
+It connects over certificate-authenticated **read-only IMAP** with a Gmail **App Password** — no Google
+Cloud project, no OAuth, and it never marks your mail as read. Hostname/CA verification is mandatory and
+each connection has a 30-second socket timeout. The first run scans
 `inbox.lookback_days` back; later runs are incremental (a per-account UID
 watermark), so it's cheap to run on a schedule. Each relevant email is stored as a
 timeline entry and linked to the matching job (or a standalone email-only
@@ -223,6 +232,7 @@ application when you applied somewhere jobscope didn't scrape).
 
 ```bash
 python -m jobscope inbox --dry-run            # classify + print, write nothing
+python -m jobscope inbox-canary --account you@gmail.com  # isolated no-send activation check
 python -m jobscope inbox                      # sync (incremental) -> funnel
 python -m jobscope inbox --backfill           # rescan lookback_days
 python -m jobscope track                      # updated funnel + response/interview/offer rates
@@ -301,10 +311,11 @@ Clicking one opens the Source Serif reader with the description, company brief, 
 stock/IPO, public reputation, referral leads, and score rationale. The toolbar and Settings both
 provide **Scan Gmail**; local serve uses its CSRF-guarded refresh API and Pages dispatches the existing workflow.
 
-Company-specific scans support Greenhouse, Lever, Ashby, and curated Phenom tenants. NTT DATA uses a
-bounded Phenom `Information Security` feed (76 roles at validation time) that is still filtered by your
-profile and locations. An unresolved Workday, iCIMS, SmartRecruiters, or custom portal does **not** silently
-fall back to LinkedIn/Indeed/Google; broad discovery is a separate workflow and may independently collect roles.
+Automatic scans support Greenhouse, Lever, and Ashby only. An unresolved Workday, iCIMS,
+SmartRecruiters, Phenom, or custom portal stays **Needs setup** and does not trigger a crawler or fallback.
+This deliberately trades broad aggregator coverage for publisher-documented feeds, predictable contracts,
+and a smaller legal and operational risk surface. Add companies explicitly in Settings or as
+`Name|provider|slug`; application-history companies are never promoted to monitored automatically.
 
 Remote roles carry a **remote scope**: the dashboard's *remote scope* facet splits
 global remote ("Remote (anywhere)") from geo-restricted remote ("Remote in Ireland"),
@@ -422,35 +433,28 @@ python -m jobscope match          # each job records which base scored highest
 
 ## Search profiles (remote + on-site)
 
-A single search only covers one location/recency window, so remote-only scans miss
-on-site and hybrid roles. Add `search.profiles` to run several searches in one scan —
-each reuses your base `search` fields and overrides only what it lists:
+Search profiles filter every selected company board by market and work mode. Add
+`search.profiles` when you want both worldwide-remote and specific on-site markets:
 
 ```yaml
 search:
-  # ...terms, sites, results_wanted...
+  terms: ["security engineer", "product security"]
   profiles:
-    - name: "remote"          # global remote, last 7 days
+    - name: "remote"
       location: "Remote"
       is_remote: true
-      hours_old: 168
-    - name: "onsite-local"    # on-site / hybrid across India, last 30 days
+    - name: "onsite-local"
       location: "India"       # or a city, e.g. "Pune, Maharashtra"
       is_remote: false
-      hours_old: 720
       country_indeed: "India"
+  companies:
+    - databricks
+    - "Acme|lever|acme"
 ```
 
-Results are de-duplicated by URL, so overlapping profiles won't create duplicates.
-Leave `profiles: []` for a single search from the base fields.
-
-Broad discovery calls each configured source separately and commits at most 10
-results per term/source on each `scan`. `results_wanted` is the cap for that
-resumable cycle (for example, `25` runs as `10 + 10 + 5`). A full page leaves the
-cursor immediately due; rerun `scan` to continue. Short pages or the configured cap
-complete that cursor, and the normal discovery interval starts only after every
-active cursor completes. Replayed or overlapping pages remain safe because stable
-job IDs are upserted rather than inserted again.
+Results are de-duplicated by URL, so overlapping profile filters do not create duplicates.
+Leave `profiles: []` to use the base market. Jobscope does not scrape LinkedIn, Indeed,
+Glassdoor, Google Jobs, arbitrary careers pages, or logged-in accounts.
 
 ## Seniority & experience level ("stop showing me senior roles")
 
@@ -497,37 +501,40 @@ Everything lives in `config.yaml` (copy from `config.example.yaml`). Secrets go 
 options: search sites/terms, scoring weights, enrichment toggles, AI provider, and
 SMTP for email summaries.
 
-## Free AI backends
+## Optional local AI
 
-AI is optional. When enabled, jobscope talks to any OpenAI-compatible endpoint:
+AI is optional, off by default, and **advisory only**. The first supported activation is a pinned
+local model served by [Ollama](https://ollama.com) over loopback:
 
-- **OpenRouter** (default) — pinned Nemotron Ultra with exact Gemma/Super fallbacks
-- **Groq**, **Google Gemini**, or **Ollama** (fully local)
-
-Set `ai.enabled: true` and `JOBSCOPE_AI_API_KEY` in `.env`.
-Free model availability changes over time; Quorum never selects the random
-`openrouter/free` router, and production model changes remain manually reviewed.
-
-### Multi-model deliberation (quorum) + seniority tie-breaker
-
-With the optional [`quorum`](https://github.com/rinz0x0cruz/quorum) package installed,
-set `quorum.enabled: true` to route the AI layer through a multi-model deliberation
-(`strategy: ensemble | council | refine | debate | moa`) instead of a single model.
-
-```bash
-pip install -e ".[quorum]"   # fetches quorum from GitHub; then set quorum.enabled: true + the AI key
+```yaml
+ai:
+  enabled: true
+  provider: ollama
+  base_url: "http://127.0.0.1:11434/v1"   # loopback + /v1 only; any key disables the route
+  model: "qwen2.5:7b-instruct-q4_K_M"     # must also appear in ai.local_models
 ```
 
-When AI is on, jobscope also runs a **seniority tie-breaker**: only for postings that
-have no deterministic level signal *and* still landed in a good tier (i.e. actually
-leaking), it asks the model for a normalized level + required years, then re-applies the
-same cap/score. It's bounded to that ambiguous set, cached, and a complete no-op when
-`ai.enabled` is false:
+Every call names an exact purpose from `ai.local_purposes`, and one shared per-run budget bounds
+calls, input characters/tokens, reserved output tokens, retries, fan-out, and wall time. When the
+budget is exhausted, a route is disallowed, or output fails schema/length/grounding validation, the
+deterministic result is used and **no HTTP request is made**. Hosted `serve --hosted` disables AI
+outright, and quorum routes are rejected because their rounds/retries cannot share that budget.
+
+Remote OpenRouter stays off until you add an explicit per-purpose model/provider allowlist under
+`ai.remote.purposes`; requests then pin `order`/`only`, `allow_fallbacks: false`,
+`require_parameters: true`, `data_collection: deny`, and `zdr: true`. Résumé tailoring, application
+answers, outreach drafts, and coverage advice are local-only and never eligible for remote routing.
+
+### What AI may and may not change
+
+AI can suggest a company-brief bullet, a summary/cover/outreach draft, a coverage note, or a
+seniority opinion. It **cannot** change a score, tier, resume routing, JD coverage percentage, inbox
+signal, application status, send eligibility, or approved outbound content — those stay deterministic:
 
 ```yaml
 match:
-  ai_seniority_tiebreak: true   # classify only ambiguous, non-Skip postings
-  ai_tiebreak_max_calls: 0      # 0 = unbounded; else cap AI calls per match run
+  ai_seniority_tiebreak: true   # print an advisory note for ambiguous postings only
+  ai_tiebreak_max_calls: 0      # 0 = unbounded; else cap advisory calls per match run
 ```
 
 ## Responsible use

@@ -83,13 +83,17 @@ route still fails closed unless the assertion validates for the exact Access aud
 ## Gmail access
 
 - jobscope connects over **read-only IMAP** with a Gmail **app password** (requires 2-Step
-  Verification). It uses `readonly=True` and `BODY.PEEK`, so it **never marks mail as read** and
-  never modifies your mailbox.
+  Verification). It uses a CA/hostname-verifying default SSL context, a finite 30-second socket timeout,
+  `readonly=True`, and `BODY.PEEK`, so it **never marks mail as read** and never modifies your mailbox.
 - An app password authenticates the whole account. To reduce blast radius, point jobscope at a
   **dedicated job-search Gmail account** and forward recruiter mail to it — its app password then
   can't reach your primary inbox.
 - Prefer app passwords over broader access. (A future option is scoped OAuth `gmail.readonly`, which
   is revocable per-app; it's not implemented yet — see *Deferred*.)
+- Rollback is configuration-only: set `inbox.enabled: false`, stop inbox/tick schedules, and revoke the
+  account's app password. No schema or data migration is required. App passwords still authenticate the
+  full mailbox; adopt Gmail API `gmail.readonly` when per-app revocable consent or authorization-enforced
+  read-only scope becomes a requirement.
 
 ## Data at rest & minimization
 
@@ -124,6 +128,15 @@ route still fails closed unless the assertion validates for the exact Access aud
 - The cloud SQLite snapshot is separately encrypted as versioned JSDB AES-256-GCM. Restore and
   save fail closed, retain one validated fallback generation, validate SQLite before use, and use
   a guarded `force-with-lease` update. See [OPERATIONS.md](OPERATIONS.md) for recovery and rotation.
+- Hosted full backups use a separate `JOBSCOPE_BACKUP_KEY` and contain the complete writable SQLite
+  database. The private origin creates a consistent DELETE-journal copy with SQLite's online backup API,
+  validates full integrity and foreign keys, encrypts it with AES-256-GCM, verifies a round trip, and streams
+  only ciphertext plus a non-secret evidence manifest through the dual-token automation edge. Plaintext is
+  never uploaded as an artifact. Outreach remains disabled after process start or backup failure until the
+  workflow independently verifies and retains the exact generation, then acknowledges its ID and hash.
+- Restore drills run the pulled image digest with `JOBSCOPE_RECOVERY_MODE=1`. Health and encrypted read APIs
+  remain available, while every browser mutation, refresh, and outreach tick fails closed. The drill uses a
+  disposable database path and records backup identity, restored-data age, and measured recovery time.
 - Writable campaign tables are stripped and vacuumed from cloud SQLite. Before removal, Jobscope stores
   one fixed-field read-only projection under `campaign:snapshot:v1`; scheduled refreshes carry that
   projection forward and publish it only inside `site.enc.json`. Draft bodies, approval/resume hashes,
@@ -162,30 +175,54 @@ still requires its own explicit approval and immutable content hash:
   carry the original thread identity. Application follow-ups reuse and lock a prior outreach recipient when
   one exists; otherwise they require a verified recruiter/company contact. A newer application action,
   response, terminal status, suppression, or changed source invalidates approval or blocks sending.
-- **No bulk approval.** Campaign edits clear approval. The scheduler sends one due approved target per run and
-  also enforces the configured local window, daily cap, and minimum spacing. It has no force-send option.
+- **No bulk approval.** Campaign edits clear approval. Scheduled and hosted ticks are reconciliation-only and
+  never call SMTP. Manual delivery is one approved target at a time and enforces the local window, daily cap,
+  minimum spacing, suppressions, reply state, attachment hash, contact provenance, and policy hash.
 - **Durable reply correlation.** Campaign mail carries a stable Message-ID. Read-only IMAP sync matches
   the immediate `In-Reply-To` parent first and confirmed-domain/post-send time second. Follow-up mail also
   carries `References`; generic replies and opt-outs are classified deterministically, and opt-out bodies
   need not be retained for suppression to work.
 - **Unknown delivery fails closed.** SMTP acceptance cannot be atomically committed with SQLite. Once
-  `sendmail` starts, an exception becomes `delivery_unknown`, never an automatic retry. The user must inspect
-  Sent mail and explicitly resolve the attempt. A process that dies after atomically claiming a send leaves
+  submission starts, a timeout or disconnect becomes `delivery_unknown`, never an automatic retry. An exact
+  read-only Sent-folder Message-ID check preserves zero, one, and multiple matches as separate outcomes; manual
+  resolution remains available for direct provider review. A process that dies after atomically claiming a send leaves
   `sending`; after 15 minutes the next scheduler tick moves that stale claim to `delivery_unknown` for the same
-  manual resolution, never an automatic retry. One atomic SQLite claim is global across campaigns and processes;
+  Message-ID. It requires explicit resolution, never an automatic retry. One atomic SQLite claim is global across campaigns and processes;
   any `sending` or `delivery_unknown` target blocks every later delivery until resolved. Error records contain
   only safe exception type/code metadata.
+- **SMTP acceptance is not inbox delivery.** Messages use SMTP-policy MIME, include `Date`, and retain a stable
+  `Message-ID` per durable intent. Explicit 4xx/5xx responses remain actionable rejections; successful submission
+  means only that the MTA accepted responsibility. Campaign activation runs TLS-verified
+  EHLO/STARTTLS/EHLO/AUTH/NOOP/QUIT preflight, checks the largest approved message against advertised SIZE, and
+  issues no MAIL, RCPT, or DATA. Later DSNs preserve the original submission record while adding bounce or
+  suppression evidence.
+- **Provider feedback is durable.** DSNs and complaints correlate by stable Message-ID. Hard bounces suppress
+  the recipient, complaints suppress recipient and domain, duplicate events are idempotent, and transient
+  bounces block all delivery until explicit delivered/hard-bounce review. Ambiguous feedback changes nothing.
 - **Generated documents isolate untrusted content.** Job, company, résumé, news, and optional model text is
   HTML-escaped before Markdown rendering. The PDF browser disables JavaScript, aborts subresource requests,
   and receives a deny-by-default CSP, so a listing cannot execute script or fetch remote pixels beside résumé PII.
-- **JobSpy descriptions avoid its Markdown converter.** Discovery requests HTML and immediately reduces it to
-  plain text with Jobscope's script/style-stripping normalizer. The upstream Markdownify dependency remains
-  installed for JobSpy compatibility but its vulnerable heading-conversion path is not invoked by Jobscope.
-- **Quorum is advisory.** If explicitly enabled, Quorum may rewrite a draft or break an ordinary inbox-label
-  tie. It never controls ranking, recipient validity, approval, sending, reply correlation, or suppression.
-  Campaign reply and opt-out labels cannot be overwritten by the model path.
-- **AI cache minimization.** Cache identity is derived from a SHA-256 key; new cache rows retain the response
-  but not the plaintext prompt. Existing local rows are not rewritten automatically.
+- **Automatic acquisition is allowlisted.** Only exact Greenhouse, Lever, and Ashby public API hosts may be
+  called by automatic job scans. Unknown providers and Phenom are unsupported; arbitrary careers pages are
+  not crawled. The shipped dependency graph contains no JobSpy, browser impersonation, CAPTCHA, or proxy-
+  rotation stack, and assisted apply has no browser submit action.
+- **AI is advisory, local-first, and fail-closed.** It is off by default and hard-disabled in hosted mode.
+  Each call names an exact purpose; the first supported route is a pinned allowlisted model on loopback
+  Ollama with no API key. Remote OpenRouter requires an explicit per-purpose model/provider allowlist and
+  pins `allow_fallbacks: false`, `require_parameters: true`, `data_collection: deny`, and `zdr: true`;
+  r\u00e9sum\u00e9 tailoring, application answers, outreach drafts, and coverage advice are never remote-eligible and
+  remote input is redacted for emails, phone numbers, URLs, and bearer/API-key patterns. Quorum routes are
+  rejected because their rounds, retries, and provider fallbacks cannot share one central budget.
+- **One budget, no silent relaxation.** Calls, input characters/tokens, reserved output tokens, retries,
+  fan-out, and wall time are reserved before any request, so exhaustion, policy mismatch, backend error, or
+  schema/length/grounding failure performs zero HTTP and returns the deterministic result.
+- **Model output cannot hold authority.** Scores, tiers, resume routing, JD coverage percentages, mail
+  signals, application state, send eligibility, and approved outbound content are computed deterministically.
+  Untrusted job, company, and mail text is passed as an encoded data payload with no tools, secrets, network,
+  or outbound authority, and advisory text is validated against supplied facts before display.
+- **AI data minimization.** Cache identity is a SHA-256 key; rows retain only the response, never the prompt.
+  Sensitive purposes are never cached, provenance records only purpose/provider/model-hash, and the AI cache
+  plus advisory brief text are stripped from cloud-safe snapshots. Existing local rows are not rewritten.
 - **Your identity, your account.** Mail is sent from your own SMTP account (honest sender), so normal
   anti-spam / CAN-SPAM / GDPR expectations apply — keep it relevant and low-volume.
 

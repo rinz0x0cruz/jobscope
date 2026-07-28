@@ -13,7 +13,7 @@ python -m jobscope doctor
 ```
 
 Errors block a reliable run. Warnings identify optional readiness gaps such as a
-missing publication passphrase, a saturated JobSpy result cap, or an unhealthy ATS
+missing publication passphrase or an unhealthy ATS
 source. The command never opens a network connection or prints secret values.
 
 Install Python dependencies from `requirements.lock` and web dependencies with
@@ -27,6 +27,144 @@ python -m piptools compile requirements.txt --output-file requirements.lock \
 
 Review both `requirements.txt` and `requirements.lock` in the same change.
 
+## Activation Readiness
+
+`doctor` answers "is this install healthy". `readiness` answers the narrower
+question "is this lane safe to switch on right now":
+
+```bash
+python -m jobscope readiness              # report every lane
+python -m jobscope readiness --json       # machine-readable report
+python -m jobscope readiness --require smtp   # exit nonzero until SMTP is ready
+```
+
+The report is read-only. It opens no network connection and, apart from an
+explicit `--canary`, writes nothing. It prints lane names, states, blocker codes,
+evidence age, and config hashes only: never an address, secret, message body,
+resume text, or prompt.
+
+States are `disabled`, `configured`, `preflight_passed`, `canary_passed`,
+`active`, and `paused`. Dependencies run storage before inbox and SMTP, both
+before outreach, and outreach before the scheduler. AI is never a dependency of
+any lane, so an AI-off install reports fully ready. A disabled optional lane is
+healthy, not an error: it only fails the exit code under `--require`.
+
+Readiness invalidates itself automatically. Missing, failed, or 30-day-old canary
+evidence, a changed lane config hash, a different artifact ID, an unhealthy
+dependency, or an unresolved delivery outcome each produce a blocker code and
+push the lane back below `canary_passed`.
+
+`--require LANE` exits `0` only when that lane and every dependency hold current
+passing evidence, `1` when anything blocks, and `2` for an unknown lane. Use it
+as the gate in front of any activation step below.
+
+### Activation and rollback per lane
+
+Run `python -m jobscope readiness --require <lane>` after every step; stop at the
+first nonzero exit. Activate one lane at a time, never two in the same change.
+
+| Lane | Activate | Roll back |
+| --- | --- | --- |
+| storage | Restore or create the database, then confirm `refresh` succeeds once. | Restore the last verified snapshot per [Snapshot Recovery](#snapshot-recovery). |
+| discovery | Add company monitors, resolve them, then run `refresh`. | Pause the monitors; cached jobs stay readable. |
+| inbox | Set `inbox.accounts` and the app password, run `readiness --canary inbox --account <address>`, then enable `inbox.enabled`. | Disable `inbox.enabled`, stop the tick schedule, revoke the app password. |
+| smtp | Set `email.*` and the password env var, run `readiness --canary smtp`, then enable `email.enabled`. | Disable `email.enabled` and revoke the credential; queued drafts stay unsent. |
+| outreach | Confirm `campaign ready`, resolve any delivery blocker, then enable `apply.outreach.enabled`. | Disable `apply.outreach.enabled`; approved drafts remain stored and unsent. |
+| scheduler | Hosted: follow [Scheduled Automation Clock](#scheduled-automation-clock). Local: register the task per [Local Outreach Scheduler And Repair](#local-outreach-scheduler-and-repair). | Set the kill switch, then remove the cron; every command stays available manually. |
+| ai | Enable `ai.enabled` with an allowlisted local model and purpose. | Disable `ai.enabled`; deterministic output is unchanged because AI is advisory only. |
+
+The inbox and SMTP canaries are the only live checks. The inbox canary is the
+non-mutating `readonly`/`BODY.PEEK` probe described in
+[Inbox Activation Canary](#inbox-activation-canary). The SMTP canary is a
+preflight that authenticates and quits without issuing `MAIL`, `RCPT`, or `DATA`,
+so it can never deliver a message. Both record one evidence row in `meta` under
+`readiness:canary:<lane>` and change nothing else.
+
+If a lane is rolled back, its readiness evidence stays on disk but the config
+hash changes as soon as you edit that lane, so a later reactivation requires a
+fresh canary rather than inheriting stale proof.
+Scheduled Automation Clock
+
+The `jobscope-automation` Cloudflare Worker is the only autonomous writer.
+`refresh.yml` has no `schedule:` trigger, `hosted-ops` stays manual, and the
+local Windows task in
+[Local Outreach Scheduler And Repair](#local-outreach-scheduler-and-repair) is
+for local-only installs. Never run the local task and the hosted cron against
+the same database.
+
+Platform cron is treated as at-least-once, possibly late, and occasionally
+skipped. Every slot therefore carries its own identity:
+
+- The Worker sends `X-Jobscope-Slot-Time` (the UTC `scheduledTime`) and
+  `X-Jobscope-Slot-Period`. It never sends a slot ID.
+- The backend re-derives the ID from the operation version plus that instant and
+  claims it with one `BEGIN IMMEDIATE` compare-and-set, so simultaneous or
+  retried deliveries of the same slot execute once and share one result.
+- Outcomes are `claimed`, `duplicate` (200, returns the original result),
+  `superseded` (200, an out-of-order slot), `stale` (200, later than 30 minutes),
+  `busy` (409, other work in progress), `disabled` (503), and `invalid` (400).
+- A slot dated more than five minutes in the future is `invalid`. Accepting one
+  would make every later real slot look superseded, so a skewed clock or a forged
+  header cannot wedge the schedule.
+- Missed slots are counted, not replayed: one latest execution runs and records
+  `missed` and `lateness_ms`.
+- Only `17 */3 * * *` (refresh) and `*/30 * * * *` (tick) are recognized. Any
+  other pattern throws instead of guessing an operation.
+- The Worker retries only genuine faults. `400`, `401`, and `403` throw loudly
+  because retrying cannot fix a credential or identity mismatch; `503` is a
+  deliberate refusal and is final for that slot; any other `5xx` throws so the
+  platform retries the same scheduled time.
+
+Worker configuration: `ORIGIN_URL` (the private origin), `WORKER_ORIGIN` (this
+Worker's own origin, sent as `Origin`), `AUTOMATION_TOKEN`, `EDGE_TOKEN`, and
+`AUTOMATION_MODE`. `AUTOMATION_MODE` defaults to `observe`, in which a scheduled
+slot calls only the read-only status path and mutates nothing.
+
+### Activation
+
+Do not skip a step; each one must pass before the next.
+
+1. Confirm `python -m jobscope readiness --require smtp` and `--require outreach`
+   exit zero, and that no target is stuck in `delivery_unknown`.
+2. Deploy the backend with slot claiming, heartbeat, and kill switch while
+   `triggers.crons` is still `[]`. No slot can exist yet.
+3. Deploy the Worker with `AUTOMATION_MODE=observe`, then add one cron pattern to
+   `triggers.crons` in `cloudflare/automation-wrangler.jsonc` and deploy.
+4. Cron changes are not instant. Wait for at least two scheduled slots and
+   confirm arrival from `wrangler tail` rather than assuming a fixed delay.
+5. Observe at least three slots. Each must reach the status path and leave the
+   database unchanged.
+6. Set `AUTOMATION_MODE=active` with `email.enabled` false. Confirm the refresh
+   slot runs, then check the heartbeat.
+7. Run one tick slot with no eligible recipient and confirm nothing was sent.
+8. Only then schedule one manually approved controlled-mailbox canary.
+
+### Verification
+
+`GET /api/automation/status` returns a `heartbeat` block for an independent
+read-only observer: `state`, `operation`, `scheduled`, `finished`, `code`,
+`run_id`, `duration_ms`, `lateness_ms`, `missed`, `artifact`, `age_ms`,
+`running`, `disabled`, and `stale`. It contains no payload, address, or body.
+
+`stale` is true when no terminal heartbeat exists at all, or when the last one is
+older than twice its own period. A heartbeat that lags because a write was lost
+also reads as stale, which is the safe direction.
+
+### Kill switch and rollback
+
+Stop mutation first, remove the schedule second. Cron removal propagates on
+Cloudflare's schedule; the kill switch does not.
+
+1. Set `JOBSCOPE_AUTOMATION_DISABLED=1` on the backend, or set the `meta` key
+   `automation:disabled` to `1` for an immediate stop without a redeploy. Every
+   new slot is refused with `disabled` while in-flight work finishes normally.
+2. Deploy `"triggers": { "crons": [] }` and set `AUTOMATION_MODE=observe`.
+3. Wait past two scheduled periods and confirm from `wrangler tail` and the
+   heartbeat that no later slot was accepted. Verify; do not assume a bound.
+4. Only after that verification may another clock take ownership. Bump
+   `OPERATION_VERSION` in `jobscope/deliver/automation.py` when the new owner
+   must not be deduplicated against the previous owner's slot history.
+
 ## Private Hosted Control Plane
 
 The repository contains an opt-in hosted server contract, an immutable multi-stage `Dockerfile`,
@@ -39,13 +177,18 @@ Required topology:
    one Jobscope service from the immutable `ghcr.io/<owner>/jobscope@sha256:<digest>` reported in the
    job summary and mount one volume at `/data`. For an image-source
    service, mirror `railway.json`'s `/healthz`, 30-second timeout, and bounded on-failure restart settings.
+   The image builds SQLite 3.53.4 from the checksum-pinned official archive and verifies its exact
+   `sqlite_source_id()`. Hosted startup rejects any other runtime identity and audits an existing database
+   with full `integrity_check` and `foreign_key_check` before constructing the server.
 2. Put sanitized configuration at `/data/config.yaml` with `output.db_path: /data/jobscope.db`.
 3. Set only secret values in Railway variables. Keep `ai.enabled`, `email.enabled`, and
    `apply.outreach.enabled` false for the canary. Generate a distinct 32+ character
    `JOBSCOPE_AUTOMATION_TOKEN`; give the same value to the hosted service and GitHub Actions. Set
    `JOBSCOPE_CF_ACCESS_TEAM_DOMAIN` to `https://<team>.cloudflareaccess.com`, set
    `JOBSCOPE_CF_ACCESS_AUD` to the Access application's Audience tag, and store
-   `JOBSCOPE_APPS_PASSPHRASE` only in the hosted secret manager.
+   `JOBSCOPE_APPS_PASSPHRASE` only in the hosted secret manager. Generate a separate long random
+   `JOBSCOPE_BACKUP_KEY` and store the same value in Railway and repository Actions secrets. Never reuse
+   the dashboard passphrase, database snapshot key, automation token, or edge token as the backup key.
 4. Route a Cloudflare Tunnel hostname to the private service on port 8799. Enable **Protect with
    Access** so `cloudflared` validates the Access JWT and forwards `Cf-Access-Jwt-Assertion`.
 5. Set `JOBSCOPE_PUBLIC_ORIGIN` to that exact HTTPS origin. Access must deny by default and allow
@@ -74,13 +217,13 @@ Use the separate free automation edge instead of a card-gated Access service tok
    `JOBSCOPE_AUTOMATION_EDGE_TOKEN` to the same edge token. Railway accepts automation only when
    the caller supplies both tokens and the exact automation Origin.
 4. Configure GitHub variable `JOBSCOPE_AUTOMATION_ORIGIN` plus secret
-   `JOBSCOPE_AUTOMATION_TOKEN`. The Worker exposes only the four fixed `/api/automation/*` routes,
+   `JOBSCOPE_AUTOMATION_TOKEN`. The Worker exposes only the six fixed `/api/automation/*` routes,
    rejects every other route/method, strips caller-controlled edge and Access headers, and adds the
    origin-only edge token. This path uses the normal Workers free allowance and requires no card.
 
 Do not migrate real data yet. Start the immutable image with an empty volume, verify unauthenticated
 requests are denied, sign in through Access, make a temporary profile change, restart the same image,
-and prove the change and `PRAGMA quick_check` survive. Confirm **Sign out** clears the live workspace,
+and prove the change, `PRAGMA integrity_check`, and zero-row `PRAGMA foreign_key_check` survive. Confirm **Sign out** clears the live workspace,
 `sw.js` unregisters itself instead of precaching, and the security headers deny framing. The CI
 `container` job performs the equivalent image/volume/header/automation smoke on Linux.
 
@@ -90,6 +233,8 @@ Cut over with one writer:
    encrypted `data` and Pages commits.
 2. Stop the empty canary. Back up the local full database and profiles, run
    `python -m jobscope.core.snapshot data/jobscope.db`, and record file hashes and table counts.
+   This is the one-time pre-enforcement audit: it must report a healthy database and zero foreign-key
+   violations. Do the same read-only audit against the hosted volume before replacing its image.
 3. Upload the validated database, `profiles/`, and sanitized config to `/data`; retain the local copy
    untouched. Stored résumé source paths may be Windows-absolute: re-upload every named résumé through
    hosted Settings so it lands under `/data/resumes`, then review and re-approve affected drafts. Run
@@ -105,16 +250,31 @@ Cut over with one writer:
    it fetches only the hosted-encrypted snapshot, then reuses the shared empty-shell builder and
    artifact verifier. The workflow never receives the plaintext payload or passphrase. Add schedules
    only after both manual workflows and the restore drill pass.
+6. Run `hosted-backup.yml`. It downloads only a JSDB-encrypted full database and non-secret manifest,
+   independently decrypts and validates it on the runner, uploads the two verified files as a uniquely
+   named 90-day Actions artifact, and only then acknowledges that exact backup ID and ciphertext hash.
+   Hosted outreach ticks remain disabled after every process start and after every failed or unacknowledged
+   backup. Keep Railway daily/weekly/monthly volume backups enabled as an independent second layer.
 
-Before declaring cutover complete, restore a Railway volume backup into a temporary service, run
-`PRAGMA quick_check`, and compare the recorded counts. Rollback disables hosted triggers, stops the
-hosted service, restores the untouched local backup, and re-enables the recorded previous workflow.
-Do not delete old snapshots or secrets until both scheduled refresh and restore evidence pass.
+Before declaring cutover complete, run `hosted-restore-drill.yml` with the published safe image digest,
+successful backup workflow run ID, and exact artifact name. The drill downloads that immutable generation,
+restores it into a disposable directory using the pulled digest, runs `doctor`, starts in
+`JOBSCOPE_RECOVERY_MODE=1`, verifies the encrypted principal read API, proves refresh/tick are disabled,
+restarts, and repeats the checks. Its summary records artifact digest, backup ID, restored-data age, and
+measured recovery time. These values are evidence, not an advance RPO/RTO claim.
+
+Rollback disables hosted triggers and outbound effects, stops the hosted service, and restores the selected
+verified full generation with the retained safe image digest. Once the first safe deployment and drill pass,
+record that digest as the rollback floor and remove the vulnerable image from every deployment/rollback target.
+Never roll back to an affected SQLite image. Do not delete old encrypted generations, Railway backups, or
+secrets until both scheduled operation and restore evidence pass.
 
 The hosted workflows are intentionally `workflow_dispatch`-only. `hosted-ops.yml` has read-only
 repository permission and can invoke either refresh or one reply-check/send tick. `hosted-publish.yml`
-alone has `contents: write` so it can push one verified encrypted artifact to `gh-pages`. Both share
-one concurrency group. Never grant the automation service identity access to `/api/campaigns/action`.
+alone has `contents: write` so it can push one verified encrypted artifact to `gh-pages`.
+`hosted-backup.yml` has read-only repository permission and writes its encrypted generation only to the
+Actions artifact service; `hosted-restore-drill.yml` has read-only repository/package/artifact access.
+Backup, publish, refresh, and tick share one concurrency group. Never grant the automation service identity access to `/api/campaigns/action`.
 Any in-progress or unknown SMTP outcome halts all subsequent delivery across campaigns and processes;
 resolve it in the private workspace before running another tick.
 
@@ -126,12 +286,11 @@ work begins, it must:
 
 1. Fetch the exact `data` branch tip.
 2. Decrypt `jobscope.db.enc`, or the retained `jobscope.db.previous.enc` fallback.
-3. Validate SQLite magic, `PRAGMA quick_check`, and Jobscope's stable tables.
+3. Validate SQLite magic, full `PRAGMA integrity_check`, zero-row `PRAGMA foreign_key_check`, and Jobscope's stable tables.
 4. Record the restored commit SHA.
 
 Company-first ordering is fixed: restore/validate DB → idempotent `companies seed` → apply an optional
-validated mutation batch → scan active monitored portals → run broad discovery only when its 24-hour marker
-is due (or `full_scan=true`) → inbox → match → review sync → save encrypted DB → verify/publish. Monitor
+validated mutation batch → scan active monitored portals → inbox → match → review sync → save encrypted DB → verify/publish. Monitor
 errors are optional/degraded and fail closed: only a complete non-empty board may mark linked jobs closed.
 
 Pages mutations require the existing fine-grained Actions read/write token. Save/Dismiss/company changes are
@@ -217,6 +376,29 @@ recruiter content.
 
 ## Snapshot Recovery
 
+### Hosted full database
+
+Use a successful `hosted-backup.yml` artifact for hosted recovery. Each immutable generation contains only
+`jobscope.db.jsdb` and `manifest.json`; the encrypted file includes all writable campaign and application
+state, unlike the redacted Pages/cloud-refresh snapshot. The manifest records the application artifact,
+SQLite version/source ID, plaintext and ciphertext SHA-256, schema hash, table counts, and creation time.
+
+Verify or restore a downloaded generation without replacing an existing database:
+
+```bash
+export JOBSCOPE_BACKUP_KEY='<separate long random key>'
+python -m jobscope.core.backup verify path/to/generation
+python -m jobscope.core.backup restore path/to/generation path/to/empty/jobscope.db
+```
+
+Restore refuses an existing destination. Creation uses SQLite's online backup API, converts the copy to
+DELETE journal mode, validates it, encrypts it, verifies a decryption round trip, and atomically promotes the
+generation. An interruption or disk-full error removes staging, preserves prior good generations, and clears
+hosted outbound readiness. A later successfully retained and acknowledged generation restores readiness.
+Use `hosted-restore-drill.yml` for the required pulled-image restart/read/outbound-disable rehearsal.
+
+### Redacted cloud-refresh snapshot
+
 If cloud restore fails, do not delete the `data` branch or rerun with an empty DB.
 
 1. Download `jobscope.db.enc` and `jobscope.db.previous.enc` from the `data` branch.
@@ -241,13 +423,19 @@ with a recovered cloud snapshot preserves jobs, applications, monitors, reviews,
 mail events, but yields empty campaign tables. Keep timestamped local database backups
 if campaign drafts, approvals, schedules, or suppressions must be recoverable.
 
+### Backup key rotation
+
+1. Leave hosted tick disabled and retain at least one generation under the old key.
+2. Set a new long random `JOBSCOPE_BACKUP_KEY` in Railway and repository Actions secrets.
+3. Restart the service, run `hosted-backup.yml`, and verify its acknowledgement succeeds.
+4. Run `hosted-restore-drill.yml` against the new generation and retained safe image digest.
+5. Remove the old key only after recording the successful drill evidence.
+
 ## Local Outreach Scheduler And Repair
 
-Registering `scripts/register-outreach-task.ps1` first runs `campaign ready`, then schedules
-`campaign tick` under the interactive user. Each tick incrementally checks configured inboxes,
-reconciles replies/opt-outs, and sends at most one due approved email. The task uses
-`MultipleInstances IgnoreNew`; it never force-sends or bypasses approval, quota, spacing, cooldown,
-application-history, recipient-domain, résumé-hash, or suppression guards.
+Registering `scripts/register-outreach-task.ps1` schedules `campaign tick` under the interactive user.
+Each tick incrementally checks configured inboxes, reconciles replies, opt-outs, bounces, and complaints,
+reports due approved work, and sends nothing. The task uses `MultipleInstances IgnoreNew`.
 
 Build a follow-up review queue with `campaign followups --count N` or **Build follow-up queue** in
 the local UI. This operation writes drafts only. Before approval and again before sending, Jobscope
@@ -260,6 +448,11 @@ folder for the stored Message-ID. Resolve it in the local UI as **Confirmed in S
 requires review and approval again. If a scheduler process dies while a send is claimed, the claim remains
 locked for 15 minutes; the next tick then exposes it as delivery unknown for this same manual check. A generic same-domain reply is linked only when one unresolved
 target exists for that domain; exact `In-Reply-To` matching always takes precedence.
+
+Hard bounces create terminal recipient suppressions; complaints suppress recipient and domain. A transient
+bounce blocks every later delivery until **Confirmed delivered** or **Confirmed hard bounce** is selected.
+Duplicate provider events are retained once and ignored on replay. Use `campaign export-eml --target-id ID`
+to review the exact MIME message with SMTP, inbox, and AI disabled.
 
 ## Key Rotation
 
@@ -325,13 +518,11 @@ between deployments; treat each manifest and artifact directory as one unit.
 
 ## Source Health
 
-ATS, JobSpy, and inbox checks update the `source_health` table while the `runs` table
+ATS and inbox checks update the `source_health` table while the `runs` table
 keeps history. Meanings:
 
 - `ok`: complete successful result.
 - `empty`: successful source with zero jobs; valid and non-destructive.
-- `paged`: a ten-result JobSpy page committed and its next offset is ready; rerun `scan` to resume.
-- `saturated`: JobSpy reached the configured per-cycle `results_wanted` cap; additional results may exist.
 - `partial`: some postings parsed; never authoritative for closing jobs.
 - `recovered`: Gmail or IMAP succeeded after bounded recovery/retry.
 - `invalid`, `error`, `unsupported`: unhealthy; never authoritative for closing jobs.
@@ -342,11 +533,35 @@ and identify the exact provider/slug. Probes run with bounded concurrency; each 
 attempt has a 12-second timeout and at most two capped retry delays, so third-party
 rate limits can make a canary batch take several minutes without blocking other jobs.
 
+New automatic sources require an explicit review before code/config activation: publisher-controlled public
+API/feed documentation and permission basis, exact HTTPS request host, no authentication or evasion, typed
+malformed/error/empty/partial behavior, non-destructive reconciliation tests, and canary coverage. Unknown
+providers, Phenom, arbitrary careers HTML, and aggregator scraping stay quarantined.
+
 The first inbox run after upgrading an older database may replay
 `inbox.uid_recovery_days` because historical UID watermarks predate UIDVALIDITY
 tracking. Message-ID deduplication makes this replay non-destructive. A future
 `ANALYSIS_VERSION` bump intentionally leaves older job-analysis rows in place and
 reads only the current version; rerun `jobscope enrich` to populate the new version.
+
+## Inbox Activation Canary
+
+Use a dedicated job-search Gmail account with one pre-existing benign application message. Keep SMTP,
+AI, outreach, and snippet persistence disabled. Run:
+
+```bash
+python -m jobscope inbox-canary --account canary@example.com
+```
+
+The command forces verified TLS, a 30-second connection timeout, `readonly=True`, `BODY.PEEK`, `dry_run`,
+and one explicitly selected account. It creates a throwaway SQLite database outside the configured data path,
+prints the classification, asserts that no mail event or UID/UIDVALIDITY marker was written, and deletes the
+database on exit. Confirm in Gmail that the benign message remains unread and unmodified. Do not use a
+production mailbox fixture or enable SMTP for this check.
+
+Rollback: disable `inbox.enabled`, stop any inbox/tick schedule, and revoke the dedicated app password in the
+Google account. This removes network access immediately and needs no data migration. Keep the account disabled
+until the certificate, hostname, timeout, UID-search, and fetch failure tests pass again.
 
 ## CI And Release Gate
 
