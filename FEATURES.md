@@ -300,7 +300,7 @@ Per company, best-effort and non-blocking (`enrich` toggles):
 | `stock` | yfinance ticker, price, % change, market cap, 52-wk position, IPO/public vs private. |
 | `reddit` | old.reddit JSON search + lexicon sentiment + count (AI summary if enabled). |
 | `news` | Google News RSS headlines (via feedparser). |
-| `glassdoor` | Best-effort rating (off by default). |
+| `glassdoor` | Company search **link** only — built locally, never fetched. |
 | `contacts` | Legit-only referral leads: LinkedIn/Google people-search links + public GitHub profiles + AI outreach draft (optional). No PII harvesting. |
 | `brief` | Blunt company brief: facts + risks, no hype; leads with risks; only states given facts. |
 

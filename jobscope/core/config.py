@@ -72,9 +72,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "stock": True,
         "reddit": True,
         "news": True,
-        # Off by default: the adapter fetches Glassdoor's search page, which their
-        # terms do not permit, and its own docstring documents it as opt-in.
-        "glassdoor": False,
+        # Hands back a Glassdoor search link and makes no request, so there is
+        # nothing here to rate-limit, block, or breach.
+        "glassdoor": True,
         "contacts": True,
         "brief": True,
         "news_feeds": [],

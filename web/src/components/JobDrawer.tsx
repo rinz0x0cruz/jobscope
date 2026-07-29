@@ -572,10 +572,20 @@ export function RoleReader({
           </Section>
         )}
 
-        {e.glassdoor && Object.keys(e.glassdoor).length > 0 && (
+        {e.glassdoor && typeof e.glassdoor.search_url === 'string' && (
           <Section title="Glassdoor">
-            <div className="text-[13px] text-dim">
-              {'rating' in e.glassdoor ? `Rating: ${String(e.glassdoor.rating)}` : JSON.stringify(e.glassdoor)}
+            <div className="text-[13px]">
+              {typeof e.glassdoor.rating === 'number' && (
+                <p className="text-dim">Rating: {e.glassdoor.rating} / 5</p>
+              )}
+              <a
+                href={safeExternalUrl(e.glassdoor.search_url)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent hover:underline"
+              >
+                Look this company up on Glassdoor ↗
+              </a>
             </div>
           </Section>
         )}
