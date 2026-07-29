@@ -4,7 +4,7 @@ import tempfile
 from jobscope.core.config import load_config
 from jobscope.core.model import Application, Job
 from jobscope.core.store import Store
-from jobscope.ingest.monitor import SEED_MARKER, seed_monitors
+from jobscope.ingest.monitor import SEED_MARKER, board_url, seed_monitors, suggest_boards
 
 
 def _setup():
@@ -104,4 +104,68 @@ def test_seed_keeps_configured_monitor_explicit_when_application_exists():
     monitor = store.get_company_monitor("databricks")
     assert monitor["origins"] == ["config"]
     assert len(store.list_company_monitors()) == 2
+    store.close()
+
+
+def _applied(store, *companies):
+    for company in companies:
+        job = Job(source="inbox", title="Analyst", company=company,
+                  url=f"https://x/{company}").ensure_id()
+        store.upsert_job(job)
+        store.set_application(Application(
+            job_id=job.id, status="applied", company=company, applied_at="2026-07-15",
+        ))
+
+
+def test_suggest_probes_only_unwatched_companies(monkeypatch):
+    cfg, store = _setup()  # search.companies already holds databricks + Acme
+    _applied(store, "Databricks", "Junk Notifications", "Tide")
+    probed = []
+
+    def fake_resolve(company, provider=None, slug=None):
+        probed.append(company)
+        return ("Tide", "greenhouse", "tide") if company == "Tide" else None
+
+    monkeypatch.setattr("jobscope.ingest.ats.resolve_board", fake_resolve)
+
+    suggestions = suggest_boards(cfg, store)
+
+    # Already configured, so never worth a network probe.
+    assert "Databricks" not in probed
+    assert probed == ["Junk Notifications", "Tide"]
+    # Only the company with a real board is suggested; junk parses resolve to nothing.
+    assert suggestions == [{
+        "applied_as": "Tide", "company": "Tide", "provider": "greenhouse", "slug": "tide",
+        "entry": "Tide|greenhouse|tide", "url": board_url("greenhouse", "tide"),
+    }]
+    store.close()
+
+
+def test_suggest_caps_the_number_of_probes(monkeypatch):
+    cfg, store = _setup()
+    _applied(store, "Alpha Co", "Bravo Co", "Charlie Co")
+    probed = []
+    monkeypatch.setattr("jobscope.ingest.ats.resolve_board",
+                        lambda company, **_kwargs: probed.append(company))
+
+    suggest_boards(cfg, store, limit=2)
+
+    assert len(probed) == 2
+    store.close()
+
+
+def test_suggest_survives_a_failing_probe(monkeypatch):
+    cfg, store = _setup()
+    _applied(store, "Broken Co", "Tide")
+
+    def flaky(company, provider=None, slug=None):
+        if company == "Broken Co":
+            raise RuntimeError("board probe exploded")
+        return ("Tide", "greenhouse", "tide")
+
+    monkeypatch.setattr("jobscope.ingest.ats.resolve_board", flaky)
+
+    suggestions = suggest_boards(cfg, store)
+
+    assert [item["company"] for item in suggestions] == ["Tide"]
     store.close()

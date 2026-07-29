@@ -204,6 +204,11 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 - **Config seed:** `search.companies` is a list of entries. Each is either a known name resolved via
   `jobscope/ats.py` `COMPANY_BOARDS` (e.g. `databricks` → greenhouse/databricks) or an explicit
   `"Name|provider|slug"` override. Empty list = ATS boards skipped.
+- **Suggested from your own history:** `jobscope companies suggest [--limit N]` probes the companies you
+  have in-flight applications with, and prints the ones that resolve to a public board you are not already
+  watching, as paste-ready `search.companies` entries. Requiring a resolvable board is also what filters out
+  the junk company names email parsing produces, and nothing is added automatically — email-derived names
+  need a human glance before they become monitors.
 - **Filtering:** each board is filtered to your locations (target countries/cities from `profiles` +
   `country_indeed`, plus any remote role when `is_remote` is set) **and** role keywords derived from
   `search.terms` (+ a small security/SWE lexicon), then normalized to the `Job` schema and de-duped by URL

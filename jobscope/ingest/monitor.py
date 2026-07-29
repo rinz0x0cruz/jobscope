@@ -1,6 +1,7 @@
 """Persistent company-monitor seeding and scanning orchestration."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from jobscope.analyze.review import persist_scored_job, score_jobs
@@ -105,6 +106,68 @@ def run_seed(cfg: dict, store, *, force: bool = False) -> int:
         f"{result['archived_known']} application-only archived, "
         f"{result['legacy_saved']} legacy roles saved ({result['total']} total)"
     )
+    return 0
+
+
+def _match_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def suggest_boards(cfg: dict, store, *, limit: int = 40) -> list[dict[str, Any]]:
+    """Companies you have applied to that have a public board nobody is watching.
+
+    Your application history is revealed preference: each of those companies posted
+    something you wanted badly enough to act on. Requiring a resolvable board before
+    suggesting anything also discards the junk company names email parsing produces,
+    which is why application history is *probed* here rather than seeded directly --
+    monitors created blindly from applications are what
+    ``archive_application_only_monitors`` exists to clean up.
+
+    Needs the network (one board probe per candidate); ``limit`` caps the probes.
+    """
+    seen = {_match_key(m.get("company", ""))
+            for m in store.list_company_monitors(include_removed=True)}
+    seen |= {_match_key(str(entry).split("|")[0])
+             for entry in (cfg.get("search") or {}).get("companies") or []}
+    suggestions: list[dict[str, Any]] = []
+    probed = 0
+    for row in store.active_application_companies(limit=1000):
+        if probed >= limit:
+            break
+        company = (row.get("company") or "").strip()
+        key = _match_key(company)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        probed += 1
+        try:
+            resolved = ats.resolve_board(company)
+        except Exception:  # noqa: BLE001 - a probe failure is not a suggestion failure
+            continue
+        if resolved is None:
+            continue
+        name, provider, slug = resolved
+        suggestions.append({
+            "applied_as": company, "company": name, "provider": provider, "slug": slug,
+            "entry": f"{name}|{provider}|{slug}", "url": board_url(provider, slug),
+        })
+    return suggestions
+
+
+def run_suggest(cfg: dict, store, *, limit: int = 40) -> int:
+    suggestions = suggest_boards(cfg, store, limit=limit)
+    if not suggestions:
+        print("  no new company boards found in your application history")
+        return 0
+    print(f"  {len(suggestions)} company board(s) you applied to but are not watching:\n")
+    for item in suggestions:
+        alias = "" if item["company"] == item["applied_as"] else f"  (applied as {item['applied_as']})"
+        print(f"  {item['company']}{alias}\n    {item['url']}")
+    print("\n  Check each board is the right company, then add the keepers to "
+          "search.companies in config.yaml:\n")
+    for item in suggestions:
+        print(f'    - "{item["entry"]}"')
+    print("\n  ...then run: jobscope companies seed --force")
     return 0
 
 

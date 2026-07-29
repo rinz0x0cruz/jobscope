@@ -88,6 +88,8 @@ def cmd_companies(args, cfg):
             return monitor.run_seed(cfg, store, force=getattr(args, "force", False))
         if args.action == "scan":
             return monitor.run_scan(cfg, store, company=getattr(args, "company", None))
+        if args.action == "suggest":
+            return monitor.run_suggest(cfg, store, limit=getattr(args, "limit", 40))
         if args.action == "apply":
             from ..apply import monitoring
             if not getattr(args, "actions_file", None):
@@ -697,13 +699,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_scout)
 
     sp = sub.add_parser("companies", help="Manage persistent company monitors")
-    sp.add_argument("action", nargs="?", choices=["seed", "list", "scan", "apply"], default="list",
-                    help="seed, list (default), scan, or apply a validated action file")
+    sp.add_argument("action", nargs="?",
+                    choices=["seed", "list", "scan", "suggest", "apply"], default="list",
+                    help="seed, list (default), scan, suggest boards from your "
+                         "application history, or apply a validated action file")
     sp.add_argument("company", nargs="?", default=None,
                     help="Company name or monitor id for `scan` (default: all active)")
     sp.add_argument("--force", action="store_true",
                     help="Reimport config/application companies after the initial seed")
     sp.add_argument("--all", action="store_true", help="Include soft-removed monitors in list")
+    sp.add_argument("--limit", type=int, default=40,
+                    help="Max companies to probe for `suggest` (default 40)")
     sp.add_argument("--actions-file", default=None,
                     help="JSON action file for `companies apply` (used by cloud refresh)")
     sp.set_defaults(func=cmd_companies)
