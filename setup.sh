@@ -15,9 +15,6 @@ python -m pip install --upgrade pip
 echo "==> Installing dependencies"
 pip install -r requirements.lock
 
-echo "==> Installing Chromium (Playwright) for PDF + assisted apply"
-python -m playwright install chromium
-
 echo "==> Scaffolding config + data dir"
 python -m jobscope init
 
@@ -26,4 +23,7 @@ cat <<'EOF'
 Done. Next: add your resume at data/resume.md, then:
   python -m jobscope resume import data/resume.md
   python -m jobscope scan && python -m jobscope match && python -m jobscope dashboard --open
+
+Optional, only for PDF export and 'apply --assist' (~200MB):
+  pip install playwright==1.40.0 && python -m playwright install chromium
 EOF

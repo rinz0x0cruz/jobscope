@@ -17,13 +17,17 @@ dependencies = [
     "pyjwt[crypto]==2.10.1",
     "feedparser==6.0.11",
     "yfinance==0.2.40",
-    "playwright==1.40.0",
     "pypdf==6.14.2",
     "markdown==3.8.1",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest==9.0.3", "ruff==0.12.4", "detect-secrets==1.5.0"]
+# Optional Chromium renderer, used only by tailored-resume PDF export and the
+# opt-in `apply --assist` autofill. Both already degrade without it: the tailor
+# writes HTML instead of PDF, and assisted fill reports that it is unavailable.
+# Needs `python -m playwright install chromium` as well as the wheel.
+pdf = ["playwright==1.40.0"]
 # Optional OS-keychain storage for secrets (Windows Credential Manager / macOS
 # Keychain / Secret Service). The tool falls back to environment/.env without it.
 secure = ["keyring>=24"]

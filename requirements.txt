@@ -8,7 +8,10 @@ feedparser==6.0.11
 yfinance==0.2.40
 
 # Tailoring + PDF + assisted apply (Phase 3-4)
-playwright==1.40.0
+# playwright is deliberately NOT here -- it is the `pdf` extra. Both users of it
+# (tailored-resume PDF export, `apply --assist`) already degrade without it, and
+# it also needs a separate ~150MB `playwright install chromium`.
+#   pip install "jobscope[pdf]" && python -m playwright install chromium
 pypdf==6.14.2
 markdown==3.8.1
 

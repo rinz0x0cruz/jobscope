@@ -326,6 +326,8 @@ Per company, best-effort and non-blocking (`enrich` toggles):
 ## Tailoring & PDF
 
 - Deterministic ATS pass: matched vs missing keywords, coverage %, non-destructive tailored resume + cover.
+- **PDF is optional.** Markdown and HTML are always written; the `.pdf` is added only when the `pdf` extra
+  (`playwright` + `playwright install chromium`) is present, and `pdf_ok` reports which you got.
 - AI upgrades the summary/cover when enabled; the local advisory rewrite must stay grounded in the supplied
   résumé/JD facts or it is discarded. If AI is off or unavailable, the deterministic template is used.
 - PDF via Playwright (Markdown → ATS-friendly HTML → PDF); graceful HTML fallback if Chromium is absent.

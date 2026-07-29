@@ -42,13 +42,20 @@ cd jobscope
 ./setup.sh
 ```
 
-The setup script creates a virtualenv, installs dependencies, and downloads the
-Chromium runtime used for PDF rendering and assisted apply:
+The setup script creates a virtualenv and installs dependencies:
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate           # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.lock
+```
+
+PDF export and `apply --assist` need Chromium, which is a separate opt-in because
+the wheel plus browser is roughly 200 MB. Everything else works without it — the
+tailor writes Markdown and HTML, and assisted fill reports itself unavailable:
+
+```bash
+pip install playwright==1.40.0
 python -m playwright install chromium
 ```
 
