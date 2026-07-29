@@ -26,9 +26,9 @@ def run(cfg: dict, store) -> int:
 
     def _score(job):
         s, t, r, b = select_base(job, resumes, match_cfg)
-        reason = apply_filters(job, fcfg)
-        if reason:
-            return s, "Skip", f"⛔ {reason} | {r}", b, True
+        blocked = apply_filters(job, fcfg)
+        if blocked:
+            return s, "Skip", f"⛔ {blocked[1]} | {r}", b, True
         return s, t, r, b, False
 
     # Optional seniority opinion for ambiguous postings. It is displayed as advice

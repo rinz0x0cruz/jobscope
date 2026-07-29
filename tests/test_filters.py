@@ -40,9 +40,11 @@ def test_apply_filters_blocklist():
 
 def test_apply_filters_clearance_and_sponsorship():
     f = _mcfg(exclude_clearance=True)["filters"]
-    assert "clearance" in (match.apply_filters(_job(desc="Top Secret clearance required"), f) or "")
+    code, reason = match.apply_filters(_job(desc="Top Secret clearance required"), f)
+    assert code == "clearance" and "clearance" in reason
     f = _mcfg(needs_sponsorship=True)["filters"]
-    assert "sponsor" in (match.apply_filters(_job(desc="No visa sponsorship provided"), f) or "")
+    code, reason = match.apply_filters(_job(desc="No visa sponsorship provided"), f)
+    assert code == "sponsorship" and "sponsor" in reason
 
 
 def test_apply_filters_age():
@@ -54,7 +56,8 @@ def test_apply_filters_age():
 def test_apply_filters_require_title_keywords():
     # allow-list: a title matching NONE of the required keywords is forced to Skip
     f = _mcfg(require_title_keywords=["security", "appsec"])["filters"]
-    assert "off-target" in (match.apply_filters(_job(title="Software Engineer"), f) or "")
+    code, reason = match.apply_filters(_job(title="Software Engineer"), f)
+    assert code == "off_target_title" and "off-target" in reason
     assert match.apply_filters(_job(title="Application Security Engineer"), f) is None   # matches "security"
     assert match.apply_filters(_job(title="AppSec Engineer"), f) is None                 # matches "appsec"
     # empty list (default) => filter is inert / backwards compatible

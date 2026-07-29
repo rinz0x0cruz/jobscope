@@ -309,21 +309,10 @@ def scan_monitor(
             skip_reasons["invalid"] = skip_reasons.get("invalid", 0) + 1
             continue
         if item.tier == "Skip":
-            if item.rationale.startswith("needs ~"):
-                reason = "experience_cap"
+            # An empty skip code means no filter fired -- the score itself was too low.
+            reason = item.skip_code or "below_threshold"
+            if reason == "experience_cap":
                 experience_blocked += 1
-            elif item.rationale.startswith("clearance/citizenship"):
-                reason = "clearance"
-            elif item.rationale.startswith("no visa sponsorship"):
-                reason = "sponsorship"
-            elif item.rationale.startswith("blocked"):
-                reason = "blocked"
-            elif item.rationale.startswith("older than"):
-                reason = "stale"
-            elif " | top:" in item.rationale:
-                reason = "other_filter"
-            else:
-                reason = "below_threshold"
             skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
             if store.get_job(item.job.id) is not None:
                 persist_scored_job(store, item)

@@ -1,8 +1,9 @@
 """Hard filters and legitimacy detectors: block-lists, clearance/citizenship and
 no-sponsorship signals, the experience cap, posting age, and ghost/scam flags.
 
-``apply_filters`` returns a block reason (or None). Depends on :mod:`.experience`
-for the years cap; the signal lists live here and are re-exported by the package.
+``apply_filters`` returns ``(code, reason)`` or None -- the code for machines, the
+reason for people. Depends on :mod:`.experience` for the years cap; the signal
+lists live here and are re-exported by the package.
 """
 from __future__ import annotations
 
@@ -75,41 +76,46 @@ def _age_days(job: Job) -> Optional[int]:
     return None
 
 
-def apply_filters(job: Job, fcfg: dict) -> Optional[str]:
-    """Return a block reason if the job should be filtered to Skip, else None."""
+def apply_filters(job: Job, fcfg: dict) -> Optional[tuple[str, str]]:
+    """Return ``(code, reason)`` if the job should be filtered to Skip, else ``None``.
+
+    The code is the stable half: callers bucket and report on it directly instead of
+    re-parsing the human sentence, which is free to be reworded. Codes are also what
+    the monitor funnel counts, so they must stay in sync with the buckets there.
+    """
     company = (job.company or "").lower()
     title = (job.title or "").lower()
     blob = f"{title}\n{(job.description or '').lower()}"
 
     for c in fcfg.get("block_companies", []):
         if c and c.lower() in company:
-            return f"blocked company ({c})"
+            return "blocked", f"blocked company ({c})"
     for kw in fcfg.get("block_title_keywords", []):
         if kw and kw.lower() in title:
-            return f"blocked title keyword ({kw})"
+            return "blocked", f"blocked title keyword ({kw})"
     for kw in fcfg.get("block_keywords", []):
         if kw and kw.lower() in blob:
-            return f"blocked keyword ({kw})"
+            return "blocked", f"blocked keyword ({kw})"
     # Allow-list on the title: when set, a posting whose title contains none of
     # these keywords is off-target (e.g. a generic "Software Engineer" for a
     # security search) and is filtered to Skip.
     req_titles = [k.lower() for k in (fcfg.get("require_title_keywords") or []) if k]
     if req_titles and not any(k in title for k in req_titles):
-        return "off-target title (no required keyword)"
+        return "off_target_title", "off-target title (no required keyword)"
     if fcfg.get("exclude_clearance"):
         cf = clearance_flags(job)
         if cf:
-            return f"clearance/citizenship required ({cf[0]})"
+            return "clearance", f"clearance/citizenship required ({cf[0]})"
     if fcfg.get("needs_sponsorship") and no_sponsorship(job):
-        return "no visa sponsorship"
+        return "sponsorship", "no visa sponsorship"
     cap = fcfg.get("max_years_experience", 0) or 0
     if cap:
         req = required_experience_years(job)
         if req is not None and req > cap:
-            return f"needs ~{int(req)}y experience (cap {cap}y)"
+            return "experience_cap", f"needs ~{int(req)}y experience (cap {cap}y)"
     max_age = fcfg.get("max_age_days", 0) or 0
     if max_age:
         age = _age_days(job)
         if age is not None and age > max_age:
-            return f"older than {max_age}d ({age}d)"
+            return "stale", f"older than {max_age}d ({age}d)"
     return None

@@ -17,6 +17,8 @@ class ScoredJob:
     tier: str
     rationale: str
     resume_base: str
+    #: Why a filter forced ``tier == "Skip"``; empty when the score alone was too low.
+    skip_code: str = ""
 
 
 def active_resume(cfg: dict, store):
@@ -46,10 +48,12 @@ def score_jobs(cfg: dict, store, jobs: list[Job]) -> list[ScoredJob]:
     scored: list[ScoredJob] = []
     for job in jobs:
         score, tier, rationale, resume_base = select_base(job, resumes, match_cfg)
-        reason = apply_filters(job, filters)
-        if reason:
+        blocked = apply_filters(job, filters)
+        skip_code = ""
+        if blocked:
+            skip_code, reason = blocked
             tier, rationale = "Skip", f"{reason} | {rationale}"
-        scored.append(ScoredJob(job, float(score), tier, rationale, resume_base))
+        scored.append(ScoredJob(job, float(score), tier, rationale, resume_base, skip_code))
     scored.sort(key=lambda item: item.score, reverse=True)
     return scored
 

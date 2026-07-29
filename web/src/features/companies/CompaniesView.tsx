@@ -417,6 +417,7 @@ const SKIP_LABELS: Record<string, string> = {
   sponsorship: 'Sponsorship',
   blocked: 'Blocked',
   stale: 'Stale',
+  off_target_title: 'Off-target title',
   other_filter: 'Other filter',
   below_threshold: 'Below threshold',
   invalid: 'Invalid posting',

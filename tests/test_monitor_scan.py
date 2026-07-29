@@ -454,3 +454,29 @@ def test_scan_monitor_reports_decision_funnel(monkeypatch):
     }
     assert sum(result["funnel"]["skip_reasons"].values()) + result["matched"] == 5
     store.close()
+
+
+def test_funnel_buckets_on_the_filter_code_not_its_wording(monkeypatch):
+    """Rewording a filter message must never silently move jobs between buckets.
+
+    The funnel used to recover the reason by string-matching the rationale, so a
+    reworded message -- or the emoji-prefixed format the `match` command emits --
+    would quietly land everything in `below_threshold`.
+    """
+    cfg, store = _setup()
+    company = store.upsert_company_monitor(
+        "Acme", provider="greenhouse", slug="acme", added_from="user",
+    )
+    job = _job("Security Engineer", "https://x/one")
+    job.description = "Python AWS security engineering"
+    monkeypatch.setattr(ats, "fetch_company_result", lambda *_a, **_k: _fetch(jobs=[job]))
+    monkeypatch.setattr(
+        "jobscope.analyze.match.filters.apply_filters",
+        lambda *_a, **_k: ("clearance", "wording nobody parses any more"),
+    )
+
+    result = monitor.scan_monitor(cfg, store, company)
+
+    assert result["funnel"]["skip_reasons"] == {"clearance": 1}
+    assert result["matched"] == 0
+    store.close()

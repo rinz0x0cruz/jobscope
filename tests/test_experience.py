@@ -44,8 +44,8 @@ def test_markdown_escaped_plus_experience_is_detected_and_filtered():
         r"8\+ years of hands\-on experience in incident response and threat hunting.",
     )
     assert required_experience_years(job) == 8.0
-    assert apply_filters(job, {"max_years_experience": 2}).startswith(
-        "needs ~8y experience"
+    assert apply_filters(job, {"max_years_experience": 2}) == (
+        "experience_cap", "needs ~8y experience (cap 2y)",
     )
 
 
@@ -72,7 +72,8 @@ def test_takes_highest_bar_across_title_and_text():
 def test_filter_blocks_over_cap():
     f = {"max_years_experience": 2}
     assert apply_filters(_job("Senior Software Engineer"), f)  # ~4y > 2 -> blocked
-    assert "experience" in apply_filters(_job("Staff Engineer"), f)
+    code, reason = apply_filters(_job("Staff Engineer"), f)
+    assert code == "experience_cap" and "experience" in reason
     assert apply_filters(_job("Security Engineer", "5+ years of experience"), f)
 
 
