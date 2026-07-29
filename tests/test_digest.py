@@ -14,6 +14,7 @@ from jobscope.cli import main
 from jobscope.apply.track import _digest_body
 from jobscope.core.model import Job
 from jobscope.core.store import Store
+from jobscope.core.store.base import now_iso
 
 
 def _job(title, company, tier, score, *, url="", remote=True, loc=""):
@@ -101,7 +102,7 @@ def test_email_disabled_is_noop(monkeypatch):
         store.close()
 
 
-def test_failed_send_leaves_marker_for_retry(monkeypatch):
+def test_failed_send_retries_itself_with_the_same_message_id(monkeypatch):
     sent_ids = []
     monkeypatch.setattr(
         "jobscope.deliver.email.send",
@@ -114,21 +115,17 @@ def test_failed_send_leaves_marker_for_retry(monkeypatch):
         n = track.send_digest({"email": {"enabled": True}}, store)
         assert n == 1                                                    # attempted
         assert store.meta_get("digest:last") == "2000-01-01T00:00:00Z"   # NOT advanced -> retried
-        blocked = track.send_digest_result({"email": {"enabled": True}}, store)
-        assert blocked.attempted == 1 and blocked.sent is False
-        assert "explicit" in blocked.detail
-        assert len(sent_ids) == 1
-        result = track.send_digest_result(
-            {"email": {"enabled": True}}, store, retry_intent=True,
-        )
-        assert result.attempted == 1 and result.sent is False
-        assert sent_ids[0] == sent_ids[1]
+        # No human command required: the scheduled refresh retries on its own, or a
+        # single SMTP hiccup would disable the digest forever.
+        again = track.send_digest_result({"email": {"enabled": True}}, store)
+        assert again.attempted == 1 and again.sent is False
+        assert len(sent_ids) == 2 and sent_ids[0] == sent_ids[1]
         intent = json.loads(store.meta_get(track._DIGEST_INTENT_KEY))
         assert intent["state"] == "retryable"
         store.close()
 
 
-def test_unknown_digest_outcome_blocks_second_smtp_call(monkeypatch):
+def test_unknown_digest_outcome_is_retried_not_blocked(monkeypatch):
     from jobscope.deliver import email
 
     sent_ids = []
@@ -149,8 +146,9 @@ def test_unknown_digest_outcome_blocks_second_smtp_call(monkeypatch):
         second = track.send_digest_result({"email": {"enabled": True}}, store)
 
         assert first.sent is False and "unknown" in first.detail
-        assert second.sent is False and "unresolved" in second.detail
-        assert len(sent_ids) == 1
+        assert second.sent is False
+        # Retried with the identical Message-ID, so a duplicate collapses to one mail.
+        assert len(sent_ids) == 2 and sent_ids[0] == sent_ids[1]
         intent = json.loads(store.meta_get(track._DIGEST_INTENT_KEY))
         assert intent["state"] == "delivery_unknown"
         assert intent["message_id"] == sent_ids[0]
@@ -170,7 +168,7 @@ def test_cli_digest_reports_unknown_outcome_as_failure(monkeypatch, tmp_path, ca
     assert "digest not sent: delivery outcome unresolved" in capsys.readouterr().err
 
 
-def test_stale_digest_claim_becomes_unknown_before_any_retry(monkeypatch):
+def test_stale_digest_claim_is_resumed_with_the_same_message_id(monkeypatch):
     message_id = "jobscope-digest-crash@example.com"
     intent = {
         "version": 1,
@@ -189,6 +187,35 @@ def test_stale_digest_claim_becomes_unknown_before_any_retry(monkeypatch):
     smtp_calls = []
     monkeypatch.setattr(
         "jobscope.deliver.email.send",
+        lambda *_args, **kwargs: smtp_calls.append(kwargs["message_id"]) or True,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.meta_set("digest:last", intent["marker"])
+        store.meta_set(track._DIGEST_INTENT_KEY, track._encode_digest_intent(intent))
+
+        result = track.send_digest_result({"email": {"enabled": True}}, store)
+
+        # A crashed attempt resumes rather than parking until someone reconciles Sent.
+        assert result.sent is True
+        assert smtp_calls == [message_id]
+        assert store.meta_get("digest:last") == intent["next_marker"]
+        assert store.meta_get(track._DIGEST_INTENT_KEY) in (None, "")
+        store.close()
+
+
+def test_digest_send_in_flight_is_not_claimed_twice(monkeypatch):
+    """A *fresh* sending claim still blocks: that attempt may be mid-flight."""
+    intent = {
+        "version": 1, "state": "sending", "marker": "2000-01-01T00:00:00Z",
+        "next_marker": "2026-07-01T00:00:00Z", "job_ids": ["job:one"],
+        "message_id": "jobscope-digest-live@example.com", "subject": "Subject",
+        "text": "Body", "html": "", "created_at": now_iso(),
+        "attempted_at": now_iso(), "last_outcome": "",
+    }
+    smtp_calls = []
+    monkeypatch.setattr(
+        "jobscope.deliver.email.send",
         lambda *_args, **_kwargs: smtp_calls.append(True) or True,
     )
     with tempfile.TemporaryDirectory() as tmp:
@@ -198,12 +225,8 @@ def test_stale_digest_claim_becomes_unknown_before_any_retry(monkeypatch):
 
         result = track.send_digest_result({"email": {"enabled": True}}, store)
 
-        assert result.sent is False and "unresolved" in result.detail
+        assert result.sent is False and "in flight" in result.detail
         assert smtp_calls == []
-        stored = json.loads(store.meta_get(track._DIGEST_INTENT_KEY))
-        assert stored["state"] == "delivery_unknown"
-        assert stored["message_id"] == message_id
-        assert store.meta_get("digest:last") == intent["marker"]
         store.close()
 
 

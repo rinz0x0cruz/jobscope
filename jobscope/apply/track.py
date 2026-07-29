@@ -103,12 +103,12 @@ def run_new(store) -> int:
     return 0
 
 
-def send_digest_result(cfg: dict, store, *, retry_intent: bool = False) -> DigestResult:
+def send_digest_result(cfg: dict, store) -> DigestResult:
     """Email a digest of newly-matched Strong/Good roles since the last digest.
 
-    The selected content and Message-ID are persisted before SMTP. Known
-    pre-send/rejection failures may be explicitly retried with that same ID;
-    interrupted or ambiguous attempts remain blocked until Sent reconciliation.
+    The selected content and Message-ID are persisted before SMTP, so an
+    interrupted attempt resumes with the *same* deterministic Message-ID and any
+    duplicate submission collapses into one message in the mailbox.
     """
     if not (cfg.get("email", {}) or {}).get("enabled"):
         return DigestResult(0, True, "disabled")
@@ -125,25 +125,15 @@ def send_digest_result(cfg: dict, store, *, retry_intent: bool = False) -> Diges
                 "accepted digest finalized" if finalized
                 else "accepted digest state could not be finalized",
             )
-        elif intent["state"] == "sending":
-            if _digest_attempt_stale(intent):
-                unknown = {**intent, "state": "delivery_unknown"}
-                unknown_raw = _encode_digest_intent(unknown)
-                store.meta_compare_and_set(_DIGEST_INTENT_KEY, raw_intent, unknown_raw)
+        if intent["state"] == "sending" and not _digest_attempt_stale(intent):
             return DigestResult(
-                len(intent["job_ids"]), False,
-                "digest delivery outcome unresolved; reconcile Sent mail before retry",
+                len(intent["job_ids"]), False, "another digest attempt is in flight",
             )
-        elif intent["state"] == "delivery_unknown":
-            return DigestResult(
-                len(intent["job_ids"]), False,
-                "digest delivery outcome unresolved; reconcile Sent mail before retry",
-            )
-        elif intent["state"] == "retryable" and not retry_intent:
-            return DigestResult(
-                len(intent["job_ids"]), False,
-                "digest retry requires an explicit `new --email` command",
-            )
+        # Every other state -- rejected, interrupted, or ambiguous -- retries the same
+        # stored intent. Blocking these until someone ran `new --reconcile-sent` by hand
+        # meant a single transient SMTP failure disabled the digest permanently and
+        # silently, because the scheduled refresh runs it as a non-required stage. The
+        # duplicate that retrying risks is harmless: same Message-ID, one message.
     else:
         intent = None
 
@@ -312,7 +302,7 @@ def _finalize_digest_acceptance(store, raw_intent: str, intent: dict) -> bool:
 
 def send_digest(cfg: dict, store) -> int:
     """Compatibility wrapper returning the number of roles attempted."""
-    return send_digest_result(cfg, store, retry_intent=True).attempted
+    return send_digest_result(cfg, store).attempted
 
 
 def reconcile_digest_delivery(cfg: dict, store) -> dict:

@@ -450,7 +450,7 @@ def cmd_new(args, cfg):
             print(f"  digest Sent reconciliation: {result.get('code') or 'unknown'}")
             return 0 if result.get("ok") else 1
         if getattr(args, "email", False):
-            result = track.send_digest_result(cfg, store, retry_intent=True)
+            result = track.send_digest_result(cfg, store)
             if not result.sent:
                 print(f"  digest not sent: {result.detail}", file=sys.stderr)
                 return 1
