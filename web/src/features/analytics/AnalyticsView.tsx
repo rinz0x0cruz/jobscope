@@ -1,4 +1,4 @@
-import { Clock3, MailCheck, MessageSquareReply } from 'lucide-react'
+import { Clock3, GraduationCap, MailCheck, MessageSquareReply } from 'lucide-react'
 import { PipelineFlow } from '@/features/home'
 import {
   MIN_ANALYTICS_SAMPLE,
@@ -18,6 +18,10 @@ export interface AnalyticsViewProps {
   applications: Application[]
   engagements: EngagementThread[]
   outreachAvailable: boolean
+  /** Skills recurring in matched roles but absent from every résumé, ranked. */
+  gaps?: [string, number][]
+  /** How many Strong/Good/Stretch roles those gaps were derived from. */
+  considered?: number
 }
 
 function Evidence({ sufficient, sample }: { sufficient: boolean; sample: string }) {
@@ -63,7 +67,15 @@ function CountStat({ label, value, detail }: { label: string; value: number | st
   )
 }
 
-function ApplicationAnalyticsView({ applications }: { applications: Application[] }) {
+function ApplicationAnalyticsView({
+  applications,
+  gaps,
+  considered,
+}: {
+  applications: Application[]
+  gaps: [string, number][]
+  considered: number
+}) {
   const metrics = applicationAnalytics(applications)
   return (
     <div className="min-h-0 flex-1 overflow-auto">
@@ -106,7 +118,48 @@ function ApplicationAnalyticsView({ applications }: { applications: Application[
           <CountStat label="Rejected" value={metrics.rejected} detail={`${metrics.submitted} submitted`} />
         </dl>
       </section>
+      <SkillGaps gaps={gaps} considered={considered} />
     </div>
+  )
+}
+
+function SkillGaps({ gaps, considered }: { gaps: [string, number][]; considered: number }) {
+  if (considered === 0) return null
+  const top = gaps[0]?.[1] || 1
+  return (
+    <section className="border-t border-line bg-paper px-4 py-5 sm:px-7" aria-labelledby="skill-gap-heading">
+      <div className="flex items-center gap-2">
+        <GraduationCap size={16} className="text-brand" aria-hidden="true" />
+        <h3 id="skill-gap-heading" className="text-[14px] font-semibold text-ink">Skill gaps</h3>
+      </div>
+      <p className="mt-1 text-[12px] text-ink-3">
+        Skills named in your matched roles but missing from every résumé, ranked by how many
+        roles each would unlock. Across {considered} Strong/Good/Stretch role{considered === 1 ? '' : 's'}.
+      </p>
+      {gaps.length === 0 ? (
+        <p className="mt-4 text-[12px] text-ink-3">
+          No gaps — your résumés already cover the skills these roles ask for.
+        </p>
+      ) : (
+        <ul className="mt-4 grid gap-1.5">
+          {gaps.map(([skill, count]) => (
+            <li key={skill} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+              <span className="min-w-0">
+                <span className="block truncate text-[13px] text-ink">{skill}</span>
+                <span
+                  className="mt-1 block h-1 rounded-full bg-brand/70"
+                  style={{ width: `${Math.max(6, Math.round((count / top) * 100))}%` }}
+                  aria-hidden="true"
+                />
+              </span>
+              <span className="font-mono text-[12px] tabular-nums text-ink-2">
+                {count} role{count === 1 ? '' : 's'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 
@@ -191,6 +244,8 @@ export function AnalyticsView({
   applications,
   engagements,
   outreachAvailable,
+  gaps = [],
+  considered = 0,
 }: AnalyticsViewProps) {
   return (
     <section className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-col border-x border-line bg-panel">
@@ -210,7 +265,7 @@ export function AnalyticsView({
         accent="signal"
       />
       {mode === 'applications' ? (
-        <ApplicationAnalyticsView applications={applications} />
+        <ApplicationAnalyticsView applications={applications} gaps={gaps} considered={considered} />
       ) : (
         <OutreachAnalyticsView engagements={engagements} available={outreachAvailable} />
       )}

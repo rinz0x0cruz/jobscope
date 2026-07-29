@@ -62,4 +62,45 @@ describe('AnalyticsView', () => {
     expect(screen.getByText('Requires manual Sent-folder check')).toBeInTheDocument()
     expect(screen.queryByText('Not counted as sent')).not.toBeInTheDocument()
   })
+
+  it('ranks skill gaps against the roles they were derived from', () => {
+    render(<AnalyticsView
+      mode="applications"
+      onModeChange={vi.fn()}
+      applications={[application({ job_id: 'a', status: 'applied' })]}
+      engagements={[]}
+      outreachAvailable={false}
+      gaps={[['kubernetes', 9], ['terraform', 4], ['yara', 1]]}
+      considered={23}
+    />)
+    expect(screen.getByRole('heading', { name: 'Skill gaps' })).toBeInTheDocument()
+    expect(screen.getByText(/Across 23 Strong\/Good\/Stretch roles/)).toBeInTheDocument()
+    expect(screen.getByText('kubernetes')).toBeInTheDocument()
+    expect(screen.getByText('9 roles')).toBeInTheDocument()
+    expect(screen.getByText('1 role')).toBeInTheDocument()
+  })
+
+  it('says so plainly when no skill gaps remain', () => {
+    render(<AnalyticsView
+      mode="applications"
+      onModeChange={vi.fn()}
+      applications={[application({ job_id: 'a', status: 'applied' })]}
+      engagements={[]}
+      outreachAvailable={false}
+      gaps={[]}
+      considered={12}
+    />)
+    expect(screen.getByText(/already cover the skills these roles ask for/)).toBeInTheDocument()
+  })
+
+  it('hides the skill-gap panel entirely when nothing has been scored yet', () => {
+    render(<AnalyticsView
+      mode="applications"
+      onModeChange={vi.fn()}
+      applications={[application({ job_id: 'a', status: 'applied' })]}
+      engagements={[]}
+      outreachAvailable={false}
+    />)
+    expect(screen.queryByRole('heading', { name: 'Skill gaps' })).not.toBeInTheDocument()
+  })
 })

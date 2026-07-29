@@ -351,6 +351,8 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
               applications={searchedData.applications ?? []}
               engagements={visibleEngagements}
               outreachAvailable={outreachAvailable}
+              gaps={data.overview?.gaps ?? []}
+              considered={data.overview?.considered ?? 0}
             />
           </div>
         ) : (
