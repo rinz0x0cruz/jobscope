@@ -80,7 +80,10 @@ def _print_reminders(apps: list, followup_days: int) -> None:
             due.append((age, a))
     if due:
         print(f"\n  Follow-up due ({len(due)}, applied >= {followup_days}d ago, no reply):")
-        for age, a in sorted(due, reverse=True):
+        # Sort on the age and company only. Sorting the bare tuples fell through to
+        # comparing the application dicts whenever two shared an age, which raises
+        # TypeError -- and with dozens of applications a tie is a certainty.
+        for age, a in sorted(due, key=lambda item: (-item[0], (item[1].get("company") or ""))):
             print(f"    - {(a.get('company') or '?')} / {(a.get('title') or '?')[:40]} "
                   f"({age}d) [{a['job_id']}]")
 
