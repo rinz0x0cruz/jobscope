@@ -7,6 +7,7 @@ import {
   type RateMetric,
 } from '@/lib/analytics'
 import type { EngagementThread } from '@/lib/campaigns'
+import { MIN_REPLY_SAMPLE } from '@/lib/pipeline'
 import type { Application } from '@/lib/schema'
 import { Segmented, WorkspaceHeader } from '@/ui'
 
@@ -102,7 +103,12 @@ function ApplicationAnalyticsView({
           <Clock3 size={16} className="text-brand" aria-hidden="true" />
           <h3 id="application-timing-heading" className="text-[14px] font-semibold text-ink">Response timing</h3>
         </div>
-        <dl className="mt-4 grid border-y border-line sm:grid-cols-3 [&>*]:border-b [&>*]:border-line sm:[&>*]:border-b-0 sm:[&>*]:border-r sm:[&>*:last-child]:border-r-0">
+        <p className="mt-1 text-[12px] text-ink-3">
+          {metrics.replyWindow.personalized
+            ? `9 in 10 replies you received arrived within ${metrics.replyWindow.windowDays} days, across ${metrics.replyWindow.samples} replies. Past that, silence is the answer — so that is the deadline used below and on the board.`
+            : `Falling back to the generic ${metrics.replyWindow.windowDays}-day rule. After ${MIN_REPLY_SAMPLE} replies (you have ${metrics.replyWindow.samples}) this deadline is measured from your own history instead.`}
+        </p>
+        <dl className="mt-4 grid border-y border-line sm:grid-cols-2 min-[1200px]:grid-cols-4 [&>*]:border-b [&>*]:border-line sm:[&>*]:border-r min-[1200px]:[&>*]:border-b-0">
           <TimingStat
             label="Median first reply"
             days={metrics.timing.medianDaysToReply}
@@ -114,6 +120,11 @@ function ApplicationAnalyticsView({
             days={metrics.timing.medianDaysToInterview}
             sample={metrics.timing.interviewed}
             unit="application"
+          />
+          <CountStat
+            label="Past the reply window"
+            value={metrics.pastReplyWindow}
+            detail={`silent ${metrics.replyWindow.windowDays}+ days · treat as closed`}
           />
           <CountStat label="Rejected" value={metrics.rejected} detail={`${metrics.submitted} submitted`} />
         </dl>

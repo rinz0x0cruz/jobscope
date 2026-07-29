@@ -1,6 +1,6 @@
 import { pct, pipelineMetrics } from '@/components/applications/constants'
 import type { EngagementThread } from '@/lib/campaigns'
-import { staleness, timing } from '@/lib/pipeline'
+import { replyWindow, staleness, timing } from '@/lib/pipeline'
 import type { Application } from '@/lib/schema'
 
 const DAY = 86_400_000
@@ -24,6 +24,10 @@ export interface ApplicationAnalytics {
   interviewRate: RateMetric
   offerRate: RateMetric
   timing: ReturnType<typeof timing>
+  /** The silence deadline your own repliers set, and whether it is measured yet. */
+  replyWindow: ReturnType<typeof replyWindow>
+  /** Awaiting a reply for longer than any employer has ever taken to send one. */
+  pastReplyWindow: number
   sufficient: boolean
 }
 
@@ -67,6 +71,7 @@ function timestamp(value: string): number | null {
 export function applicationAnalytics(applications: Application[], now = Date.now()): ApplicationAnalytics {
   const metrics = pipelineMetrics(applications)
   const stale = staleness(applications, now)
+  const window = replyWindow(applications)
   const rejected = metrics.rejBefore + metrics.rejAfter
   return {
     submitted: metrics.submitted,
@@ -78,6 +83,8 @@ export function applicationAnalytics(applications: Application[], now = Date.now
     interviewRate: rate(metrics.reachedIv, metrics.submitted),
     offerRate: rate(metrics.offers, metrics.submitted),
     timing: timing(applications),
+    replyWindow: window,
+    pastReplyWindow: stale.filter(({ bucket }) => bucket === 'ghosted').length,
     sufficient: metrics.submitted >= MIN_ANALYTICS_SAMPLE,
   }
 }

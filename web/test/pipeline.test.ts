@@ -7,8 +7,10 @@ import {
   followupsDue,
   ghosted,
   timing,
+  replyWindow,
   FOLLOWUP_DAYS,
   GHOST_DAYS,
+  MIN_REPLY_SAMPLE,
 } from '@/lib/pipeline'
 
 const NOW = Date.parse('2026-07-07T00:00:00Z')
@@ -92,5 +94,39 @@ describe('pipeline: timing (#28)', () => {
     expect(t.medianDaysToReply).toBeNull()
     expect(t.medianDaysToInterview).toBeNull()
     expect(t.interviewed).toBe(0)
+  })
+})
+
+describe('pipeline: reply window (personal ghosting deadline)', () => {
+  /** An application that replied `gap` days after it was submitted. */
+  const replied = (gap: number) =>
+    app({ applied_at: daysAgo(60), timeline: [ev(daysAgo(60 - gap), 'rejection')] })
+
+  it('falls back to the generic rule until there are enough replies', () => {
+    const window = replyWindow([replied(2), replied(3)])
+    expect(window).toEqual({ samples: 2, windowDays: GHOST_DAYS, personalized: false })
+  })
+
+  it('uses the slowest tenth of your own replies once the sample is big enough', () => {
+    const gaps = [8, 9, 10, 10, 12]
+    expect(gaps.length).toBeGreaterThanOrEqual(MIN_REPLY_SAMPLE)
+    const window = replyWindow(gaps.map(replied))
+    expect(window).toEqual({ samples: 5, windowDays: 12, personalized: true })
+  })
+
+  it('never sets the deadline at or below the follow-up threshold', () => {
+    // Everyone replied within days; without a floor the "due" bucket would vanish.
+    const window = replyWindow([1, 1, 2, 2, 3].map(replied))
+    expect(window.windowDays).toBe(FOLLOWUP_DAYS + 1)
+  })
+
+  it('calls an application dead once it outlives every reply you ever got', () => {
+    const silent = app({ company: 'Silent', status: 'applied', applied_at: daysAgo(15) })
+    const history = [8, 9, 10, 10, 12].map(replied)
+
+    // The generic 21-day rule would still be calling this one merely "due".
+    expect(daysSince(silent.applied_at, NOW)).toBeLessThan(GHOST_DAYS)
+    expect(ghosted([silent, ...history], NOW).map((x) => x.app.company)).toEqual(['Silent'])
+    expect(followupsDue([silent, ...history], NOW)).toEqual([])
   })
 })

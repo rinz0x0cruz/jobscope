@@ -8,8 +8,12 @@ import type { Application } from '@/lib/schema'
 /** Days after applying, with no reply, that a follow-up is due. Mirrors the
  *  backend default `apply.followup_days`. */
 export const FOLLOWUP_DAYS = 7
-/** No reply for this long reads as likely ghosted. */
+/** No reply for this long reads as likely ghosted. Generic starting point, used
+ *  only until your own reply history is large enough to measure — see
+ *  {@link replyWindow}. */
 export const GHOST_DAYS = 21
+/** Replies needed before your own history is trusted over {@link GHOST_DAYS}. */
+export const MIN_REPLY_SAMPLE = 5
 
 const DAY = 86_400_000
 // A genuine reply (not the automated "application received" confirmation).
@@ -55,15 +59,16 @@ export interface StaleApp {
 }
 
 /** Every awaiting-reply application, bucketed by how long it has been silent
- *  (newest-silent first). */
+ *  (newest-silent first), against the deadline your own repliers set. */
 export function staleness(apps: Application[], now = Date.now()): StaleApp[] {
+  const { windowDays } = replyWindow(apps)
   const out: StaleApp[] = []
   for (const app of apps) {
     if (!isAwaitingReply(app)) continue
     const dApplied = daysSince(app.applied_at || lastActivityAt(app), now) ?? 0
     const dAct = daysSince(lastActivityAt(app), now) ?? dApplied
     const bucket: StaleBucket =
-      dApplied >= GHOST_DAYS ? 'ghosted' : dApplied >= FOLLOWUP_DAYS ? 'due' : 'fresh'
+      dApplied >= windowDays ? 'ghosted' : dApplied >= FOLLOWUP_DAYS ? 'due' : 'fresh'
     out.push({ app, daysSinceApplied: dApplied, daysSinceActivity: dAct, bucket })
   }
   return out.sort((a, b) => b.daysSinceApplied - a.daysSinceApplied)
@@ -96,8 +101,18 @@ function median(nums: number[]): number | null {
   return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2)
 }
 
+/** Nearest-rank percentile: the smallest observed value that `p` of the samples
+ *  fall at or below. No interpolation — these are whole days already. */
+function percentile(nums: number[], p: number): number | null {
+  if (nums.length === 0) return null
+  const s = [...nums].sort((a, b) => a - b)
+  return s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)]
+}
+
 export interface Timing {
   medianDaysToReply: number | null
+  /** 90% of the replies you received arrived within this many days. */
+  p90DaysToReply: number | null
   medianDaysToInterview: number | null
   replied: number
   interviewed: number
@@ -118,8 +133,38 @@ export function timing(apps: Application[]): Timing {
   }
   return {
     medianDaysToReply: median(replyGaps),
+    p90DaysToReply: percentile(replyGaps, 0.9),
     medianDaysToInterview: median(ivGaps),
     replied: replyGaps.length,
     interviewed: ivGaps.length,
+  }
+}
+
+export interface ReplyWindow {
+  /** Applications that ever drew a real reply — the sample this rests on. */
+  samples: number
+  /** Silence past this many days reads as a no. */
+  windowDays: number
+  /** True once measured from your own replies instead of the generic default. */
+  personalized: boolean
+}
+
+/** How long a reply actually takes *for you*.
+ *
+ *  A fixed 21-day ghost rule is a guess about employers in general. Once enough of
+ *  them have actually replied, their slowest 10% is the real deadline — so an
+ *  application stops sitting in "maybe" for weeks after the answer already arrived
+ *  in the form of silence. Falls back to {@link GHOST_DAYS} until the sample is
+ *  big enough to mean anything. */
+export function replyWindow(apps: Application[]): ReplyWindow {
+  const { replied, p90DaysToReply } = timing(apps)
+  if (replied < MIN_REPLY_SAMPLE || p90DaysToReply === null) {
+    return { samples: replied, windowDays: GHOST_DAYS, personalized: false }
+  }
+  // Never at or below the follow-up threshold, or the "due" bucket has no room.
+  return {
+    samples: replied,
+    windowDays: Math.max(FOLLOWUP_DAYS + 1, p90DaysToReply),
+    personalized: true,
   }
 }
