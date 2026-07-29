@@ -245,6 +245,13 @@ def cmd_campaign(args, cfg):
                 )
                 print(f"  {target['company']}: {target['state']} — "
                       f"{target['selected_email'] or 'no verified recruiter selected'}")
+                for lead in target.get("leads") or []:
+                    label = lead["name"] or lead["source"]
+                    detail = f" ({lead['title']})" if lead.get("title") else ""
+                    print(f"    - {label}{detail}\n      {lead['url']}")
+                if target.get("leads"):
+                    print("    pick a person, then: campaign draft "
+                          f"--target-id {args.target_id} --to <their@email>")
                 return 0
             if action == "draft":
                 target = campaigns.update_draft(

@@ -605,6 +605,64 @@ def test_role_inbox_is_not_auto_selected(seeded, monkeypatch):
 
     assert result["state"] == "needs_contact" and result["selected_email"] == ""
     assert result["contacts"][0]["source"] == "role_inbox"
+    # fetch=False means no network, so no sourcing hints are gathered
+    assert result["leads"] == []
+
+
+def test_needs_contact_returns_sourcing_links_instead_of_dead_ending(seeded, monkeypatch):
+    """A target with only guessed role inboxes must still hand back where to look."""
+    cfg, store = seeded
+    target = campaigns.create_campaign(
+        cfg, store, "India security", 1, candidates=["Acme Security"], now=NOW,
+    )["targets"][0]
+    monkeypatch.setattr(
+        "jobscope.apply.outreach.refresh_company_contacts",
+        lambda *_args, **_kwargs: {
+            "status": "updated", "domain": "acme.example",
+            "contacts": [{"email": "careers@acme.example", "source": "role_inbox",
+                          "confidence": "low", "note": "fallback"}],
+        },
+    )
+    # keep the GitHub lookup offline; the search links need no network at all
+    monkeypatch.setattr(
+        "jobscope.enrich.contacts._github_people", lambda *_args, **_kwargs: [],
+    )
+
+    result = campaigns.discover_target(cfg, store, target["id"], fetch=True)
+
+    assert result["state"] == "needs_contact" and result["selected_email"] == ""
+    leads = result["leads"]
+    assert leads, "a needs_contact target must offer somewhere to look"
+    assert all(lead["url"] for lead in leads)
+    # sourcing stays human: links only, never a harvested address
+    assert not any("@" in lead["url"] for lead in leads)
+    assert any("linkedin.com" in lead["url"] for lead in leads)
+
+
+def test_sourcing_links_never_break_discovery(seeded, monkeypatch):
+    """Lead gathering is best-effort and must never fail the discovery call."""
+    cfg, store = seeded
+    target = campaigns.create_campaign(
+        cfg, store, "India security", 1, candidates=["Acme Security"], now=NOW,
+    )["targets"][0]
+    monkeypatch.setattr(
+        "jobscope.apply.outreach.refresh_company_contacts",
+        lambda *_args, **_kwargs: {
+            "status": "updated", "domain": "acme.example",
+            "contacts": [{"email": "careers@acme.example", "source": "role_inbox",
+                          "confidence": "low", "note": "fallback"}],
+        },
+    )
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("referral lookup exploded")
+
+    monkeypatch.setattr("jobscope.enrich.contacts.find", _boom)
+
+    result = campaigns.discover_target(cfg, store, target["id"], fetch=True)
+
+    assert result["state"] == "needs_contact"
+    assert result["leads"] == []
 
 
 def test_successful_contact_retry_clears_prior_discovery_error(seeded, monkeypatch):

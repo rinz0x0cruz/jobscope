@@ -790,6 +790,30 @@ def _resume_for_campaign(store, campaign: dict):
     return store.get_named_resume(name) if name else store.get_resume()
 
 
+def _sourcing_leads(store, company: str) -> list[dict]:
+    """People-search links and public GitHub profiles for a company with no verified
+    recruiter yet.
+
+    Sourcing stays human on purpose: these are *links to look at*, never harvested
+    addresses, so the campaign never sends to a guessed role inbox.
+    """
+    from jobscope.enrich import contacts as referral_leads
+    try:
+        leads = referral_leads.find(company, _representative_job(store, company))
+    except Exception:  # noqa: BLE001 - sourcing hints are best-effort, never fatal
+        return []
+    return [
+        {
+            "name": lead.name,
+            "title": lead.title,
+            "source": lead.source,
+            "url": lead.profile_url or lead.search_url,
+        }
+        for lead in leads
+        if (lead.profile_url or lead.search_url)
+    ]
+
+
 def discover_target(cfg: dict, store, target_id: str, *, force: bool = False,
                     fetch: bool = True) -> dict:
     target = store.get_outreach_campaign_target(target_id)
@@ -813,9 +837,13 @@ def discover_target(cfg: dict, store, target_id: str, *, force: bool = False,
         None,
     )
     if selectable is None:
-        return store.set_outreach_campaign_contacts(
+        pending = store.set_outreach_campaign_contacts(
             target_id, domain=domain, contacts=contacts,
         )
+        # Dead-ending at needs_contact leaves the operator with no next step, so
+        # hand back where to look. Requires the network, hence the fetch gate.
+        pending["leads"] = _sourcing_leads(store, target["company"]) if fetch else []
+        return pending
     store.set_outreach_campaign_contacts(
         target_id, domain=domain, contacts=contacts, state="draft",
     )
