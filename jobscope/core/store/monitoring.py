@@ -292,22 +292,34 @@ class MonitoringMixin:
         }
 
     def reconcile_monitor_jobs(self, monitor_id: str, live_job_ids: Iterable[str]) -> int:
+        """Close roles this monitor tracks that are no longer on the live board.
+
+        Only roles the monitor actually stored are linked -- ``scan_monitor`` links
+        one as it persists it -- so a board posting that never matched the profile is
+        not tracked and cannot be reported as taken down. Linking the whole board
+        here instead grew the link table by the board size on every scan (12,581 of
+        13,009 links pointed at jobs that were never stored) and would have counted
+        those strangers as closures.
+
+        Returns how many were *newly* closed rather than how many are absent, so a
+        role already closed by an earlier scan is not reported again.
+        """
         live = {job_id for job_id in live_job_ids if job_id}
         if not live:
             return 0
+        gone = [
+            job_id for job_id in self.monitor_job_ids(monitor_id) if job_id not in live
+        ]
+        if not gone:
+            return 0
         timestamp = now_iso()
         with self.conn:
-            for job_id in live:
-                self._link_monitor_job(monitor_id, job_id, timestamp)
-            linked = self.monitor_job_ids(monitor_id)
-            gone = [job_id for job_id in linked if job_id not in live]
-            if gone:
-                self.conn.executemany(
-                    "UPDATE jobs SET status = 'closed', closed_at = ? "
-                    "WHERE id = ? AND COALESCE(status, 'open') = 'open'",
-                    [(timestamp, job_id) for job_id in gone],
-                )
-            return len(gone)
+            cursor = self.conn.executemany(
+                "UPDATE jobs SET status = 'closed', closed_at = ? "
+                "WHERE id = ? AND COALESCE(status, 'open') = 'open'",
+                [(timestamp, job_id) for job_id in gone],
+            )
+            return cursor.rowcount
 
     def _set_job_review(
         self, job_id: str, state: str, origins: Iterable[str] = (),

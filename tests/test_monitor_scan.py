@@ -198,6 +198,60 @@ def test_complete_board_closes_a_missing_linked_job(monkeypatch):
     store.close()
 
 
+def test_unmatched_board_postings_are_never_tracked_or_reported_closed(monkeypatch):
+    """A board posting that never matched the profile is not this monitor's business.
+
+    Linking the whole board made the link table grow by the board size on every scan
+    and would report strangers leaving the board as roles taken down.
+    """
+    cfg, store = _setup()
+    company = store.upsert_company_monitor(
+        "Acme", provider="greenhouse", slug="acme", added_from="user",
+    )
+    match = _job("Security Engineer", "https://x/match")
+    match.description = "Python AWS security engineering"
+    stranger = Job(
+        source="ats", title="Sales Manager", company="Acme",
+        location="Remote", is_remote=True, url="https://x/sales",
+    ).ensure_id()
+    monkeypatch.setattr(
+        ats, "fetch_company_result", lambda *_a, **_k: _fetch(jobs=[match, stranger]),
+    )
+
+    first = monitor.scan_monitor(cfg, store, company)
+    assert first["matched"] == 1
+    assert store.monitor_job_ids(company["id"]) == [match.id]
+
+    # The stranger drops off the board: not tracked, so not a closure.
+    monkeypatch.setattr(ats, "fetch_company_result", lambda *_a, **_k: _fetch(jobs=[match]))
+    second = monitor.scan_monitor(cfg, store, company)
+
+    assert second["closed"] == 0
+    store.close()
+
+
+def test_an_already_closed_role_is_not_counted_again(monkeypatch):
+    cfg, store = _setup()
+    company = store.upsert_company_monitor(
+        "Acme", provider="greenhouse", slug="acme", added_from="user",
+    )
+    current = _job("Security Engineer", "https://x/current")
+    missing = _job("Security Engineer", "https://x/missing")
+    for job in (current, missing):
+        store.upsert_job(job)
+        store.link_monitor_job(company["id"], job.id)
+    monkeypatch.setattr(
+        ats, "fetch_company_result", lambda *_a, **_k: _fetch(jobs=[current]),
+    )
+
+    first = monitor.scan_monitor(cfg, store, company)
+    second = monitor.scan_monitor(cfg, store, company)
+
+    assert first["closed"] == 1 and second["closed"] == 0
+    assert store.get_job(missing.id).status == "closed"
+    store.close()
+
+
 def test_scheduled_scan_archives_application_only_monitor(monkeypatch):
     cfg, store = _setup()
     store.upsert_company_monitor("Unknown Labs", added_from="application")
