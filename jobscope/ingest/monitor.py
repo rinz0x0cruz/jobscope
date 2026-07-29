@@ -33,26 +33,20 @@ def _seed_entry(store, entry: str, *, origin: str) -> dict[str, Any]:
     )
 
 
-def seed_monitors(cfg: dict, store, *, force: bool = False) -> dict[str, Any]:
+def seed_monitors(cfg: dict, store) -> dict[str, Any]:
     """Import configured monitors and retire legacy application-only monitors.
 
-    The first migration also preserves the pre-monitoring dashboard shortlist by
-    marking its visible un-applied jobs as ``saved`` legacy reviews. ``force``
-    reimports monitor origins but never repeats that legacy-review conversion.
+    Converges on ``search.companies`` every time it runs, rather than recording
+    "done" on the first call. The marker guards one thing only: the first-run
+    migration that preserves the pre-monitoring dashboard shortlist as ``saved``
+    legacy reviews. It used to short-circuit the config import as well, so a seed
+    that ran while the watchlist was empty set the marker and every later run
+    reported "already seeded (0 watching)" -- succeeding at doing nothing, with
+    `--force` the only escape and nothing saying so.
     """
     already_seeded = bool(store.meta_get(SEED_MARKER))
     # Run on every seed so obsolete clients cannot reactivate application history.
     archived_known = store.archive_application_only_monitors()
-    if already_seeded and not force:
-        return {
-            "seeded": False,
-            "already_seeded": True,
-            "configured": 0,
-            "applications": 0,
-            "archived_known": archived_known,
-            "legacy_saved": 0,
-            "total": len(store.list_company_monitors()),
-        }
 
     configured_entries = [
         str(entry).strip() for entry in (cfg.get("search", {}) or {}).get("companies", [])
@@ -83,8 +77,7 @@ def seed_monitors(cfg: dict, store, *, force: bool = False) -> dict[str, Any]:
         )
 
     return {
-        "seeded": True,
-        "already_seeded": already_seeded,
+        "first_run": not already_seeded,
         "configured": len(configured_ids),
         "applications": len(application_companies),
         "archived_known": archived_known,
@@ -93,13 +86,8 @@ def seed_monitors(cfg: dict, store, *, force: bool = False) -> dict[str, Any]:
     }
 
 
-def run_seed(cfg: dict, store, *, force: bool = False) -> int:
-    result = seed_monitors(cfg, store, force=force)
-    if result["already_seeded"] and not result["seeded"]:
-        archived = result["archived_known"]
-        detail = f"; {archived} application-only archived" if archived else ""
-        print(f"  company monitors already seeded ({result['total']} watching{detail})")
-        return 0
+def run_seed(cfg: dict, store) -> int:
+    result = seed_monitors(cfg, store)
     print(
         "  seeded company monitors: "
         f"{result['configured']} configured, {result['applications']} known from applications, "
@@ -167,7 +155,7 @@ def run_suggest(cfg: dict, store, *, limit: int = 40) -> int:
           "search.companies in config.yaml:\n")
     for item in suggestions:
         print(f'    - "{item["entry"]}"')
-    print("\n  ...then run: jobscope companies seed --force")
+    print("\n  ...then run: jobscope companies seed")
     return 0
 
 

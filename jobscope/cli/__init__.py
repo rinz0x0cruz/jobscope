@@ -85,7 +85,7 @@ def cmd_companies(args, cfg):
     from ..ingest import monitor
     with _store(args, cfg) as store:
         if args.action == "seed":
-            return monitor.run_seed(cfg, store, force=getattr(args, "force", False))
+            return monitor.run_seed(cfg, store)
         if args.action == "scan":
             return monitor.run_scan(cfg, store, company=getattr(args, "company", None))
         if args.action == "suggest":
@@ -705,8 +705,6 @@ def build_parser() -> argparse.ArgumentParser:
                          "application history, or apply a validated action file")
     sp.add_argument("company", nargs="?", default=None,
                     help="Company name or monitor id for `scan` (default: all active)")
-    sp.add_argument("--force", action="store_true",
-                    help="Reimport config/application companies after the initial seed")
     sp.add_argument("--all", action="store_true", help="Include soft-removed monitors in list")
     sp.add_argument("--limit", type=int, default=40,
                     help="Max companies to probe for `suggest` (default 40)")

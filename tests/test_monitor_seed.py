@@ -30,8 +30,7 @@ def test_seed_imports_config_and_active_applications_without_network():
     result = seed_monitors(cfg, store)
 
     assert result == {
-        "seeded": True,
-        "already_seeded": False,
+        "first_run": True,
         "configured": 2,
         "applications": 1,
         "archived_known": 0,
@@ -65,15 +64,41 @@ def test_seed_archives_legacy_application_only_monitor_without_losing_links():
     result = seed_monitors(cfg, store)
 
     assert result["archived_known"] == 1
-    assert result["already_seeded"] is True
-    assert store.list_company_monitors() == []
+    assert result["first_run"] is False
+    # The application-derived monitor is retired; configured ones are still imported.
+    watching = [monitor["company"] for monitor in store.list_company_monitors()]
+    assert "Unknown Labs" not in watching and len(watching) == 2
     archived = store.get_company_monitor("Unknown Labs")
     assert archived["status"] == "removed"
     assert store.monitor_job_ids(archived["id"]) == [job.id]
     store.close()
 
 
-def test_seed_is_idempotent_and_force_does_not_resave_new_jobs():
+def test_seed_imports_companies_added_after_the_first_run():
+    """The defect that silently stopped ingestion for 11 days.
+
+    A first seed with an empty watchlist set the marker, after which every later
+    seed short-circuited with "already seeded (0 watching)" -- so companies added
+    to config afterwards were never imported, `scan` had nothing to scan, and the
+    scheduled refresh reported success the whole time.
+    """
+    cfg, store = _setup()
+    cfg["search"]["companies"] = []
+
+    first = seed_monitors(cfg, store)
+    assert first["total"] == 0 and store.list_company_monitors() == []
+
+    cfg["search"]["companies"] = ["databricks", "Acme|lever|acme"]
+    second = seed_monitors(cfg, store)
+
+    assert second["configured"] == 2
+    assert len(store.list_company_monitors()) == 2
+    # The one-time legacy conversion still does not repeat.
+    assert second["first_run"] is False and second["legacy_saved"] == 0
+    store.close()
+
+
+def test_seed_is_idempotent_and_never_resaves_new_jobs():
     cfg, store = _setup()
     first = seed_monitors(cfg, store)
     later = Job(source="indeed", title="Later", company="Later Co", url="https://x/later").ensure_id()
@@ -81,11 +106,10 @@ def test_seed_is_idempotent_and_force_does_not_resave_new_jobs():
     store.update_score(later.id, 80, "Strong", "fit")
 
     second = seed_monitors(cfg, store)
-    forced = seed_monitors(cfg, store, force=True)
 
     assert first["total"] == 2
-    assert second["already_seeded"] is True and second["seeded"] is False
-    assert forced["seeded"] is True and forced["legacy_saved"] == 0
+    assert second["first_run"] is False and second["legacy_saved"] == 0
+    assert second["total"] == 2                      # converges, does not duplicate
     assert store.get_job_review(later.id) is None
     assert len(store.list_company_monitors()) == 2
     store.close()
