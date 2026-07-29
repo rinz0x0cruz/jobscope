@@ -256,3 +256,36 @@ export async function profileUpload(
   })
   return (await r.json()) as ProfileUploadResult
 }
+
+/** One deterministic finding from the ATS parse check. */
+export interface AtsWarning {
+  level: 'error' | 'warn' | 'info'
+  code: string
+  message: string
+  hint: string
+}
+
+export interface AtsReport {
+  name: string
+  email: string
+  phone: string
+  location: string
+  seniority: string
+  years: number
+  skills: string[]
+  titles: string[]
+  warnings: AtsWarning[]
+  score: number
+}
+
+export interface AtsCheckResult {
+  ok: boolean
+  error?: string
+  report?: AtsReport
+}
+
+/** What an applicant-tracking system extracts from the active résumé. Local serve only. */
+export async function atsCheck(token: string): Promise<AtsCheckResult> {
+  const r = await controlPlaneFetch('api/atscheck', token, {})
+  return (await r.json()) as AtsCheckResult
+}

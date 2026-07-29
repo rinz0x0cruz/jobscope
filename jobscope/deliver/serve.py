@@ -962,6 +962,24 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
             except Exception as exc:  # noqa: BLE001 - surface bounded local API errors
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
+        def _atscheck_get(self) -> None:
+            """Deterministic ATS parse check for the active résumé (no AI, no network)."""
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            try:
+                from jobscope.analyze.atscheck import ats_report
+                from jobscope.core.store import Store
+                with Store(cfg["output"]["db_path"]) as store:
+                    resume = store.get_resume()
+                    if resume is None:
+                        self._send_json(200, {"ok": False, "error": "no résumé imported"})
+                        return
+                    report = ats_report(resume)
+                self._send_json(200, {"ok": True, "report": report})
+            except Exception as exc:  # noqa: BLE001 - surface bounded local API errors
+                self._send_json(500, {"ok": False, "error": str(exc)[:200]})
+
         def _profile_update(self) -> None:
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
@@ -1230,6 +1248,9 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                 return
             if route == "/api/dashboard":
                 self._dashboard_get()
+                return
+            if route == "/api/atscheck":
+                self._atscheck_get()
                 return
             if route == "/api/engagements":
                 self._engagements_get()

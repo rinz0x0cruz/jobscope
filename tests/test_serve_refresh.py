@@ -1274,6 +1274,70 @@ def test_dashboard_api_returns_live_data_and_requires_token():
             thread.join(timeout=3)
 
 
+def test_atscheck_api_reports_parse_findings_and_requires_token():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with Store(cfg["output"]["db_path"]) as store:
+            store.save_resume(Resume(
+                full_name="Ada Lovelace",
+                email="ada@example.test",
+                location="Pune, India",
+                skills=["python", "siem", "threat hunting"],
+                titles=["Security Engineer"],
+                years_experience=6.0,
+                seniority="senior",
+                raw_text=(
+                    "# Ada Lovelace\nada@example.test\n\n"
+                    "## Skills\npython, siem, threat hunting\n\n"
+                    "## Experience\nSecurity Engineer - Example (Jan 2019 - Present)\n"
+                ),
+            ), name="default")
+
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        try:
+            code, _ = _req("GET", base + "/api/atscheck")
+            assert code == 403
+
+            code, result = _req(
+                "GET", base + "/api/atscheck",
+                headers={"X-Refresh-Token": token, "Origin": base},
+            )
+            assert code == 200 and result["ok"] is True
+            report = result["report"]
+            assert report["email"] == "ada@example.test"
+            assert 0 <= report["score"] <= 100
+            # the fixture has no phone, so the deterministic check must say so
+            assert any(w["code"] == "no_phone" for w in report["warnings"])
+            assert all(
+                {"level", "code", "message", "hint"} <= set(w)
+                for w in report["warnings"]
+            )
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
+def test_atscheck_api_is_explicit_when_no_resume_exists():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        Store(cfg["output"]["db_path"]).close()
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        try:
+            code, result = _req(
+                "GET", base + "/api/atscheck",
+                headers={"X-Refresh-Token": token, "Origin": base},
+            )
+            assert code == 200 and result["ok"] is False
+            assert "résumé" in result["error"]
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
 def test_refresh_disabled_no_widget_and_403(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)

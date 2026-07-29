@@ -4,6 +4,14 @@ import { Settings } from '@/features/settings'
 import type { SettingsProps } from '@/features/settings'
 import { ScoreFormatProvider } from '@/hooks/ScoreFormatProvider'
 import type { Profile } from '@/lib/schema'
+import { atsCheck } from '@/lib/outreach'
+
+// Only the ATS call is stubbed; every other client function stays real so the
+// existing profile/sync tests are unaffected.
+vi.mock('@/lib/outreach', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/outreach')>()),
+  atsCheck: vi.fn(),
+}))
 
 const profile: Profile = {
   resume: 'security-consulting',
@@ -268,5 +276,35 @@ describe('Settings lens', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
     expect(localStorage.getItem('jobscope-gh-token')).toBeNull()
     vi.unstubAllGlobals()
+  })
+
+  it('hides the ATS parse check without a local serve session', () => {
+    renderSettings({ serveToken: null })
+    expect(screen.queryByRole('button', { name: /Check résumé/ })).not.toBeInTheDocument()
+  })
+
+  it('reports the ATS score and the formatting faults to fix', async () => {
+    vi.mocked(atsCheck).mockResolvedValue({
+      ok: true,
+      report: {
+        name: 'Ada Lovelace', email: 'ada@example.test', phone: '', location: 'Pune, India',
+        seniority: 'senior', years: 8, skills: ['python', 'siem'], titles: ['Security Engineer'],
+        score: 78,
+        warnings: [
+          { level: 'warn', code: 'no_phone', message: 'no phone number parsed', hint: 'add a plain-text phone line' },
+          { level: 'error', code: 'image_pdf', message: 'resume looks image-based', hint: 'export a text-based PDF' },
+        ],
+      },
+    })
+    renderSettings({ serveToken: 'local-token' })
+    fireEvent.click(screen.getByRole('button', { name: /Check résumé/ }))
+
+    expect(await screen.findByText('78')).toBeInTheDocument()
+    expect(screen.getByText('2 skills and 1 title parsed · ~8y')).toBeInTheDocument()
+    expect(screen.getByText('no phone number parsed')).toBeInTheDocument()
+    expect(screen.getByText('export a text-based PDF')).toBeInTheDocument()
+    // an unparsed field is named rather than silently blank
+    expect(screen.getByText('not parsed')).toBeInTheDocument()
+    expect(vi.mocked(atsCheck)).toHaveBeenCalledWith('local-token')
   })
 })

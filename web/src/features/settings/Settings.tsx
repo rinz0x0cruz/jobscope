@@ -3,12 +3,12 @@
 
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { ChevronDown, Download, FileText, GitBranch, Lock, Palette, RefreshCw, Shield, Upload } from 'lucide-react'
+import { ChevronDown, Download, FileText, GitBranch, Lock, Palette, RefreshCw, Shield, ShieldCheck, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge, Button, Chip, Segmented, WorkspaceHeader } from '@/ui'
 import { useScoreFormat } from '@/hooks/useScoreFormat'
 import { connectToken, disconnectToken, hasGitHubToken, pullLatestData, scanNewMail } from '@/lib/refresh'
-import { profileReset, profileUpdate, profileUpload, profileUse } from '@/lib/outreach'
+import { atsCheck, profileReset, profileUpdate, profileUpload, profileUse, type AtsReport } from '@/lib/outreach'
 import { fmtGenerated } from '@/lib/format'
 import type { Profile } from '@/lib/schema'
 
@@ -57,6 +57,93 @@ export interface SettingsProps {
 function currentTheme(): 'light' | 'dark' {
   if (typeof document === 'undefined') return 'light'
   return document.documentElement.classList.contains('light') ? 'light' : 'dark'
+}
+
+const ATS_LEVEL_COLOR: Record<string, string> = {
+  error: 'var(--danger)',
+  warn: 'var(--warning)',
+}
+
+/** What an ATS extracts from the résumé, plus the formatting faults that cause
+ *  silent auto-rejects. Deterministic — no AI, no network beyond local serve. */
+function AtsParseCheck({ token }: { token: string }) {
+  const [report, setReport] = useState<AtsReport | null>(null)
+  const [checking, setChecking] = useState(false)
+
+  const run = () => {
+    if (checking) return
+    setChecking(true)
+    atsCheck(token)
+      .then((result) => {
+        if (result.ok && result.report) setReport(result.report)
+        else toast.error(result.error || 'Could not run the ATS check')
+      })
+      .catch((error: unknown) => toast.error(
+        error instanceof Error ? error.message : 'Could not run the ATS check',
+      ))
+      .finally(() => setChecking(false))
+  }
+
+  return (
+    <div className="mt-5 border-t border-line pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold text-ink">ATS parse check</p>
+          <p className="mt-0.5 text-[11px] text-ink-3">
+            What an applicant-tracking system reads from this résumé, and the formatting
+            faults that cause silent rejections.
+          </p>
+        </div>
+        <Button variant="secondary" disabled={checking} onClick={run}>
+          {checking
+            ? <RefreshCw size={15} className="animate-spin" aria-hidden="true" />
+            : <ShieldCheck size={15} aria-hidden="true" />}
+          Check résumé
+        </Button>
+      </div>
+
+      {report && (
+        <div className="mt-4" aria-live="polite">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <strong className="font-mono text-2xl font-semibold text-ink">{report.score}<span className="text-[13px] text-ink-3">/100</span></strong>
+            <span className="text-[12px] text-ink-2">
+              {report.skills.length} skill{report.skills.length === 1 ? '' : 's'} and{' '}
+              {report.titles.length} title{report.titles.length === 1 ? '' : 's'} parsed
+              {report.years ? ` · ~${report.years}y` : ''}
+            </span>
+          </div>
+          <dl className="mt-3 grid gap-x-6 gap-y-1 text-[12px] sm:grid-cols-2">
+            {([['name', report.name], ['email', report.email], ['phone', report.phone],
+               ['location', report.location]] as const).map(([label, value]) => (
+              <div key={label} className="flex min-w-0 gap-2">
+                <dt className="w-16 shrink-0 text-ink-3">{label}</dt>
+                <dd className={`min-w-0 truncate ${value ? 'text-ink' : 'text-ink-3'}`}>
+                  {value || 'not parsed'}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          {report.warnings.length === 0 ? (
+            <p className="mt-3 text-[12px] text-ink-3">No formatting issues detected.</p>
+          ) : (
+            <ul className="mt-3 grid gap-2">
+              {report.warnings.map((w) => (
+                <li key={w.code} className="border-l-2 border-line pl-3">
+                  <p
+                    className="text-[12px] font-medium text-ink-3"
+                    style={ATS_LEVEL_COLOR[w.level] ? { color: ATS_LEVEL_COLOR[w.level] } : undefined}
+                  >
+                    {w.message}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-ink-3">{w.hint}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function applyTheme(theme: 'light' | 'dark') {
@@ -210,6 +297,7 @@ export function Settings({ profile, generated, total, serveToken, onLock, onRefr
             {profileCapReached && !replacingProfile && (
               <p className="mt-2 text-[11px] text-ink-3">Reuse an existing profile name to replace its résumé.</p>
             )}
+            {serveToken && <AtsParseCheck token={serveToken} />}
           </SettingsSection>
 
           <SettingsSection
