@@ -26,6 +26,13 @@ def _store(tmp):
     return Store(os.path.join(tmp, "d.db"))
 
 
+def _pin_first_seen(store, job_id, when):
+    """Pin a discovery timestamp. `now_iso` is second-resolution, so a test that
+    upserts several jobs in one second cannot otherwise order them."""
+    store.conn.execute("UPDATE jobs SET first_seen = ? WHERE id = ?", (when, job_id))
+    store.conn.commit()
+
+
 def test_first_run_baselines_marker_without_sending(monkeypatch):
     sent = []
     monkeypatch.setattr("jobscope.deliver.email.send", lambda *a, **k: sent.append(k) or True)
@@ -227,6 +234,101 @@ def test_digest_send_in_flight_is_not_claimed_twice(monkeypatch):
 
         assert result.sent is False and "in flight" in result.detail
         assert smtp_calls == []
+        store.close()
+
+
+def test_retry_sends_the_stored_batch_not_a_recomputed_one(monkeypatch):
+    """A retry must reuse the stored batch. Recomputing it would change the body
+    behind an unchanged Message-ID, and would advance the marker past roles that
+    turned up while the send was failing."""
+    attempts = []
+    outcomes = [False, True, True]
+
+    def send(*args, **kwargs):
+        attempts.append({"subject": args[1], "text": args[2], "id": kwargs["message_id"]})
+        return outcomes.pop(0)
+
+    monkeypatch.setattr("jobscope.deliver.email.send", send)
+    fake_now = {"t": "2026-07-01T00:00:00Z"}
+    monkeypatch.setattr(track, "now_iso", lambda: fake_now["t"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.meta_set("digest:last", "2000-01-01T00:00:00Z")
+        first = _job("Security Engineer", "Acme", "Strong", 88)
+        store.upsert_job(first)
+        _pin_first_seen(store, first.id, "2026-06-01T00:00:00Z")
+
+        assert track.send_digest_result({"email": {"enabled": True}}, store).sent is False
+        stored_cutoff = json.loads(store.meta_get(track._DIGEST_INTENT_KEY))["next_marker"]
+        assert stored_cutoff == fake_now["t"]
+
+        # A new role is discovered while the first attempt is still failing.
+        later = _job("Detection Engineer", "Globex", "Strong", 90)
+        store.upsert_job(later)
+        _pin_first_seen(store, later.id, "2026-07-01T12:00:00Z")
+
+        assert track.send_digest_result({"email": {"enabled": True}}, store).sent is True
+
+        # Identical email, not a silently different one behind the same Message-ID.
+        assert len(attempts) == 2 and attempts[0] == attempts[1]
+        assert "Detection Engineer" not in attempts[1]["text"]
+        # Marker advanced only to the stored batch's cutoff...
+        assert store.meta_get("digest:last") == stored_cutoff
+
+        # ...so the role discovered mid-failure is still delivered, not skipped.
+        fake_now["t"] = "2026-07-02T00:00:00Z"
+        assert track.send_digest_result({"email": {"enabled": True}}, store).sent is True
+        assert "Detection Engineer" in attempts[2]["text"]
+        assert attempts[2]["id"] != attempts[0]["id"]
+        store.close()
+
+
+def test_repeated_failures_keep_one_intent_and_never_advance_the_marker(monkeypatch):
+    ids = []
+    monkeypatch.setattr(
+        "jobscope.deliver.email.send",
+        lambda *_a, **kwargs: ids.append(kwargs["message_id"]) or False,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.meta_set("digest:last", "2000-01-01T00:00:00Z")
+        store.upsert_job(_job("Security Engineer", "Acme", "Strong", 88))
+
+        for _ in range(3):
+            assert track.send_digest_result({"email": {"enabled": True}}, store).sent is False
+
+        assert len(ids) == 3 and len(set(ids)) == 1     # one batch, retried
+        assert store.meta_get("digest:last") == "2000-01-01T00:00:00Z"
+        assert json.loads(store.meta_get(track._DIGEST_INTENT_KEY))["state"] == "retryable"
+        store.close()
+
+
+def test_intent_stored_but_never_sent_is_picked_up(monkeypatch):
+    """Crash between persisting the intent and calling SMTP: nothing was sent, so
+    the next run must send it rather than sit on a `ready` row forever."""
+    intent = {
+        "version": 1, "state": "ready", "marker": "2000-01-01T00:00:00Z",
+        "next_marker": "2026-07-01T00:00:00Z", "job_ids": ["job:one"],
+        "message_id": "jobscope-digest-ready@example.com", "subject": "Subject",
+        "text": "Body", "html": "", "created_at": "2026-07-01T00:00:00Z",
+        "attempted_at": "", "last_outcome": "",
+    }
+    sent = []
+    monkeypatch.setattr(
+        "jobscope.deliver.email.send",
+        lambda *_a, **kwargs: sent.append(kwargs["message_id"]) or True,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.meta_set("digest:last", intent["marker"])
+        store.meta_set(track._DIGEST_INTENT_KEY, track._encode_digest_intent(intent))
+
+        result = track.send_digest_result({"email": {"enabled": True}}, store)
+
+        assert result.sent is True
+        assert sent == [intent["message_id"]]
+        assert store.meta_get("digest:last") == intent["next_marker"]
         store.close()
 
 
