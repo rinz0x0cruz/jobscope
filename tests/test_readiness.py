@@ -97,8 +97,11 @@ def test_retired_source_history_neither_enables_nor_blocks_discovery(cfg, store)
 ])
 def test_only_reviewed_ats_sources_drive_discovery_health(cfg, store, status, blocked):
     cfg["search"]["companies"] = ["Acme|greenhouse|acme"]
+    monitor = store.upsert_company_monitor(
+        "Acme", provider="greenhouse", slug="acme", added_from="config",
+    )
     store.set_source_health(
-        "ats:Acme", provider="greenhouse", slug="acme",
+        f"monitor:{monitor['id']}", provider="greenhouse", slug="acme",
         status=status, item_count=3, attempts=1, status_code=200, detail="",
     )
 
@@ -106,6 +109,22 @@ def test_only_reviewed_ats_sources_drive_discovery_health(cfg, store, status, bl
 
     assert item["enabled"] is True
     assert ("source_unhealthy" in item["blockers"]) is blocked
+
+
+def test_a_retired_source_cannot_speak_for_the_discovery_lane(cfg, store):
+    """`ats:` rows come from the deleted batch fetch. A live scan writes
+    `monitor:<id>`, so a retired row must neither block the lane nor stand in for
+    a runtime success."""
+    cfg["search"]["companies"] = ["Acme|greenhouse|acme"]
+    store.set_source_health(
+        "ats:Acme", provider="greenhouse", slug="acme",
+        status="error", item_count=0, attempts=1, status_code=500, detail="gone",
+    )
+
+    item = _lane(readiness.report(cfg, store), "discovery")
+
+    assert item["blockers"] == []
+    assert item["last_success_age_days"] is None
 
 
 def test_a_stale_or_failed_scheduled_slot_is_visible_to_the_observer(cfg, store):

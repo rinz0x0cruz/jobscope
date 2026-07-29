@@ -34,8 +34,12 @@ _TICK_MAX_AGE_DAYS = 2.0
 _CANARY_KEY = "readiness:canary:"
 # Only reviewed automatic providers describe the current discovery lane. Rows
 # from a retired source survive in `source_health` forever, so counting them
-# would make a dead lane look live and permanently unhealthy.
-_DISCOVERY_SOURCE_PREFIX = "ats:"
+# would make a dead lane look live and permanently unhealthy. The live scanner
+# is `monitor.scan_monitor`, recording `monitor:<id>`; the `ats:<company>` batch
+# fetch that once wrote the other prefix was deleted, so matching it measured a
+# prefix nothing writes -- discovery could never show a runtime success, and
+# `source_unhealthy` could never fire however many boards failed.
+_DISCOVERY_SOURCE_PREFIX = "monitor:"
 _DISCOVERY_HEALTHY = {"ok", "empty", "partial"}      # benign ats.BoardStatus
 _INBOX_HEALTHY = {"ok", "empty", "recovered"}
 
