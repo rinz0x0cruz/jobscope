@@ -501,8 +501,9 @@ purpose plus target provenance, thread, sequence, and recipient-lock columns/ind
 leaves their tables ignored but intact; it does not delete raw jobs, application
 history, dismiss tombstones, company provenance, or local campaign rows. The previous
 encrypted cloud DB generation remains the first recovery option for cloud-managed
-state, but never for local-only campaigns. `search.companies` is retained as
-seed/fallback input, so old code can still run direct ATS scans during a rollback.
+state, but never for local-only campaigns. `search.companies` is retained as seed input for
+`companies seed`, so a rollback to a build that still carried the direct ATS batch scan
+will also still find its configuration.
 
 Local data refresh and publication are independent. A successful scan/sync/match advances
 `refresh:last_date`; only a verified encrypted publish advances

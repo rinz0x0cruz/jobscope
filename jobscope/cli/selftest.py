@@ -70,19 +70,28 @@ def _selftest_ingest(c):
                     terms=["security engineer"],
                     country_indeed="India",
                     is_remote=True,
-                    companies=["databricks"],
-               )
-               c.ok("ats run filters role + upserts", ats.run(cfg, store) == 1)
-               job_id = store.jobs()[0].id
-               c.ok(
-                    "reconcile ignores empty liveset",
-                    store.reconcile_open("ats", "databricks", set()) == 0,
                )
                c.ok(
-                    "reconcile closes missing job",
-                    store.reconcile_open("ats", "databricks", {"https://other"}) == 1,
+                    "ats filters a board to the search profile",
+                    len(ats.filter_profile_jobs(cfg, store, boards)) == 1,
                )
-               c.ok("closed status persists", store.get_job(job_id).status == "closed")
+               for board_job in boards:
+                    store.upsert_job(board_job)
+               watch = store.upsert_company_monitor(
+                    "Databricks", provider="greenhouse", slug="databricks",
+                    added_from="user",
+               )
+               for board_job in boards:
+                    store.link_monitor_job(watch["id"], board_job.id)
+               c.ok(
+                    "reconcile ignores an empty liveset",
+                    store.reconcile_monitor_jobs(watch["id"], set()) == 0,
+               )
+               c.ok(
+                    "reconcile closes a job missing from the board",
+                    store.reconcile_monitor_jobs(watch["id"], {boards[0].id}) == 1,
+               )
+               c.ok("closed status persists", store.get_job(boards[1].id).status == "closed")
                store.close()
 
 

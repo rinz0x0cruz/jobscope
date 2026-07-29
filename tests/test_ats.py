@@ -87,18 +87,18 @@ def test_resolve_known_and_explicit_override():
     assert ats.board_url("phenom", "NTT1GLOBAL") == ""
 
 
-def test_greenhouse_run_filters_by_location_and_role(monkeypatch):
+def test_greenhouse_board_filters_by_location_and_role(monkeypatch):
     _patch_json(monkeypatch)
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp, terms=["security engineer", "detection engineer"],
-                   country_indeed="India", is_remote=True, companies=["databricks"])
-        store = Store(cfg["output"]["db_path"])
-        new = ats.run(cfg, store)
-        titles = {j.title for j in store.jobs()}
-        store.close()
+                   country_indeed="India", is_remote=True)
+        with Store(cfg["output"]["db_path"]) as store:
+            board = ats.fetch_company("Databricks", "greenhouse", "databricks")
+            kept = ats.filter_profile_jobs(cfg, store, board)
     # kept: India security-engineer + remote-India detection-engineer
-    assert new == 2
-    assert titles == {"Senior Security Engineer, Incident Response", "Staff Detection Engineer"}
+    assert {job.title for job in kept} == {
+        "Senior Security Engineer, Incident Response", "Staff Detection Engineer",
+    }
 
 
 def test_board_filter_targets_threat_hunter_without_generic_engineering_roles():
@@ -142,14 +142,14 @@ def test_lever_remote_kept_even_when_city_named(monkeypatch):
     _patch_json(monkeypatch)
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp, terms=["application security engineer"],
-                   country_indeed="India", is_remote=True, companies=["Acme|lever|acme"])
-        store = Store(cfg["output"]["db_path"])
-        new = ats.run(cfg, store)
-        jobs = store.jobs()
-        store.close()
-    assert new == 1
-    assert jobs[0].is_remote is True                     # workplaceType=remote wins over "Toronto"
-    assert jobs[0].date_posted == "2024-06-30"           # 1719705600000 ms -> 2024-06-30 UTC
+                   country_indeed="India", is_remote=True)
+        with Store(cfg["output"]["db_path"]) as store:
+            kept = ats.filter_profile_jobs(
+                cfg, store, ats.fetch_company("Acme", "lever", "acme"),
+            )
+    assert len(kept) == 1
+    assert kept[0].is_remote is True                     # workplaceType=remote wins over "Toronto"
+    assert kept[0].date_posted == "2024-06-30"           # 1719705600000 ms -> 2024-06-30 UTC
 
 
 def test_ashby_remote_flag(monkeypatch):
@@ -225,24 +225,6 @@ def test_phenom_is_quarantined_without_request(monkeypatch):
     assert not result.successful and result.jobs == []
 
 
-def test_unknown_company_is_skipped(monkeypatch):
-    _patch_json(monkeypatch)
-    with tempfile.TemporaryDirectory() as tmp:
-        cfg = _cfg(tmp, companies=["totally-unknown-co"])
-        store = Store(cfg["output"]["db_path"])
-        assert ats.run(cfg, store) == 0
-        store.close()
-
-
-def test_no_companies_is_noop(monkeypatch):
-    _patch_json(monkeypatch)
-    with tempfile.TemporaryDirectory() as tmp:
-        cfg = _cfg(tmp, companies=[])
-        store = Store(cfg["output"]["db_path"])
-        assert ats.run(cfg, store) == 0
-        store.close()
-
-
 def test_matches_unit():
     from jobscope.core.model import Job, derive_remote_scope
 
@@ -303,61 +285,26 @@ def test_profile_filter_honors_preferred_market_and_work_mode():
             assert funnel["geo_eligible"] == 1
 
 
-_BOARD2 = {"jobs": [
-    {"title": "Security Engineer", "location": {"name": "Bengaluru, India"},
-     "absolute_url": "https://gh/db/1", "content": "x", "updated_at": "2026-06-30T00:00:00-04:00"},
-    {"title": "Detection Engineer", "location": {"name": "Remote - India"},
-     "absolute_url": "https://gh/db/2", "content": "x", "updated_at": "2026-06-30T00:00:00-04:00"},
-]}
-
-
-def test_taken_down_when_missing_from_board(monkeypatch):
-    state = {"data": {"jobs": list(_BOARD2["jobs"])}}
-    _patch_json(monkeypatch,
-                lambda url, **_k: state["data"] if "greenhouse" in url else None)
-    with tempfile.TemporaryDirectory() as tmp:
-        cfg = _cfg(tmp, terms=["security engineer", "detection engineer"],
-                   country_indeed="India", is_remote=True, companies=["databricks"])
-        store = Store(cfg["output"]["db_path"])
-        ats.run(cfg, store)
-        ids = {j.title: j.id for j in store.jobs()}
-        assert len(ids) == 2
-        state["data"] = {"jobs": _BOARD2["jobs"][:1]}        # "Detection Engineer" pulled
-        ats.run(cfg, store)
-        gone = store.get_job(ids["Detection Engineer"])
-        assert gone.status == "closed" and gone.closed_at
-        assert store.get_job(ids["Security Engineer"]).status == "open"
-        store.close()
-
-
-def test_failed_fetch_does_not_close(monkeypatch):
-    state = {"data": {"jobs": _BOARD2["jobs"][:1]}}
-    _patch_json(monkeypatch,
-                lambda url, **_k: state["data"] if "greenhouse" in url else None)
-    with tempfile.TemporaryDirectory() as tmp:
-        cfg = _cfg(tmp, terms=["security engineer"], country_indeed="India",
-                   is_remote=True, companies=["databricks"])
-        store = Store(cfg["output"]["db_path"])
-        ats.run(cfg, store)
-        jid = store.jobs()[0].id
-        state["data"] = None                                 # fetch failure -> empty board
-        ats.run(cfg, store)
-        assert store.get_job(jid).status == "open"           # not closed on a failed fetch
-        store.close()
-
-
 def test_reopen_on_reappearance():
+    """A re-listed posting comes back as open. Taken-down detection itself is
+    covered on the live path in tests/test_monitor_scan.py."""
     from jobscope.core.model import Job
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)
-        store = Store(cfg["output"]["db_path"])
-        job = Job(source="ats", title="SE", company="X", url="u1").ensure_id()
-        store.upsert_job(job)
-        assert store.reconcile_open("ats", "X", {"other"}) == 1
-        assert store.get_job(job.id).status == "closed"
-        store.upsert_job(job)                                # reappears -> reopened
-        assert store.get_job(job.id).status == "open"
-        assert store.get_job(job.id).closed_at == ""
+        with Store(cfg["output"]["db_path"]) as store:
+            job = Job(source="ats", title="SE", company="X", url="u1").ensure_id()
+            still_listed = Job(source="ats", title="SE2", company="X", url="u2").ensure_id()
+            store.upsert_job(job)
+            store.upsert_job(still_listed)
+            watch = store.upsert_company_monitor(
+                "X", provider="greenhouse", slug="x", added_from="user",
+            )
+            store.link_monitor_job(watch["id"], job.id)
+            assert store.reconcile_monitor_jobs(watch["id"], {still_listed.id}) == 1
+            assert store.get_job(job.id).status == "closed"
+            store.upsert_job(job)                            # reappears -> reopened
+            assert store.get_job(job.id).status == "open"
+            assert store.get_job(job.id).closed_at == ""
         store.close()
 
 

@@ -74,28 +74,6 @@ class JobsMixin:
         row = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id_,)).fetchone()
         return _row_to_job(row) if row else None
 
-    def reconcile_open(self, source: str, company: str, live_urls) -> int:
-        """Mark stored jobs from (source, company) that are no longer in the live
-        URL set as closed (taken down). Returns how many were newly closed.
-
-        Callers must only pass a *successfully fetched* board's URLs -- an empty
-        set from a failed fetch would wrongly close everything.
-        """
-        live = {u for u in live_urls if u}
-        if not live:
-            return 0
-        rows = self.conn.execute(
-            "SELECT id, url FROM jobs WHERE source = ? AND company = ? "
-            "AND (status IS NULL OR status = 'open')", (source, company)).fetchall()
-        gone = [r["id"] for r in rows if (r["url"] or "") not in live]
-        if gone:
-            ts = now_iso()
-            self.conn.executemany(
-                "UPDATE jobs SET status = 'closed', closed_at = ? WHERE id = ?",
-                [(ts, i) for i in gone])
-            self.conn.commit()
-        return len(gone)
-
     def closed_count(self) -> int:
         return self.conn.execute(
             "SELECT COUNT(*) FROM jobs WHERE status = 'closed'").fetchone()[0]
