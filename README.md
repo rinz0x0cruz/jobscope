@@ -125,10 +125,15 @@ work/professional experience section; headingless education/project dates are ig
 | `serve [--open]` | Run the loopback control plane: live SQLite dashboard, immediate mutations, profile upload/edit, campaigns, and local refresh |
 | `refresh [--local-only] [--force]` | Sync Gmail + rescore. Existing default also publishes the encrypted snapshot; `--local-only` never builds or publishes |
 | `enrich [--job ID]` | Comp, stock/IPO, Reddit, news, Glassdoor, referral contacts, **company brief** |
+| `referrals [--job ID] [--discover]` | Surface referral paths (contacts) across your pipeline + outreach draft |
 | `tailor <job_id>` | Keyword-aligned resume + cover letter (using the best base resume), rendered to PDF |
+| `atscheck [--resume N] [--job ID]` | Show what an ATS extracts from your resume + formatting warnings |
+| `coverage <job_id> [--resume N]` | Per-requirement JD coverage report (responsibilities, not just keywords) |
 | `prep <job_id>` | Application package (docs + pre-filled answers + link + contacts + brief) |
 | `apply <job_id> [--assist]` | Open the application; `--assist` pre-fills public ATS forms, stops before submit |
+| `interview <job_id> [--note TEXT]` | Interview-prep sheet for a job (fit, topics, STAR bank, brief, contacts, notes) |
 | `outreach <job_id> [--send]` | Preview or individually send a résumé-backed recruiter note for one role; local SMTP only |
+| `outreach-scan [--limit N]` | Pre-compute HR contacts for your active applications (for the dashboard) |
 | `campaign <action>` | Build cold or due follow-up queues, review one draft at a time, and send at most one due approved email per invocation |
 | `brief <job_id>` | Blunt, risk-forward company brief (no marketing fluff) |
 | `gaps [--top N]` | Skill-gap learning plan: skills to learn ranked by jobs unlocked |
@@ -139,8 +144,12 @@ work/professional experience section; headingless education/project dates are ig
 | `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Sync Gmail over read-only IMAP and auto-advance the funnel from application emails |
 | `inbox-canary --account E` | Classify one configured account over verified TLS in a no-send, read-only throwaway database; deletes the database on exit. |
 | `export [--format json\|csv]` | Export ranked jobs |
+| `prune [--yes]` | Delete stored jobs outside your India/remote scope (preview by default) |
+| `purge [--mail]` | Delete stored email PII / applications from the local DB |
+| `secrets [set\|list\|rm\|import-env]` | Store API keys / app passwords in the OS keychain (keyring) |
 | `selftest` | Offline self-tests (no network, no keys) |
 | `doctor` | Offline config, SQLite, secret-reference, toolchain, refresh, and source-health checks |
+| `readiness [--require LANE] [--canary L]` | Report whether each optional lane is safe to activate; `--canary` runs the one live no-send check |
 
 ## Outreach batches (private control plane)
 
