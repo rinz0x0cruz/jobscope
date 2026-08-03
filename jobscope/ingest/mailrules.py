@@ -758,7 +758,11 @@ def _requisition_role(subject: str, body: str) -> str:
 def _clean_role(value: str) -> str:
     role = re.sub(r"\s+", " ", value or "").strip(" \t\r\n-\u2013\u2014|:,.")
     key = re.sub(r"[^a-z0-9]+", " ", role.lower()).strip()
-    return "" if key in _ROLE_STOP else role
+    if not key or key in _ROLE_STOP:
+        return ""
+    # A generic subject prefix ("Next Steps: ...") leaves a whole sentence in the
+    # role slot; no real title in this mailbox runs past eight words.
+    return "" if len(key.split()) > 8 else role
 
 
 def _company_from_sender(from_name: str, from_domain: str, from_addr: str = "") -> str:

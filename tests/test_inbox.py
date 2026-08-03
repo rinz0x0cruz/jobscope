@@ -614,6 +614,25 @@ def test_parse_company_from_workday_tenant_url():
     assert company == "Mimecast"
 
 
+def test_parse_role_rejects_a_sentence_after_a_generic_prefix():
+    # "Next Steps:" is a generic subject prefix, not "<Company>: <Role>", so the
+    # tail is a sentence. Stored as a role it became a second application for a
+    # role the pipeline already tracked.
+    _company, role = mailrules.parse_company_role(
+        "Joyce Vennila", "cloudsek.com",
+        "Next Steps: Take Home Test from CloudSEK for Customer Threat Advisor", "",
+        "joyce.vennila@cloudsek.com")
+    assert role == ""
+
+
+def test_parse_role_keeps_a_long_but_plausible_title():
+    # The length guard must not reject real titles, which do run long.
+    _company, role = mailrules.parse_company_role(
+        "Careers", "acme.com",
+        "Acme - Senior Manager, Information Security Risk and Compliance", "")
+    assert role == "Senior Manager, Information Security Risk and Compliance"
+
+
 def test_parse_company_from_workday_sender_tenant():
     # Real Workday mail often carries no display name, no company in the subject and
     # no careers URL. Without the address tenant every such employer parses as "",
