@@ -80,7 +80,13 @@ class Target:
 
 def _is_ats_domain(dom: str) -> bool:
     dom = (dom or "").lower()
-    return any(a in dom for a in _ATS_MAIL)
+    if any(a in dom for a in _ATS_MAIL):
+        return True
+    # The parsing side already tracks every host that names no employer. Keeping a
+    # second, shorter list here let ycombinator.com and oracle.com be chosen as a
+    # company's contact, so reuse that knowledge instead of duplicating it.
+    from jobscope.ingest.mailrules import company_from_domain
+    return not company_from_domain(dom)
 
 
 def _is_automated(addr: str) -> bool:

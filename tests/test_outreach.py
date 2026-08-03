@@ -44,6 +44,17 @@ def _seed(tmp, *, with_recruiter_mail=False, company_url="", do_not_contact=None
     return cfg, store, job
 
 
+def test_platform_relays_are_not_company_contacts():
+    # outreach kept its own short relay list while the parsing side already knew
+    # these hosts name no employer, so a Cyble follow-up resolved to Y Combinator's
+    # Work at a Startup relay and a Goldman Sachs one to Oracle.
+    for addr in ("workatastartup@ycombinator.com", "GSRecruiting@oracle.com",
+                 "ZENORC@workflow.mail.ap1.cloud.oracle.com"):
+        assert not outreach.valid_recipient(addr), addr
+    for addr in ("talent@ibm.com", "joyce.vennila@cloudsek.com", "hr@franke.com"):
+        assert outreach.valid_recipient(addr), addr
+
+
 def test_no_reply_addresses_are_caught_whatever_the_separator():
     # Real senders in this mailbox use "No.reply@ericsson.com" and
     # "do_not_reply@vodafone.com"; substring matching on the hyphenated spelling
