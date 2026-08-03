@@ -12,9 +12,11 @@
     `refresh:last_date`, so the dashboard's Refresh button knows the day is
     already done and won't repeat the work.
 
-    By default it does NOT re-scrape job boards (that path is rate-limit prone);
-    pass -FullScan to include a board scan. The publish step reads your
-    passphrase from the OS keychain -- no prompt.
+    By default it does NOT re-scrape job boards (that path is rate-limit prone).
+    The publish step reads your passphrase from the OS keychain -- no prompt.
+
+    Pass -LocalOnly to refresh SQLite without publishing the Pages snapshot, so
+    nothing leaves the machine on a schedule.
 
     ONE-TIME SETUP (do this first): store your passphrase in the OS keychain
         python -m jobscope secrets set JOBSCOPE_APPS_PASSPHRASE
@@ -27,21 +29,21 @@
 .PARAMETER TaskName
     Scheduled task name. Default "jobscope refresh".
 
-.PARAMETER FullScan
-    Also re-scrape job boards before matching (slower, may hit rate limits).
+.PARAMETER LocalOnly
+    Refresh the local database only; skip publishing the encrypted Pages snapshot.
 
 .EXAMPLE
     python -m jobscope secrets set JOBSCOPE_APPS_PASSPHRASE   # once
     ./scripts/register-refresh-task.ps1
 
 .EXAMPLE
-    ./scripts/register-refresh-task.ps1 -Time 06:45 -FullScan
+    ./scripts/register-refresh-task.ps1 -Time 06:45 -LocalOnly
 #>
 [CmdletBinding()]
 param(
     [string]$Time = "07:30",
     [string]$TaskName = "jobscope refresh",
-    [switch]$FullScan
+    [switch]$LocalOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,6 +52,18 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 
 $Py = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Py)) { $Py = (Get-Command python).Source }
+
+# A scheduled task fails silently, so check the interpreter now rather than
+# discovering months later that it never ran. The fallback above is a system
+# Python that usually lacks this project's dependencies.
+& $Py -m jobscope --version *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "$Py cannot run jobscope (exit $LASTEXITCODE). Run .\setup.ps1 to create .venv, then re-run this script."
+}
+& $Py -m jobscope doctor *> $null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "'jobscope doctor' reports problems for this interpreter; the nightly run will hit the same ones. Run: $Py -m jobscope doctor"
+}
 
 # The publish step runs publish.ps1 -Encrypted, which needs the passphrase
 # unattended. Warn (don't block) if it's missing: the refresh still publishes the
@@ -72,7 +86,7 @@ if (-not $have) {
 # publish. --force so the nightly run always executes (the schedule is the
 # once-a-day guard); it stamps refresh:last_date for the dashboard button.
 $refreshArgs = "-m jobscope refresh --force"
-if ($FullScan) { $refreshArgs += " --full-scan" }
+if ($LocalOnly) { $refreshArgs += " --local-only" }
 
 $action = New-ScheduledTaskAction -Execute $Py -Argument $refreshArgs -WorkingDirectory $RepoRoot
 
