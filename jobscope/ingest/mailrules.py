@@ -274,7 +274,7 @@ _COMPANY_SUFFIXES = re.compile(
     r"\b(?:inc|inc\.|llc|ltd|ltd\.|limited|corp|corp\.|corporation|co|co\.|"
     r"gmbh|plc|sa|ag|bv|pvt|private|technologies|technology|labs|software|"
     r"solutions|systems|group|holdings|team|talent|acquisitions?|recruiters?|recruiting|"
-    r"recruitment|careers|hr|people|hiring|notifications?)\b", re.I)
+    r"recruitment|careers|hr|human\s+resources|people|hiring|notifications?)\b", re.I)
 
 # ATS/HR platform names that get appended to a sender display ("NCR Voyix Workday",
 # "Acme Greenhouse") -- strip a trailing platform token so the employer remains.
