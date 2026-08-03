@@ -44,6 +44,17 @@ def _seed(tmp, *, with_recruiter_mail=False, company_url="", do_not_contact=None
     return cfg, store, job
 
 
+def test_no_reply_addresses_are_caught_whatever_the_separator():
+    # Real senders in this mailbox use "No.reply@ericsson.com" and
+    # "do_not_reply@vodafone.com"; substring matching on the hyphenated spelling
+    # let both through as valid cold-outreach recipients.
+    for addr in ("No.reply@ericsson.com", "do_not_reply@vodafone.com",
+                 "noreply@x.com", "jobs-noreply@x.com", "do.not.reply@x.com"):
+        assert not outreach.valid_recipient(addr), addr
+    for addr in ("joyce.vennila@cloudsek.com", "priya.sharma@acme.com"):
+        assert outreach.valid_recipient(addr), addr
+
+
 def test_discovered_support_desks_are_not_hiring_contacts():
     # A site often publishes only a customer desk. Ranking those below HR hints was
     # not enough: with nothing else on the page the first one was auto-selected,

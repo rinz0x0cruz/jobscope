@@ -89,7 +89,10 @@ def _is_automated(addr: str) -> bool:
     if "@" not in addr:
         return True
     lp, dom = addr.split("@", 1)
-    if any(a in lp for a in _AUTOMATED_LOCALPARTS):
+    # Senders vary the separator ("No.reply@", "do_not_reply@"), so compare with
+    # separators removed rather than letting punctuation defeat the guard.
+    flat = re.sub(r"[._+-]", "", lp)
+    if any(a.replace("-", "") in flat for a in _AUTOMATED_LOCALPARTS):
         return True
     return _is_ats_domain(dom)
 
