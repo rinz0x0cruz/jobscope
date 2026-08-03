@@ -32,7 +32,11 @@ _AGGREGATORS = ("linkedin.", "indeed.", "greenhouse.", "lever.", "workday", "ash
 # no-reply / applicant-tracking relay addresses you must never cold-mail
 _AUTOMATED_LOCALPARTS = ("noreply", "no-reply", "donotreply", "do-not-reply", "notification",
                          "notifications", "mailer-daemon", "postmaster", "bounce", "automated",
-                         "auto-confirm", "jobs-noreply")
+                         "auto-confirm", "jobs-noreply",
+                         # HR-system senders: workday@sabre.com is a notification
+                         # mailbox, not a person. Role inboxes such as careers@ and
+                         # talent@ stay eligible, since those do reach a human.
+                         "workday", "taleo", "hrms")
 _ATS_MAIL = ("workablemail", "myworkday", "myworkdayjobs", "icims", "greenhouse", "lever",
              "ashbyhq", "smartrecruiters", "bamboohr", "workday", "successfactors", "taleo",
              "jobvite")

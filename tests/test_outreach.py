@@ -44,6 +44,16 @@ def _seed(tmp, *, with_recruiter_mail=False, company_url="", do_not_contact=None
     return cfg, store, job
 
 
+def test_hr_system_senders_are_not_recipients_but_role_inboxes_are():
+    # workday@sabre.com is a notification mailbox nobody reads, while careers@ and
+    # talent@ are where a follow-up belongs, so the two must not be filtered alike.
+    for addr in ("workday@sabre.com", "Workday@paloaltonetworks.com", "hrms@acme.com"):
+        assert not outreach.valid_recipient(addr), addr
+    for addr in ("talent@ibm.com", "hr@franke.com", "careers1@persistent.com",
+                 "hcmurphy@acme.com"):
+        assert outreach.valid_recipient(addr), addr
+
+
 def test_platform_relays_are_not_company_contacts():
     # outreach kept its own short relay list while the parsing side already knew
     # these hosts name no employer, so a Cyble follow-up resolved to Y Combinator's
