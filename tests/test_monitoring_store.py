@@ -14,6 +14,15 @@ def _store() -> Store:
     return Store(os.path.join(directory, "monitoring.db"))
 
 
+def test_normalize_company_key_drops_a_board_descriptor():
+    # A board's company field can carry a descriptor. Keeping it split the key from
+    # the plain name, so a company already applied to passed the cold-outreach
+    # exclusion and would have been cold-emailed.
+    key = monitoring_store.normalize_company_key
+    assert key("Ajaia | AI Consultancy") == key("AJAIA")
+    assert key("Flymedia Technology | Ludhiana") == key("Flymedia")
+
+
 def test_old_database_gains_monitoring_tables_additively():
     directory = tempfile.mkdtemp()
     path = os.path.join(directory, "old.db")

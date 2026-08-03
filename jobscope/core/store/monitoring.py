@@ -25,6 +25,10 @@ _COMPANY_SUFFIXES = frozenset({
 def normalize_company_key(company: str) -> str:
     """Return a stable, human-auditable key for company-name matching."""
     normalized = unicodedata.normalize("NFKC", company or "").casefold()
+    # A board's company field can carry a descriptor ("Ajaia | AI Consultancy").
+    # Keeping it split the key from the plain name, which let a company you had
+    # already applied to pass the cold-outreach exclusion.
+    normalized = normalized.split("|", 1)[0]
     tokens = re.findall(r"[a-z0-9]+", normalized)
     while tokens and tokens[-1] in _COMPANY_SUFFIXES:
         tokens.pop()
