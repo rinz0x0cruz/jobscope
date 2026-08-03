@@ -649,6 +649,18 @@ def test_parse_company_rejects_a_lowercase_body_capture():
     assert company == "Guidehouse"
 
 
+def test_excited_you_applied_is_a_confirmation():
+    # The pattern already read "excited you're interested"; this phrasing left the
+    # Safe Security application untracked, so it never reached the funnel.
+    for subject in ("We\u2019re excited you applied to Safe Security!",
+                    "Glad you applied to Acme"):
+        assert mailrules.classify_scored(subject, "")[0] == "confirmation", subject
+    # A rejection still outranks it.
+    assert mailrules.classify_scored(
+        "We're excited you applied, but we have decided not to move forward", "",
+    )[0] == "rejection"
+
+
 def test_parse_company_from_a_closing_thanks_phrase():
     # A Greenhouse relay names no employer and the body is boilerplate, so the only
     # place AppViewX appears is the subject's closing phrase.

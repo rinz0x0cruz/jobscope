@@ -180,7 +180,8 @@ _WEIGHTED_RULES: list[tuple[str, list[tuple[str, int]]]] = [
     ]),
     ("confirmation", [
         (r"thank(?:s| you) for (?:applying|your application|your interest)", 2),
-        (r"(?:great|glad|happy|delighted|thrilled|excited) (?:that )?you'?re interested", 2),
+        (r"(?:great|glad|happy|delighted|thrilled|excited) (?:that )?"
+         r"(?:you'?re interested|you applied)", 2),
         (r"(?:carefully )?review(?:ing)? your application", 1),
         (r"track (?:the )?status of your application", 2),
         (r"application (?:has been |was |is )?(?:received|submitted|complete)", 2),
