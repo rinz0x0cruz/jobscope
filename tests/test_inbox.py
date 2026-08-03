@@ -614,6 +614,43 @@ def test_parse_company_from_workday_tenant_url():
     assert company == "Mimecast"
 
 
+def test_parse_company_from_workday_sender_tenant():
+    # Real Workday mail often carries no display name, no company in the subject and
+    # no careers URL. Without the address tenant every such employer parses as "",
+    # and the synthetic mail ids then collapse onto one blank company.
+    company, _ = mailrules.parse_company_role(
+        "", "myworkday.com", "Thank You For Applying!", "",
+        "bakertilly@myworkday.com")
+    assert company == "Bakertilly"
+
+
+def test_parse_company_ignores_workday_noreply_localpart():
+    # The tenant rule must not turn a generic relay mailbox into an employer.
+    company, _ = mailrules.parse_company_role(
+        "", "myworkday.com", "Thank You For Applying!", "",
+        "no-reply@myworkday.com")
+    assert company == ""
+
+
+def test_parse_company_sender_name_matching_mailbox_is_not_the_company():
+    # "Joyce Vennila" <joyce.vennila@cloudsek.com> names the person who sent the
+    # mail; the employer domain is the company. The subject/body name neither.
+    company, _ = mailrules.parse_company_role(
+        "Joyce Vennila", "cloudsek.com",
+        "Re: Next Steps: Take Home Test", "Please find the attached test.",
+        "joyce.vennila@cloudsek.com")
+    assert mailrules.normalize_company(company) == "cloudsek"
+
+
+def test_parse_company_keeps_display_name_over_relay_mailbox():
+    # The same rule must not fire for an ATS relay, where the domain names no
+    # employer and the display name is the only real signal.
+    company, _ = mailrules.parse_company_role(
+        "SitusAMC", "myworkday.com", "Application Received", "",
+        "SitusAMC@myworkday.com")
+    assert company == "SitusAMC"
+
+
 # --- mailrules: status machine ----------------------------------------------
 def test_signal_to_status():
     assert mailrules.signal_to_status("confirmation") == "applied"

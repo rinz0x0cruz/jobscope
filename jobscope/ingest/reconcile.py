@@ -388,7 +388,8 @@ def _reclassify(store, run_id: str) -> dict[str, int]:
         # as the company) heal in place on the next pass.
         co, ro = mailrules.parse_company_role(
             ev.get("from_name") or "", ev.get("from_domain") or "",
-            ev.get("subject") or "", ev.get("snippet") or "")
+            ev.get("subject") or "", ev.get("snippet") or "",
+            ev.get("from_addr") or "")
         if co and co != (ev.get("company") or ""):
             updates["company"] = co
         if ro and ro != (ev.get("role") or ""):

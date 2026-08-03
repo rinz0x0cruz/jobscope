@@ -534,7 +534,8 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
         elif sig == "other":
             sig = "campaign_reply"
 
-    company, role = mailrules.parse_company_role(from_name, from_domain, subject, snippet)
+    company, role = mailrules.parse_company_role(
+        from_name, from_domain, subject, snippet, from_addr)
 
     # Weighted rules remain authoritative even on close calls. Model output can
     # never replace a mail signal or mutate application state.

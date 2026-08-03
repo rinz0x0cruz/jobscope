@@ -689,7 +689,7 @@ _WORKDAY_TENANT = re.compile(
 
 
 def parse_company_role(from_name: str, from_domain: str, subject: str,
-                       body: str = "") -> tuple[str, str]:
+                       body: str = "", from_addr: str = "") -> tuple[str, str]:
     """Best-effort extraction of (company, role) from an email.
 
     Company is taken from the sender display name where that is meaningful,
@@ -712,7 +712,7 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
         if m:
             company = _pick(_strip_company_noise(m.group("company")))
 
-    sender_company = _pick(_company_from_sender(from_name, from_domain))
+    sender_company = _pick(_company_from_sender(from_name, from_domain, from_addr))
     if not company and company_from_domain(from_domain):
         company = sender_company
 
@@ -724,10 +724,13 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
     if not company:
         company = sender_company
 
-    if not company:                      # Workday careers URL tenant (last resort)
-        m = _WORKDAY_TENANT.search(body or "")
-        if m:
-            company = _pick(_title(m.group(1)))
+    if not company:                      # Workday tenant: sender address, then careers URL
+        tenant = _workday_tenant(from_addr)
+        if not tenant:
+            m = _WORKDAY_TENANT.search(body or "")
+            tenant = m.group(1) if m else ""
+        if tenant:
+            company = _pick(_title(tenant))
 
     if not role:
         m = _ROLE_DASH.match(subject.strip())
@@ -758,13 +761,17 @@ def _clean_role(value: str) -> str:
     return "" if key in _ROLE_STOP else role
 
 
-def _company_from_sender(from_name: str, from_domain: str) -> str:
+def _company_from_sender(from_name: str, from_domain: str, from_addr: str = "") -> str:
     raw = from_name or ""
     name = _clean(re.split(r"[|@<]", raw)[0])
     # Drop pure-noise display names ("Recruiting", "No Reply", "Careers Team").
     stripped = normalize_company(name)
     if stripped and stripped not in _NOREPLY_LOCALPARTS and len(stripped) > 1:
-        return _title(name)
+        # A display name that merely repeats the mailbox names the person who sent
+        # the mail ("Joyce Vennila" <joyce.vennila@cloudsek.com>), not the employer.
+        local = normalize_company((from_addr or "").rpartition("@")[0])
+        if not (local and stripped == local and company_from_domain(from_domain)):
+            return _title(name)
     # An email-address display name ("HR@Bayer.com", "careers@acme.com") carries the
     # employer domain after the @; derive the company from it when the local part is
     # noise, so an ATS relay (successfactors.eu) is never mistaken for the employer.
@@ -775,6 +782,16 @@ def _company_from_sender(from_name: str, from_domain: str) -> str:
             return embedded
     # Fall back to a direct employer domain (skips ATS/board/relay platforms).
     return company_from_domain(from_domain)
+
+
+def _workday_tenant(from_addr: str) -> str:
+    """Workday relays employer mail as ``<tenant>@myworkday.com``. The relay domain
+    names no employer, so without the tenant these all reduce to one blank company."""
+    local, _, domain = (from_addr or "").rpartition("@")
+    domain = domain.strip().lower().rstrip(".")
+    if not local or not (domain == "myworkday.com" or domain.endswith(".myworkday.com")):
+        return ""
+    return "" if local.lower() in _NOREPLY_LOCALPARTS else local
 
 
 def _clean(s: str) -> str:
