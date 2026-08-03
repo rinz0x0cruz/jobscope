@@ -68,7 +68,8 @@ if ($LASTEXITCODE -ne 0) {
 # The publish step runs publish.ps1 -Encrypted, which needs the passphrase
 # unattended. Warn (don't block) if it's missing: the refresh still publishes the
 # redacted dashboard, just without the encrypted applications page.
-$have = -not [string]::IsNullOrEmpty($env:JOBSCOPE_APPS_PASSPHRASE)
+# -LocalOnly never publishes, so the passphrase cannot matter to that task.
+$have = $LocalOnly -or -not [string]::IsNullOrEmpty($env:JOBSCOPE_APPS_PASSPHRASE)
 if (-not $have) {
     Push-Location $RepoRoot
     $env:PYTHONPATH = "."
@@ -101,7 +102,11 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal -Force | Out-Null
 
 Write-Host "Registered scheduled task '$TaskName':"
-Write-Host "  runs 'jobscope refresh --force' daily at $Time (Gmail sync -> match -> encrypted publish)."
+if ($LocalOnly) {
+    Write-Host "  runs 'jobscope refresh --force --local-only' daily at $Time (Gmail sync -> match; nothing is published)."
+} else {
+    Write-Host "  runs 'jobscope refresh --force' daily at $Time (Gmail sync -> match -> encrypted publish)."
+}
 Write-Host "  stamps refresh:last_date so the dashboard button won't repeat the same day."
 Write-Host ""
 Write-Host "Run it now:  Start-ScheduledTask -TaskName '$TaskName'"
