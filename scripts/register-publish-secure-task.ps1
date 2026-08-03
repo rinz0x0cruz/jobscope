@@ -42,6 +42,13 @@ if (-not (Test-Path $PublishPs1)) { throw "publish.ps1 not found at $PublishPs1"
 $Py = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Py)) { $Py = (Get-Command python).Source }
 
+# A scheduled task fails silently, and the fallback above is a system Python that
+# usually lacks this project's dependencies.
+& $Py -m jobscope --version *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "$Py cannot run jobscope (exit $LASTEXITCODE). Run .\setup.ps1 to create .venv, then re-run this script."
+}
+
 # Refuse to register a task that would stall on a hidden prompt: verify the
 # passphrase is retrievable unattended (env var or keychain).
 $have = -not [string]::IsNullOrEmpty($env:JOBSCOPE_APPS_PASSPHRASE)

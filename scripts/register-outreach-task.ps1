@@ -35,6 +35,13 @@ if (-not (Test-Path $Py)) {
     $Py = $pyCmd.Source
 }
 
+# An hourly task fails silently, and the fallback above is a system Python that
+# usually lacks this project's dependencies.
+& $Py -m jobscope --version *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "$Py cannot run jobscope (exit $LASTEXITCODE). Run .\setup.ps1 to create .venv, then re-run this script."
+}
+
 $ResolvedConfig = ""
 if ($Config) {
     $ResolvedConfig = (Resolve-Path $Config).Path
