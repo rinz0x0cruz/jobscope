@@ -73,6 +73,26 @@ def test_categorized_skills_are_clean():
     assert not any("(" in s for s in r.skills)
 
 
+def test_plain_pdf_sections_do_not_leak_into_skills():
+    # pypdf emits bare section labels with no blank line between sections, so the
+    # skills section ran on through Education, Certifications and Languages. The
+    # stored resume held "Certifications", "Languages" and "Chitkara University" as
+    # skills, and an outreach draft offered them to a recruiter as a background.
+    r = _parse(
+        "Mohit Sharma\nSecurity Researcher\n"
+        "Skills\nPython, Go, .NET, Node.js\nDocker, Kubernetes.\n"
+        "Education\nChitkara University\nPunjab 2021 - 2025\n9.25/10\n"
+        "Certifications\nAzure Cosmos DB Developer Specialty\n"
+        "Languages\nProfessional English, Hindi, Japanese\n"
+    )
+    lowered = {s.lower() for s in r.skills}
+    for leaked in ("education", "certifications", "languages", "chitkara university",
+                   "professional english", "hindi", "japanese", "9.25/10"):
+        assert leaked not in lowered, leaked
+    assert ".NET" in r.skills and "Node.js" in r.skills   # a leading dot is part of the name
+    assert "Kubernetes" in r.skills and "Kubernetes." not in r.skills
+
+
 def test_company_dash_title_and_years():
     r = _parse(CATEGORIZED)
     assert any("researcher" in t.lower() for t in r.titles)

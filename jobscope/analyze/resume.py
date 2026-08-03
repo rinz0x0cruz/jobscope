@@ -222,8 +222,16 @@ def _first_paragraph(text: str) -> str:
 
 def _section_skills(text: str) -> list[str]:
     """Parse an explicit Skills section, including categorized '**Label:** a, b' lines."""
+    # A PDF résumé has plain section labels rather than Markdown headings and often
+    # no blank line between sections, so the section must also end at a bare label -
+    # otherwise Education, Certifications and Languages are all read as skills.
     m = re.search(
-        r"(?is)(?:^|\n)[#\s]*(?:technical\s+)?skills?\s*[:\n]+(.+?)(?:\n\s*\n|\n#{1,6}\s|\Z)",
+        r"(?is)(?:^|\n)[#\s]*(?:technical\s+)?skills?\s*[:\n]+(.+?)"
+        r"(?:\n\s*\n|\n#{1,6}\s"
+        r"|\n[ \t]*(?:education|certifications?|languages?|awards?|publications?"
+        r"|projects?(?:[ \t]*&[ \t]*research)?"
+        r"|(?:professional[ \t]+|work[ \t]+|relevant[ \t]+)?experience)[ \t]*:?[ \t]*(?:\n|\Z)"
+        r"|\Z)",
         text,
     )
     if not m:
@@ -236,7 +244,8 @@ def _section_skills(text: str) -> list[str]:
         if ":" in line:                                # drop a leading 'Category:' label
             line = line.split(":", 1)[1]
         for tok in re.split(r"[,;|]+", line):          # keep '/' so ISO/IEC 27001 survives
-            t = re.sub(r"\s{2,}", " ", tok).strip("*_ ")
+            # Trailing only: a leading dot is part of the name (".NET").
+            t = re.sub(r"\s{2,}", " ", tok).strip("*_ ").rstrip(". ")
             if 1 < len(t) <= 45 and not t.lower().startswith(("http", "www")):
                 key = t.lower()
                 if key not in seen:
