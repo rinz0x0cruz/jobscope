@@ -614,6 +614,41 @@ def test_parse_company_from_workday_tenant_url():
     assert company == "Mimecast"
 
 
+def test_parse_company_strips_leading_platform_noise():
+    # Workday prefixes system display names; the employer is what survives.
+    company, _ = mailrules.parse_company_role(
+        "Workday-No-Reply F5", "myworkday.com", "Thank you for applying!", "",
+        "ffive@myworkday.com")
+    assert company == "F5"
+
+
+def test_parse_company_falls_through_when_the_display_is_all_platform_noise():
+    # "WorkdaySystemDoNotReply" is entirely platform noise, so it must not be an
+    # employer; the address tenant names the real one.
+    company, _ = mailrules.parse_company_role(
+        "WorkdaySystemDoNotReply", "myworkday.com", "Regarding Recent Application", "",
+        "lseg@myworkday.com")
+    assert company == "Lseg"
+
+
+def test_parse_company_rejects_body_filler_containing_a_pronoun():
+    # "application to join our Pack" is marketing copy, not an employer name.
+    company, _ = mailrules.parse_company_role(
+        "", "myworkday.com", "Thanks for applying!",
+        "Thank you for your application to join our Pack.",
+        "arcticwolf@myworkday.com")
+    assert company == "Arcticwolf"
+
+
+def test_parse_company_rejects_a_lowercase_body_capture():
+    # Prose is sentence-case, so a lowercase capture is a sentence fragment.
+    company, _ = mailrules.parse_company_role(
+        "", "myworkday.com", "Thank You For Applying!",
+        "You may update your application at any time by logging in.",
+        "guidehouse@myworkday.com")
+    assert company == "Guidehouse"
+
+
 def test_parse_company_rejects_a_role_captured_as_the_company():
     # "Your application to <Role>" fits the same shape as "...to <Company>", so the
     # subject pattern captured the role. The real employer was in the display name.

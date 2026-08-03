@@ -274,7 +274,7 @@ _COMPANY_SUFFIXES = re.compile(
     r"\b(?:inc|inc\.|llc|ltd|ltd\.|limited|corp|corp\.|corporation|co|co\.|"
     r"gmbh|plc|sa|ag|bv|pvt|private|technologies|technology|labs|software|"
     r"solutions|systems|group|holdings|team|talent|acquisitions?|recruiters?|recruiting|"
-    r"recruitment|careers|hr|people|hiring)\b", re.I)
+    r"recruitment|careers|hr|people|hiring|notifications?)\b", re.I)
 
 # ATS/HR platform names that get appended to a sender display ("NCR Voyix Workday",
 # "Acme Greenhouse") -- strip a trailing platform token so the employer remains.
@@ -282,6 +282,15 @@ _TRAILING_PLATFORM = re.compile(
     r"[\s|,\u2013\u2014-]+(?:workday|myworkday|myworkdayjobs|greenhouse|lever|ashby|"
     r"icims|smartrecruiters|taleo|workable|jobvite|bamboohr|breezy|rippling|"
     r"eightfold|paylocity|darwinbox|successfactors)\s*$", re.I)
+
+# The same platform names also arrive glued to the FRONT of a system display name
+# ("Workday-No-Reply F5", "WorkdaySystemDoNotReply"), where the employer is what
+# survives the strip -- or nothing, which correctly defers to the address tenant.
+_LEADING_PLATFORM = re.compile(
+    r"^(?:(?:workday|myworkday|myworkdayjobs|greenhouse|lever|ashby|icims|"
+    r"smartrecruiters|taleo|workable|jobvite|bamboohr|breezy|rippling|eightfold|"
+    r"paylocity|darwinbox|successfactors|system|do[\s-]*not[\s-]*reply|no[\s-]*reply)"
+    r"[\s|,.\u2013\u2014-]*)+", re.I)
 
 # "no-reply", "careers", etc. -- sender local-parts that are not a company name.
 _NOREPLY_LOCALPARTS = {
@@ -733,13 +742,15 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
 
     if not company:                      # body as a last resort (subject/sender win)
         m = _APPLICATION_TO.search(body or "")
-        if m:
+        # Prose is sentence-case, so an employer named inside it starts with a
+        # capital; "...at any time by logging in" and "us here" do not.
+        if m and m.group("company")[:1].isupper():
             company = _pick(_strip_company_noise(m.group("company")))
 
     if not company:
         company = sender_company
 
-    if not company:                      # Workday tenant: sender address, then careers URL
+    if not company:                      # relay tenant: the address, then a careers URL
         tenant = _workday_tenant(from_addr)
         if not tenant:
             m = _WORKDAY_TENANT.search(body or "")
@@ -819,6 +830,7 @@ def _clean(s: str) -> str:
     s = _COMPANY_SUFFIXES.sub("", s).strip(" -|:,.")
     # Strip a trailing ATS/HR platform token ("NCR Voyix Workday" -> "NCR Voyix").
     s = _TRAILING_PLATFORM.sub("", s).strip(" -|:,.")
+    s = _LEADING_PLATFORM.sub("", s).strip(" -|:,.")
     s = _TRAILING_ROLE.sub("", s).strip(" -|:,.")
     return re.sub(r"\s+", " ", s).strip()
 
@@ -831,6 +843,10 @@ def _valid_company(c: str) -> bool:
     if not key or len(key) <= 1 or key in _COMPANY_STOP or key in _NOREPLY_LOCALPARTS:
         return False
     if key.split()[-1] in _ROLE_TAIL_NOUNS:
+        return False
+    # Body filler ("join our Pack", "our organization") reads as a name but no
+    # employer carries a bare pronoun.
+    if {"our", "your", "we", "their"} & set(key.split()):
         return False
     if re.search(r"\d{4,}", c):        # a 4+ digit run is a job-req number, not a company
         return False
