@@ -33,8 +33,9 @@ def test_no_github_workflow_schedules_a_mutating_run():
         for marker in _MUTATING:
             assert marker not in text, f"{path.name} schedules mutating work"
 
-    # Only the read-only ATS canary may keep a GitHub schedule.
-    assert scheduled == ["ats-canary.yml"]
+    # Only read-only workflows may keep a GitHub schedule: the ATS canary probes
+    # public boards, and the dependency audit installs and inspects the lock.
+    assert scheduled == ["ats-canary.yml", "deps-audit.yml"]
 
 
 def test_only_the_allowlisted_worker_crons_can_become_the_writer():
