@@ -45,7 +45,10 @@ def test_access_verifier_requires_valid_signature_issuer_audience_and_expiry():
     assert verifier.verify(_token(key, aud="wrong")) is False
     assert verifier.verify(_token(key, iss="https://wrong.cloudflareaccess.com")) is False
     assert verifier.verify(_token(key, exp=NOW - dt.timedelta(minutes=1))) is False
-    assert verifier.verify(jwt.encode({"aud": AUDIENCE}, "secret", algorithm="HS256")) is False
+    # 32 bytes only to avoid PyJWT's weak-key warning; the point is HS256 is refused.
+    assert verifier.verify(
+        jwt.encode({"aud": AUDIENCE}, "s" * 32, algorithm="HS256")
+    ) is False
     assert verifier.verify("not-a-token") is False
 
 

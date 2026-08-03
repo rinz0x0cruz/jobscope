@@ -1,7 +1,7 @@
 # Core (Phase 1): config, HTTP, RSS
 pyyaml==6.0.2
 requests==2.33.0
-pyjwt[crypto]==2.10.1
+pyjwt[crypto]==2.13.0
 feedparser==6.0.11
 
 # Enrichment (Phase 2)
