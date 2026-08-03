@@ -30,6 +30,42 @@ def _mk(signal, date, role=""):
 
 
 # --- split_instances --------------------------------------------------------
+def test_mixed_company_group_splits_by_employer():
+    # A synthetic id is minted the first time a thread is seen, so mail whose company
+    # had not parsed yet all landed under one key. Renaming the events later did not
+    # move them, and split_instances divides on rejection and role rather than
+    # company, so eleven employers shared one application row.
+    from collections import defaultdict
+
+    groups = defaultdict(list, {"mail:blob": [
+        {"id": 1, "company": "Mimecast", "role": "", "date": "2026-07-04"},
+        {"id": 2, "company": "CrowdStrike", "role": "", "date": "2026-07-09"},
+        {"id": 3, "company": "RSM", "role": "", "date": "2026-07-13"},
+        {"id": 4, "company": "", "role": "", "date": "2026-07-22"},
+    ]})
+    reconcile._split_mixed_companies(groups)
+
+    # The earliest event keeps the original id; an unparsed company stays with it.
+    assert [e["id"] for e in groups["mail:blob"]] == [1, 4]
+    moved = {e["company"] for base, evs in groups.items() if base != "mail:blob"
+             for e in evs}
+    assert moved == {"CrowdStrike", "RSM"}
+    assert len(groups) == 3
+
+
+def test_single_company_group_is_left_alone():
+    from collections import defaultdict
+
+    events = [
+        {"id": 1, "company": "Acme", "role": "", "date": "2026-07-04"},
+        {"id": 2, "company": "Acme", "role": "Analyst", "date": "2026-07-09"},
+    ]
+    groups = defaultdict(list, {"mail:acme": list(events)})
+    reconcile._split_mixed_companies(groups)
+    assert list(groups) == ["mail:acme"]
+    assert [e["id"] for e in groups["mail:acme"]] == [1, 2]
+
+
 def test_split_sequential_reapply():
     evs = [_mk("confirmation", "2026-07-01"), _mk("rejection", "2026-07-03"),
            _mk("confirmation", "2026-07-10")]

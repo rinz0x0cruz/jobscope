@@ -178,6 +178,35 @@ def recompute(store, *, initiator: str = "cli") -> dict:
     return {"groups": stats["groups"], "instances": stats["instances"]}
 
 
+def _split_mixed_companies(groups: dict[str, list[dict]]) -> None:
+    """Give each employer its own application when one id collected several.
+
+    A synthetic id encodes company and role but is minted the first time a thread is
+    seen, so mail whose company had not parsed yet all lands under one key. Renaming
+    the events later does not move them, and ``split_instances`` divides on rejection
+    and role rather than company, so one employer's row can hide several others'.
+    The earliest event keeps the original id; every other company is re-keyed.
+    """
+    from .inbox import _synthetic_job_id
+
+    for base, evs in list(groups.items()):
+        named = {(e.get("company") or "").strip() for e in evs}
+        named.discard("")
+        if len(named) < 2:
+            continue
+        evs.sort(key=lambda e: (e.get("date") or "", e.get("first_seen") or ""))
+        keep = (evs[0].get("company") or "").strip()
+        moved = {e.get("id") for e in evs
+                 if (e.get("company") or "").strip() not in ("", keep)}
+        if not moved:
+            continue
+        groups[base] = [e for e in evs if e.get("id") not in moved]
+        for event in evs:
+            if event.get("id") in moved:
+                groups[_synthetic_job_id(
+                    event.get("company") or "", event.get("role") or "")].append(event)
+
+
 def _recompute(store, run_id: str) -> dict[str, int]:
     events = store.mail_events()
     canonical_ids = _canonical_event_ids(store, events)
@@ -187,6 +216,7 @@ def _recompute(store, run_id: str) -> dict[str, int]:
         if base:
             base = canonical_ids.get(_event_identity(e), base)
             groups[base].append(e)
+    _split_mixed_companies(groups)
 
     planned: list[tuple[str, str, str, list[dict]]] = []
     written: set[str] = set()
