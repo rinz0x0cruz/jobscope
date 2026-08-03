@@ -1414,6 +1414,18 @@ def send_target(cfg: dict, store, target_id: str, *, now: Optional[datetime] = N
     return {"ok": True, "sent": True, "target": stored}
 
 
+# Pacing outcomes: the target is still healthy and simply not sendable yet, so an
+# unattended caller must retry later rather than report a failure.
+DEFERRAL_CODES = frozenset({
+    "nothing_due",
+    "outside_send_window",
+    "minimum_spacing",
+    "daily_limit",
+    "followup_not_due",
+    "send_in_progress",
+})
+
+
 def send_next_approved(cfg: dict, store, *, campaign_id: str = "",
                        now: Optional[datetime] = None) -> dict:
     current = _utc(now)

@@ -1,6 +1,34 @@
+import pytest
+
+from jobscope.apply import campaigns
 from jobscope.cli import main
 from jobscope.core.model import Application, Job, Resume
 from jobscope.core.store import Store
+
+
+@pytest.mark.parametrize("code, expected_exit", [
+    ("nothing_due", 0),
+    ("outside_send_window", 0),
+    ("minimum_spacing", 0),
+    ("daily_limit", 0),
+    ("followup_not_due", 0),
+    ("send_in_progress", 0),
+    ("delivery_unknown", 1),
+    ("smtp_failed", 1),
+    ("invalid_recipient", 1),
+])
+def test_campaign_cli_send_approved_defers_without_reporting_failure(
+    tmp_path, capsys, monkeypatch, code, expected_exit,
+):
+    path = tmp_path / "campaign-send.db"
+    Store(str(path)).close()
+    monkeypatch.setattr(
+        campaigns, "send_next_approved",
+        lambda *_args, **_kwargs: {"ok": False, "sent": False, "code": code},
+    )
+
+    assert main(["--db", str(path), "campaign", "send-approved"]) == expected_exit
+    assert code in capsys.readouterr().out
 
 
 def test_campaign_cli_creates_and_lists_ranked_targets(tmp_path, capsys):

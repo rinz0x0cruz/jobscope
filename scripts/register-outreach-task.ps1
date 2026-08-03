@@ -7,10 +7,16 @@
     Registers an hourly Windows Scheduled Task that runs `jobscope campaign
     tick`. Each invocation incrementally checks configured inboxes, reconciles
     replies, opt-outs, bounces, and complaints, and reports due approved work.
-    It never calls SMTP; delivery remains a separate explicit action.
+    Reconciliation never calls SMTP. Pass -Deliver to also send approved work
+    that is already due; without it, delivery remains a separate manual action.
 
 .PARAMETER IntervalMinutes
     Reconciliation frequency. Default 60; minimum 15.
+
+.PARAMETER Deliver
+    Also run `campaign send-approved` after each reconciliation, sending at most
+    one already-approved, already-due message per run inside the campaign's send
+    window. Off by default.
 
 .PARAMETER Config
     Optional path to a non-default Jobscope config file.
@@ -22,6 +28,7 @@
 param(
     [ValidateRange(15, 1440)]
     [int]$IntervalMinutes = 60,
+    [switch]$Deliver,
     [string]$Config = "",
     [string]$TaskName = "jobscope outreach"
 )
@@ -49,7 +56,15 @@ if ($Config) {
 
 $ConfigArg = if ($ResolvedConfig) { "--config `"$ResolvedConfig`" " } else { "" }
 $CommandArgs = "-m jobscope ${ConfigArg}campaign tick"
-$action = New-ScheduledTaskAction -Execute $Py -Argument $CommandArgs -WorkingDirectory $RepoRoot
+$actions = @(
+    New-ScheduledTaskAction -Execute $Py -Argument $CommandArgs -WorkingDirectory $RepoRoot
+)
+$SendArgs = ""
+if ($Deliver) {
+    # Ordered after reconciliation so a reply, opt-out, or bounce lands first.
+    $SendArgs = "-m jobscope ${ConfigArg}campaign send-approved"
+    $actions += New-ScheduledTaskAction -Execute $Py -Argument $SendArgs -WorkingDirectory $RepoRoot
+}
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
     -RepetitionDuration (New-TimeSpan -Days 3650)
@@ -60,13 +75,18 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
 $principal = New-ScheduledTaskPrincipal `
     -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+Register-ScheduledTask -TaskName $TaskName -Action $actions -Trigger $trigger `
     -Settings $settings -Principal $principal -Force | Out-Null
 
 Write-Host "Registered scheduled task '$TaskName'."
-Write-Host "  cadence: every $IntervalMinutes minute(s); reconciliation only"
+Write-Host "  cadence: every $IntervalMinutes minute(s)"
 Write-Host "  command: $Py $CommandArgs"
-Write-Host "  delivery: separate manual action; this task never calls SMTP"
+if ($Deliver) {
+    Write-Host "  command: $Py $SendArgs"
+    Write-Host "  delivery: enabled; at most one due message per run, inside the send window"
+} else {
+    Write-Host "  delivery: separate manual action; this task never calls SMTP"
+}
 Write-Host ""
 Write-Host "Run now:  Start-ScheduledTask -TaskName '$TaskName'"
 Write-Host "Remove:   ./scripts/unregister-outreach-task.ps1 -TaskName '$TaskName'"

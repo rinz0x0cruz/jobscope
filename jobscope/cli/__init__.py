@@ -308,7 +308,9 @@ def cmd_campaign(args, cfg):
                     cfg, store, campaign_id=args.campaign_id or "",
                 )
                 print(f"  {result.get('code') or ('sent' if result.get('sent') else 'no send')}")
-                return 0 if result.get("ok") else 1
+                if result.get("ok") or result.get("code") in campaigns.DEFERRAL_CODES:
+                    return 0
+                return 1
             if action == "reconcile-delivery":
                 result = campaigns.reconcile_delivery(cfg, store, args.target_id)
                 print(f"  Sent reconciliation: {result.get('code') or 'unknown'}")
