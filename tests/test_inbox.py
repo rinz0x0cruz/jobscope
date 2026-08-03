@@ -649,6 +649,15 @@ def test_parse_company_rejects_a_lowercase_body_capture():
     assert company == "Guidehouse"
 
 
+def test_parse_company_from_a_closing_thanks_phrase():
+    # A Greenhouse relay names no employer and the body is boilerplate, so the only
+    # place AppViewX appears is the subject's closing phrase.
+    company, _ = mailrules.parse_company_role(
+        "", "us.greenhouse-mail.io", "Thank You from AppViewX", "",
+        "no-reply@us.greenhouse-mail.io")
+    assert company == "AppViewX"
+
+
 def test_role_nouns_are_shared_with_the_resume_parser():
     # Two lists of the same words drifted apart: the resume parser knew "hunter",
     # "scientist" and "designer" while this one did not, so "Threat Hunter" was

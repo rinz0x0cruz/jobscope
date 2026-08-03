@@ -30,6 +30,31 @@ def _mk(signal, date, role=""):
 
 
 # --- split_instances --------------------------------------------------------
+def test_stale_synthetic_key_merges_onto_the_canonical_row():
+    # A confirmation and its rejection ended up under two keys because the company
+    # parsed differently at each ingest, so the board showed one application as both
+    # applied and rejected.
+    from collections import defaultdict
+
+    from jobscope.ingest.inbox import _synthetic_job_id
+
+    canonical = _synthetic_job_id("SitusAMC", "")
+    groups = defaultdict(list, {
+        canonical: [{"id": 1, "company": "SitusAMC", "role": "", "date": "2026-07-09",
+                     "job_id": canonical}],
+        "mail:stale": [{"id": 2, "company": "SitusAMC", "role": "", "date": "2026-07-15",
+                        "job_id": "mail:stale"}],
+    })
+
+    class _NoNotes:
+        def get_application(self, job_id, include_tombstoned=False):
+            return None
+
+    reconcile._merge_stale_synthetic_keys(_NoNotes(), groups)
+    assert list(groups) == [canonical]
+    assert [e["id"] for e in groups[canonical]] == [1, 2]
+
+
 def test_mixed_company_group_splits_by_employer():
     # A synthetic id is minted the first time a thread is seen, so mail whose company
     # had not parsed yet all landed under one key. Renaming the events later did not

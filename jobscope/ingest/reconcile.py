@@ -207,6 +207,40 @@ def _split_mixed_companies(groups: dict[str, list[dict]]) -> None:
                     event.get("company") or "", event.get("role") or "")].append(event)
 
 
+def _merge_stale_synthetic_keys(store, groups: dict[str, list[dict]]) -> None:
+    """Fold a group whose key predates its company onto the group that key now names.
+
+    A synthetic id is derived from company and role at first sight. When the company
+    parsed later, or differently, the same application ends up under two keys - one
+    holding the confirmation and one the rejection - so the board shows a company as
+    both applied and rejected. Only a group whose canonical id already exists is
+    moved; renaming the rest would churn ids that campaigns and reviews point at.
+    """
+    from .inbox import _synthetic_job_id
+
+    for base in sorted(groups):
+        if not base.startswith("mail:") or base not in groups:
+            continue
+        evs = groups[base]
+        companies = {(e.get("company") or "").strip() for e in evs}
+        companies.discard("")
+        if len(companies) != 1:
+            continue
+        roles = {(e.get("role") or "").strip() for e in evs}
+        canonical = _synthetic_job_id(
+            companies.pop(), roles.pop() if len(roles) == 1 else "")
+        if canonical == base or canonical not in groups:
+            continue
+        # A user-annotated application is never merged away, matching the guard the
+        # requisition canonicaliser already applies.
+        note_ids = {base, canonical} | {e.get("job_id") or "" for e in evs}
+        if any((store.get_application(job_id, include_tombstoned=True) or {}).get("notes")
+               for job_id in note_ids if job_id):
+            continue
+        groups[canonical].extend(evs)
+        del groups[base]
+
+
 def _recompute(store, run_id: str) -> dict[str, int]:
     events = store.mail_events()
     canonical_ids = _canonical_event_ids(store, events)
@@ -217,6 +251,7 @@ def _recompute(store, run_id: str) -> dict[str, int]:
             base = canonical_ids.get(_event_identity(e), base)
             groups[base].append(e)
     _split_mixed_companies(groups)
+    _merge_stale_synthetic_keys(store, groups)
 
     planned: list[tuple[str, str, str, list[dict]]] = []
     written: set[str] = set()

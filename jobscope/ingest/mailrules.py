@@ -707,6 +707,11 @@ _INTEREST_IN = re.compile(
 _AT_COMPANY = re.compile(
     r"\bat\s+(?P<company>[A-Z][A-Za-z0-9&.'-]*(?:\s+[A-Z0-9][A-Za-z0-9&.'-]*){0,3})"
     r"(?=\s*[|(]|[!.?,)]|\s+(?:for|and|as|team|careers?)\b|$)")
+# "Thank You from AppViewX": a relay sender names no employer and the body is
+# boilerplate, so this closing phrase is the only place the company appears.
+_THANKS_FROM = re.compile(
+    r"(?i)\bthank(?:s| you)\s+(?:so much\s+)?from\s+"
+    r"(?P<company>[A-Z][A-Za-z0-9 &.'-]{1,40}?)\s*$")
 # A Workday careers URL embeds the employer as the tenant subdomain
 # ("mimecast.wd5.myworkdayjobs.com" -> Mimecast): a last-resort body signal for
 # Workday confirmations with a generic subject and no usable sender display.
@@ -731,7 +736,8 @@ def parse_company_role(from_name: str, from_domain: str, subject: str,
         role = role or _clean_role(m.group("role"))
         company = _pick(_strip_company_noise(m.group("company")))
 
-    for pattern in (_APPLICATION_TO, _INTEREST_IN, _JOB_APPLICATION, _AT_COMPANY):
+    for pattern in (_APPLICATION_TO, _INTEREST_IN, _JOB_APPLICATION, _THANKS_FROM,
+                    _AT_COMPANY):
         if company:
             break
         m = pattern.search(subject)
