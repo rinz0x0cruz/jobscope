@@ -22,8 +22,29 @@ Design principles:
   trust boundary to one protected volume and secret manager. The published dashboard
   remains redacted. See [SECURITY.md](SECURITY.md).
 
-> Built as a sibling to [threatscope](../threatscope) / [exploitrank](../exploitrank):
-> stdlib CLI, SQLite persistence, concurrent feeds, static dashboard, `selftest`.
+## Review path (offline)
+
+After the one-time clone and dependency install, the proof needs no resume, account,
+browser, network request, or model key:
+
+```powershell
+git clone https://github.com/rinz0x0cruz/jobscope
+cd jobscope
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\setup.ps1
+.\.venv\Scripts\python.exe -m jobscope selftest
+```
+
+On macOS or Linux, use `./setup.sh` and `.venv/bin/python`. The self-test exercises
+configuration, deterministic scoring, filters, persistence, ATS parsing, and mail
+classification against local fixtures.
+
+| Review question | Evidence |
+| --- | --- |
+| Can the core run without AI or network access? | `jobscope selftest` and [ARCHITECTURE.md](ARCHITECTURE.md) |
+| What data can reach the public dashboard? | [SECURITY.md](SECURITY.md) |
+| How are failed publication and encrypted snapshots recovered? | [OPERATIONS.md](OPERATIONS.md) |
+| Can automation submit an application or send unapproved mail? | No. `apply --assist` stops before submit, and outreach requires an explicit bound approval. |
 
 ---
 
