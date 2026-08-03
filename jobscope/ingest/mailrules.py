@@ -14,6 +14,8 @@ import difflib
 import re
 from typing import Optional
 
+from jobscope.analyze.resume import ROLE_WORDS as _RESUME_ROLE_WORDS
+
 # --- Applicant-tracking-system + job-board sender domains -------------------
 # Mail about an application you submitted almost always comes from one of these
 # platforms (the employer configures them), so the sending domain alone is a
@@ -682,12 +684,12 @@ _ROLE_STOP = frozenset({
 
 # A subject pattern ("Your application to Cyber Security Analyst") happily captures
 # the ROLE where a company belongs. No employer among the 148 in this mailbox ends
-# in one of these; 134 of 619 job titles do.
-_ROLE_TAIL_NOUNS = frozenset({
-    "analyst", "engineer", "manager", "consultant", "specialist", "architect",
-    "developer", "administrator", "researcher", "director", "intern", "lead",
-    "advisor", "auditor", "technician", "officer",
-})
+# in one of these; 134 of 619 job titles do. Built on the resume parser's own list
+# so the two cannot drift: it already knew "hunter", which this one did not, and
+# "Threat Hunter" was stored as a company.
+_ROLE_TAIL_NOUNS = frozenset(_RESUME_ROLE_WORDS) | {
+    "advisor", "auditor", "officer", "technician", "consultant", "intern",
+}
 
 # "SitusAMC - Analyst": a subject glues the role onto the company. Keep the employer
 # rather than rejecting the pair, which would fall through to body filler.

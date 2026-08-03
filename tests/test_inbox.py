@@ -649,6 +649,17 @@ def test_parse_company_rejects_a_lowercase_body_capture():
     assert company == "Guidehouse"
 
 
+def test_role_nouns_are_shared_with_the_resume_parser():
+    # Two lists of the same words drifted apart: the resume parser knew "hunter",
+    # "scientist" and "designer" while this one did not, so "Threat Hunter" was
+    # stored as an employer.
+    for title in ("Threat Hunter", "Data Scientist", "Product Designer",
+                  "Cyber Security Analyst"):
+        assert not mailrules._valid_company(title), title
+    for company in ("Tower Research Capital", "Arete IR", "CloudSEK"):
+        assert mailrules._valid_company(company), company
+
+
 def test_parse_company_rejects_a_role_captured_as_the_company():
     # "Your application to <Role>" fits the same shape as "...to <Company>", so the
     # subject pattern captured the role. The real employer was in the display name.
