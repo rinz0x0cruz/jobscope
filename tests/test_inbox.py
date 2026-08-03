@@ -614,6 +614,24 @@ def test_parse_company_from_workday_tenant_url():
     assert company == "Mimecast"
 
 
+def test_parse_company_rejects_a_role_captured_as_the_company():
+    # "Your application to <Role>" fits the same shape as "...to <Company>", so the
+    # subject pattern captured the role. The real employer was in the display name.
+    company, _ = mailrules.parse_company_role(
+        "FLSmidth", "myworkday.com", "Your application to Cyber Security Analyst", "",
+        "flsmidth@myworkday.com")
+    assert company == "FLSmidth"
+
+
+def test_parse_company_keeps_employer_when_the_role_is_glued_on():
+    # Rejecting "SitusAMC - Analyst" outright falls through to body filler, so the
+    # trailing role is stripped and the employer kept.
+    company, _ = mailrules.parse_company_role(
+        "SitusAMC - Analyst", "myworkday.com", "Application Received", "",
+        "SitusAMC@myworkday.com")
+    assert company == "SitusAMC"
+
+
 def test_parse_role_rejects_a_sentence_after_a_generic_prefix():
     # "Next Steps:" is a generic subject prefix, not "<Company>: <Role>", so the
     # tail is a sentence. Stored as a role it became a second application for a

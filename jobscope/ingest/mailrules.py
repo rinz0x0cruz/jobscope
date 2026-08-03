@@ -670,6 +670,21 @@ _ROLE_STOP = frozenset({
     "application status", "application update", "next step", "next steps",
     "status", "update",
 })
+
+# A subject pattern ("Your application to Cyber Security Analyst") happily captures
+# the ROLE where a company belongs. No employer among the 148 in this mailbox ends
+# in one of these; 134 of 619 job titles do.
+_ROLE_TAIL_NOUNS = frozenset({
+    "analyst", "engineer", "manager", "consultant", "specialist", "architect",
+    "developer", "administrator", "researcher", "director", "intern", "lead",
+    "advisor", "auditor", "technician", "officer",
+})
+
+# "SitusAMC - Analyst": a subject glues the role onto the company. Keep the employer
+# rather than rejecting the pair, which would fall through to body filler.
+_TRAILING_ROLE = re.compile(
+    r"\s*[-\u2013\u2014|:]\s*(?:[A-Za-z]+\s+){0,3}(?:"
+    + "|".join(sorted(_ROLE_TAIL_NOUNS)) + r")s?\s*$", re.I)
 # "thank you for your interest in <Company>" (rejection/confirmation phrasing).
 _INTEREST_IN = re.compile(
     r"interest(?:ed)?\s+in\s+(?:working\s+(?:at|with)\s+|joining\s+)?"
@@ -804,6 +819,7 @@ def _clean(s: str) -> str:
     s = _COMPANY_SUFFIXES.sub("", s).strip(" -|:,.")
     # Strip a trailing ATS/HR platform token ("NCR Voyix Workday" -> "NCR Voyix").
     s = _TRAILING_PLATFORM.sub("", s).strip(" -|:,.")
+    s = _TRAILING_ROLE.sub("", s).strip(" -|:,.")
     return re.sub(r"\s+", " ", s).strip()
 
 
@@ -813,6 +829,8 @@ def _valid_company(c: str) -> bool:
     ("the 124720 Security Analyst Level 2 - SIEM & SOAR")."""
     key = normalize_company(c)
     if not key or len(key) <= 1 or key in _COMPANY_STOP or key in _NOREPLY_LOCALPARTS:
+        return False
+    if key.split()[-1] in _ROLE_TAIL_NOUNS:
         return False
     if re.search(r"\d{4,}", c):        # a 4+ digit run is a job-req number, not a company
         return False
