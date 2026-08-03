@@ -36,6 +36,20 @@ _AUTOMATED_LOCALPARTS = ("noreply", "no-reply", "donotreply", "do-not-reply", "n
 _ATS_MAIL = ("workablemail", "myworkday", "myworkdayjobs", "icims", "greenhouse", "lever",
              "ashbyhq", "smartrecruiters", "bamboohr", "workday", "successfactors", "taleo",
              "jobvite")
+# Desks a company publishes for customers, not candidates. Matched on dot-separated
+# tokens so a real address such as infosec.hiring@ survives.
+_NON_HIRING_LOCALPARTS = frozenset({
+    "support", "info", "contact", "sales", "help", "helpdesk", "admin", "billing",
+    "press", "media", "marketing", "legal", "privacy", "security", "abuse",
+    "webmaster", "enquiry", "enquiries", "inquiry", "inquiries", "orders",
+    "service", "services", "customercare", "training", "office", "reception",
+})
+
+
+def _is_generic_desk(addr: str) -> bool:
+    """A published support or info desk never reaches a hiring contact."""
+    local = (addr or "").split("@", 1)[0].lower()
+    return bool(_NON_HIRING_LOCALPARTS & set(re.split(r"[._+-]", local)))
 # local-parts that suggest a human/HR inbox (ranked first among discovered addresses)
 _HR_HINTS = ("recruit", "talent", "hr", "hiring", "career", "jobs", "job", "people", "hello",
              "contact", "work", "join", "apply", "team")
@@ -221,7 +235,8 @@ def _rank_hr(emails: list[str]) -> list[str]:
     def key(e: str):
         lp = e.split("@")[0]
         return (0 if any(h in lp for h in _HR_HINTS) else 1, len(e))
-    return sorted(dict.fromkeys(emails), key=key)
+    return sorted(
+        (e for e in dict.fromkeys(emails) if not _is_generic_desk(e)), key=key)
 
 
 def discover_emails(job, domain: str, *, fetch: bool) -> list[str]:

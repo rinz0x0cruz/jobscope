@@ -44,6 +44,19 @@ def _seed(tmp, *, with_recruiter_mail=False, company_url="", do_not_contact=None
     return cfg, store, job
 
 
+def test_discovered_support_desks_are_not_hiring_contacts():
+    # A site often publishes only a customer desk. Ranking those below HR hints was
+    # not enough: with nothing else on the page the first one was auto-selected,
+    # which aimed a cold application at support@ and info@.
+    assert outreach._rank_hr([
+        "training.support@saviynt.com", "support@alignerr.com", "info@fortinet.com",
+        "security@acme.com",
+    ]) == []
+    assert outreach._rank_hr([
+        "support@acme.com", "infosec.hiring@acme.com", "priya.sharma@acme.com",
+    ]) == ["infosec.hiring@acme.com", "priya.sharma@acme.com"]
+
+
 def test_resolve_override_wins():
     with tempfile.TemporaryDirectory() as tmp:
         cfg, store, job = _seed(tmp)
