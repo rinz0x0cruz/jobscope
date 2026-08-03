@@ -437,6 +437,13 @@ Registering `scripts/register-outreach-task.ps1` schedules `campaign tick` under
 Each tick incrementally checks configured inboxes, reconciles replies, opt-outs, bounces, and complaints,
 reports due approved work, and sends nothing. The task uses `MultipleInstances IgnoreNew`.
 
+Adding `-Deliver` appends a second action running `campaign send-approved` after the tick, so a reply,
+opt-out, or bounce always lands before the next send. It still sends at most one already-approved,
+already-due message per run, inside the campaign's send window. Pacing outcomes (`nothing_due`,
+`outside_send_window`, `minimum_spacing`, `daily_limit`, `followup_not_due`, `send_in_progress`) exit 0 so
+an unattended run defers quietly; outcomes needing a human (`delivery_unknown`, `smtp_failed`,
+`approval_required`, `policy_review_required`) still exit non-zero.
+
 Build a follow-up review queue with `campaign followups --count N` or **Build follow-up queue** in
 the local UI. This operation writes drafts only. Before approval and again before sending, Jobscope
 checks that the source is still pending, `apply.followup_days` has elapsed since the latest action,
@@ -533,6 +540,11 @@ boards pass. Partial, malformed, unsupported, or failed mappings fail the workfl
 and identify the exact provider/slug. Probes run with bounded concurrency; each HTTP
 attempt has a 12-second timeout and at most two capped retry delays, so third-party
 rate limits can make a canary batch take several minutes without blocking other jobs.
+
+The weekly `.github/workflows/deps-audit.yml` installs `requirements.lock` and runs `pip-audit` over the
+resulting environment. Auditing the installed set covers transitive pins and avoids re-resolving, which
+otherwise tries to build numpy from source. It is scheduled rather than gating pushes so a newly published
+advisory surfaces without blocking unrelated work.
 
 New automatic sources require an explicit review before code/config activation: publisher-controlled public
 API/feed documentation and permission basis, exact HTTPS request host, no authentication or evasion, typed

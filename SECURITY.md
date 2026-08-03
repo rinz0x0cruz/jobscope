@@ -79,6 +79,10 @@ route still fails closed unless the assertion validates for the exact Access aud
   (revoke + regenerate). App passwords grant **full mailbox access**, so treat them like a password.
 - `.env` is gitignored; keep it `chmod 600` (POSIX). CI runs `detect-secrets` and the
   `.pre-commit-config.yaml` hook blocks accidental secret commits.
+- Dependabot alerts and security updates cover the full npm tree from `web/package-lock.json`
+  and the direct Python pins in `requirements.txt`/`pyproject.toml`. Transitive Python pins live
+  in `requirements.lock`, which Dependabot does not parse, so the weekly `deps-audit.yml`
+  workflow runs `pip-audit` over the installed environment instead.
 
 ## Gmail access
 

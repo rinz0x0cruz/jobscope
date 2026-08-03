@@ -176,14 +176,16 @@ tracker links the immediate `In-Reply-To` parent exactly, with confirmed-domain 
 fallback for new threads.
 The Outreach delivery history shows recipient, subject, send time, reply sender/subject/time, and opt-outs.
 
-The local scheduler runs a reconciliation-only campaign tick: it checks configured inboxes for replies,
+The local scheduler runs a reconciliation-only campaign tick by default: it checks configured inboxes for replies,
 opt-outs, bounces, and complaints, reports due work, and never calls SMTP. Delivery is a separate explicit
-action on one policy-approved target. Drafts can be exported as `.eml` while SMTP, inbox, and AI are disabled:
+action on one policy-approved target, or an opt-in `-Deliver` switch on the scheduled task. Drafts can be
+exported as `.eml` while SMTP, inbox, and AI are disabled:
 
 ```powershell
 python -m jobscope campaign ready
 python -m jobscope campaign start --campaign-id ID  # no-send SMTP preflight, then activate
-./scripts/register-outreach-task.ps1
+./scripts/register-outreach-task.ps1               # reconcile only; never calls SMTP
+./scripts/register-outreach-task.ps1 -Deliver      # also send one due message per run, in the send window
 python -m jobscope campaign replies          # check now; --no-fetch reconciles stored mail only
 python -m jobscope campaign reconcile-delivery --target-id ID  # exact read-only Sent lookup
 python -m jobscope new --reconcile-sent       # resolve an ambiguous digest by Message-ID
