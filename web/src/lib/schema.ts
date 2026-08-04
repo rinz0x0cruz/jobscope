@@ -157,6 +157,7 @@ export interface Application {
   interview_at: string
   salary_offered: string
   offer_accepted: string
+  referred_by: string
   timeline: ApplicationEvent[]
 }
 

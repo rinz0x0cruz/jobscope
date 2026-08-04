@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS applications (
     interview_at TEXT,
     salary_offered TEXT,
     offer_accepted TEXT,
+    referred_by TEXT,
     tombstoned_at TEXT,
     tombstone_reason TEXT,
     reconciliation_run_id TEXT,
@@ -430,7 +431,7 @@ class _StoreBase:
             self.conn.execute("ALTER TABLE enrichment ADD COLUMN brief_json TEXT")
         appc = {r["name"] for r in self.conn.execute("PRAGMA table_info(applications)")}
         for col in ("company", "title", "source", "outreach_at", "outreach_to",
-                    "interview_at", "salary_offered", "offer_accepted",
+                    "interview_at", "salary_offered", "offer_accepted", "referred_by",
                     "tombstoned_at", "tombstone_reason", "reconciliation_run_id"):
             if col not in appc:
                 self.conn.execute(f"ALTER TABLE applications ADD COLUMN {col} TEXT")

@@ -43,6 +43,7 @@ def prep_sheet(cfg: dict, store, job, resume) -> dict:
         "star": (strengths[:4] or [job.title]),
         "brief": brief.get("text", ""),
         "referrals": referrals.paths_for(store, job.company),
+        "referred_by": (app.get("referred_by") or "").strip(),
         "notes": (app.get("notes") or "").strip(),
     }
 
@@ -77,7 +78,12 @@ def render_sheet(job, s: dict) -> str:
         out.append("  company brief: (none stored -- run `jobscope brief <id>`)")
 
     paths = s["referrals"]
-    if paths["leads"]:
+    if s["referred_by"]:
+        # A confirmed warm intro outranks unused leads: name the person, and
+        # remember they are owed an update after the interview.
+        out.append(f"  referred in by: {s['referred_by']} -- open with the connection, "
+                   f"and send them the outcome afterwards")
+    elif paths["leads"]:
         out.append(f"  referral path: {len(paths['real'])} profile(s), "
                    f"{len(paths['searches'])} search link(s) -- `jobscope referrals --job {job.id}`")
     else:

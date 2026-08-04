@@ -215,6 +215,7 @@ _APPLICATION = {
     "job_id": str, "company": str, "title": str, "status": str,
     "applied_at": str, "updated": str, "source": str,
     "interview_at": str, "salary_offered": str, "offer_accepted": str,
+    "referred_by": str,
     "timeline": list,
 }
 

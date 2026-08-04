@@ -224,6 +224,7 @@ class Application:
     interview_at: str = ""                                   # next interview datetime (ISO or free text)
     salary_offered: str = ""                                 # comp on an offer (free text)
     offer_accepted: str = ""                                 # "", "accepted", or "declined"
+    referred_by: str = ""                                    # who referred you in (warm intro to thank)
 
 
 @dataclass

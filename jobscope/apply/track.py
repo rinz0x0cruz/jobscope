@@ -44,6 +44,7 @@ def run(store, set_expr: Optional[str] = None, cfg: Optional[dict] = None,
               f"{(a.get('title') or '?')[:33]:<34} {a['job_id']}")
 
     _print_reminders(apps, (cfg or {}).get("apply", {}).get("followup_days", 7))
+    _print_referrals_to_update(apps)
     return 0
 
 
@@ -86,6 +87,22 @@ def _print_reminders(apps: list, followup_days: int) -> None:
         for age, a in sorted(due, key=lambda item: (-item[0], (item[1].get("company") or ""))):
             print(f"    - {(a.get('company') or '?')} / {(a.get('title') or '?')[:40]} "
                   f"({age}d) [{a['job_id']}]")
+
+
+def _print_referrals_to_update(apps: list) -> None:
+    """Applications that a person referred you into, once they reach a stage worth
+    reporting back. A referrer who hears the outcome refers again."""
+    owed = [a for a in apps
+            if (a.get("referred_by") or "").strip()
+            and a.get("status") in ("interview", "offer")]
+    if not owed:
+        return
+    print(f"\n  Referrers to update ({len(owed)}):")
+    for a in sorted(owed, key=lambda x: (x.get("status") != "offer",
+                                         (x.get("company") or ""))):
+        print(f"    - {a['referred_by']} referred you to "
+              f"{(a.get('company') or '?')} / {(a.get('title') or '?')[:40]} "
+              f"[{a['status']}]")
 
 
 def run_new(store) -> int:

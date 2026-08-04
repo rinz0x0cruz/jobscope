@@ -536,6 +536,9 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
 
     company, role = mailrules.parse_company_role(
         from_name, from_domain, subject, snippet, from_addr)
+    # Read the referrer here, while the body is still in memory: store_snippets
+    # is off by default, so ev.snippet is usually empty by the time it persists.
+    referred_by = mailrules.referrer_from(subject, snippet)
 
     # Weighted rules remain authoritative even on close calls. Model output can
     # never replace a mail signal or mutate application state.
@@ -559,7 +562,7 @@ def _process_uid(M, addr: str, uid, store, cfg: dict, job_index: dict,
 
     is_new = store.upsert_mail_event(ev)
     if is_new:
-        _apply_to_application(store, ev)
+        _apply_to_application(store, ev, referred_by)
         return ev
     if rescore:
         # Re-scan mode (backfill): the message is already stored, so upsert is a
@@ -653,12 +656,13 @@ def _index_job(job_index: dict[str, list[tuple[str, str]]], company: str,
         entries.append(candidate)
 
 
-def _apply_to_application(store, ev: MailEvent) -> None:
+def _apply_to_application(store, ev: MailEvent, referred_by: str = "") -> None:
     status = mailrules.signal_to_status(ev.signal)
-    if not status:
+    if not status and not referred_by:
         return  # 'other'/'recruiter'-only noise: recorded as an event, no funnel change
     existing = store.get_application(ev.job_id) or {}
-    new_status = mailrules.advance_status(existing.get("status", ""), status)
+    new_status = mailrules.advance_status(existing.get("status", ""), status) if status \
+        else existing.get("status", "") or "new"
     applied_at = existing.get("applied_at", "")
     if new_status == "applied" and not applied_at:
         applied_at = ev.date or now_iso()
@@ -673,6 +677,7 @@ def _apply_to_application(store, ev: MailEvent) -> None:
         company=ev.company,
         title=ev.role,
         source="inbox" if not existing else "",
+        referred_by=referred_by,
     ))
 
 

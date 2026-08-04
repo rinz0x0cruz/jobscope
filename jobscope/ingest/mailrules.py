@@ -273,6 +273,42 @@ _SIGNAL_STATUS: dict[str, str] = {
 # backwards (a stray late "application received" can't undo an "offer").
 _STATUS_RANK = {"new": 0, "prepared": 1, "applied": 2, "interview": 3, "offer": 4}
 
+# Referral attribution. A referral can arrive at any stage, so it is extracted
+# alongside the signal rather than competing with it in _PRECEDENCE. Each pattern
+# pairs an explicit referral verb with one capitalised name-shaped span; the
+# candidate is then filtered by _clean_referrer, because "We referred your
+# application" and "Talent Team recommended you" are not people.
+_NAME = r"([A-Z][A-Za-z'\u2019-]+(?:\s+[A-Z][A-Za-z'\u2019-]+){0,2})"
+_REFERRER_COMPILED = [
+    re.compile(rf"\b(?:referred(?:\s+to\s+(?:us|me))?\s+by|referral\s+(?:from|by)|"
+               rf"recommend(?:ed|ation)\s+(?:by|of)|introduced\s+(?:to\s+\w+\s+)?by)\s+{_NAME}"),
+    re.compile(rf"\b{_NAME}\s+(?:referred|recommended)\s+(?:you|your\b)"),
+    re.compile(rf"\b{_NAME}\s+(?:suggested|passed\s+(?:along|on)|forwarded)\b"),
+]
+
+# Leading words that fit the name shape but never name a referrer.
+_NOT_A_REFERRER = frozenset({
+    "a", "an", "and", "any", "colleague", "employee", "friend", "her", "hiring",
+    "his", "hr", "i", "it", "manager", "me", "my", "our", "people", "recruiter",
+    "recruiters", "recruiting", "recruitment", "she", "someone", "somebody",
+    "talent", "team", "the", "their", "they", "this", "us", "we", "who", "you",
+    "your", "acquisition", "partner", "sourcer", "staffing",
+})
+
+
+def _clean_referrer(candidate: str) -> str:
+    """Keep only a person-shaped referrer name (else "")."""
+    name = " ".join((candidate or "").split())
+    if not 2 < len(name) <= 60:
+        return ""
+    tokens = name.split()
+    if any(t.strip(".,'\u2019-").lower() in _NOT_A_REFERRER for t in tokens):
+        return ""
+    if _COMPANY_SUFFIXES.search(name):
+        return ""
+    return name
+
+
 _COMPANY_SUFFIXES = re.compile(
     r"\b(?:inc|inc\.|llc|ltd|ltd\.|limited|corp|corp\.|corporation|co|co\.|"
     r"gmbh|plc|sa|ag|bv|pvt|private|technologies|technology|labs|software|"
@@ -603,6 +639,26 @@ def is_transactional(subject: str, body: str = "") -> bool:
 def signal_to_status(signal: str) -> str:
     """Map a granular email signal to a coarse funnel status ("" = no change)."""
     return _SIGNAL_STATUS.get(signal, "")
+
+
+def referrer_from(subject: str, body: str = "") -> str:
+    """Name the person who referred you, or "" when no referral is evident.
+
+    A referral is orthogonal to the funnel: "Priya referred you, let's schedule
+    a call" is still an ``interview`` signal. It is extracted as an attribute so
+    recognising the warm intro never rewrites the stage. Only a named referrer is
+    returned -- "you were referred" with nobody to thank is not actionable.
+
+    Callers read this from mail that already passed ``is_job_related``; referral
+    wording alone never widens what gets ingested.
+    """
+    text = f"{subject or ''}\n{body or ''}"
+    for pattern in _REFERRER_COMPILED:
+        for match in pattern.finditer(text):
+            name = _clean_referrer(match.group(1))
+            if name:
+                return name
+    return ""
 
 
 def advance_status(old: str, new: str) -> str:

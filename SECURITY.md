@@ -11,6 +11,7 @@ This document describes what data it holds, how it's protected, and how to harde
 | Résumé(s), profile (name, email, phone) | `data/jobscope.db` (SQLite) | gitignored |
 | Scraped jobs, scores, rationale | `data/jobscope.db` | gitignored |
 | Referral contacts (names, public profile links) | `data/jobscope.db` | public-data leads only |
+| Referrer named in an email (`referred_by`) | `data/jobscope.db` | a third party's name; inside the encrypted snapshot only, never in the public shell |
 | Application funnel + email events (recruiter name/domain, subject) | `data/jobscope.db` | see *Data minimization* |
 | Campaign ranks, recipients, subjects, state, schedules, delivery/reply summary | local SQLite; allowlisted read-only projection in encrypted snapshots | visible only after passphrase unlock; no bodies or mutation controls |
 | Campaign draft bodies, approval/resume hashes, résumé paths, raw message IDs, suppressions | `data/jobscope.db` | never added to Pages or cloud-refresh snapshots |

@@ -260,3 +260,35 @@ def test_fp_requisition_role_is_preserved(cid, subject, body, expected):
     )
     assert company == "IBM"
     assert role == expected
+
+
+# Mode 5: REFERRAL LOOKALIKE. "referred"/"recommended" appears constantly in
+# recruiting mail without naming a person who vouched for you. Only a named human
+# is worth storing, because the whole point is knowing who to thank.
+REFERRER_CASES = [
+    ("named-verb-first", "Priya Sharma referred you for this role", "Priya Sharma"),
+    ("named-by-clause", "You were referred by Alex Chen", "Alex Chen"),
+    ("named-referral-from", "Employee referral from Maria Garcia Lopez", "Maria Garcia Lopez"),
+    ("named-suggested", "Rahul suggested I reach out about the SOC role", "Rahul"),
+    ("named-recommendation", "On the recommendation of Ada Lovelace", "Ada Lovelace"),
+    ("internal-routing", "We referred your application to the hiring manager", ""),
+    ("team-not-person", "Our Talent Team recommended you for another role", ""),
+    ("programme-boilerplate", "See our employee referral program details", ""),
+    ("passive-no-name", "Your application was forwarded internally", ""),
+    ("company-not-person", "Referred by Acme Technologies Ltd", ""),
+    ("unrelated-recommend", "I recommended you check the careers page", ""),
+]
+
+
+@pytest.mark.parametrize(
+    "cid,text,expected", REFERRER_CASES, ids=[c[0] for c in REFERRER_CASES]
+)
+def test_referrer_is_extracted_only_when_a_person_is_named(cid, text, expected):
+    assert mailrules.referrer_from(text) == expected
+
+
+def test_referral_never_displaces_the_funnel_signal():
+    subject, body = "Interview invitation", "Nina Patel referred you. Can we talk?"
+
+    assert mailrules.classify_scored(subject, body)[0] == "interview"
+    assert mailrules.referrer_from(subject, body) == "Nina Patel"

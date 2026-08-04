@@ -1689,3 +1689,69 @@ def test_inbox_skips_spam_folder_by_default(monkeypatch):
     inbox.run(cfg, store)
     assert store.mail_events() == []          # spam folder left untouched
     store.close()
+
+
+def test_referrer_is_recorded_without_changing_the_funnel_stage(monkeypatch):
+    # A referral can arrive at any stage, so it is stored as an attribute of the
+    # application; the email still classifies on its own strongest signal.
+    FakeIMAP.mailbox = {
+        7: _raw("Acme <careers@acme.com>", "Interview invitation",
+                "Priya Sharma referred you. Can we schedule a call this week?",
+                "<acme-7@acme.com>"),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+
+    inbox.run(_cfg(monkeypatch), store)
+
+    event = store.mail_events()[0]
+    assert event["signal"] == "interview"
+    app = store.get_application(event["job_id"])
+    assert app["status"] == "interview"
+    assert app["referred_by"] == "Priya Sharma"
+    store.close()
+
+
+def test_a_stored_referrer_is_never_overwritten_by_later_mail(monkeypatch):
+    # Referral text is only read from mail jobscope already treats as job-related,
+    # so the first message carries a strong signal as well as the referral.
+    FakeIMAP.mailbox = {
+        8: _raw("Acme <careers@acme.com>", "Interview invitation",
+                "Alex Chen referred you to us. Can we schedule a call?",
+                "<acme-8@acme.com>"),
+    }
+    FakeIMAP.mailboxes = {}
+    FakeIMAP.instances = []
+    monkeypatch.setattr(inbox.imaplib, "IMAP4_SSL", FakeIMAP)
+    store = _store()
+    cfg = _cfg(monkeypatch)
+    inbox.run(cfg, store)
+    job_id = store.mail_events()[0]["job_id"]
+    assert store.get_application(job_id)["referred_by"] == "Alex Chen"
+
+    FakeIMAP.mailbox = {
+        9: _raw("Acme <careers@acme.com>", "Offer of employment",
+                "We are pleased to offer you the role.", "<acme-9@acme.com>"),
+    }
+    FakeIMAP.instances = []
+    inbox.run(cfg, store)
+
+    app = store.get_application(job_id)
+    assert app["status"] == "offer"
+    assert app["referred_by"] == "Alex Chen"   # survives the later update
+    store.close()
+
+
+def test_a_referral_alone_records_the_referrer_without_inventing_a_stage():
+    store = _store()
+    event = MailEvent(id="e1", job_id="j1", company="Acme", role="Engineer",
+                      signal="other", date="2026-06-01T10:00:00")
+
+    inbox._apply_to_application(store, event, "Nina Patel")
+
+    app = store.get_application("j1")
+    assert app["referred_by"] == "Nina Patel"
+    assert app["status"] == "new"              # 'other' never advances the funnel
+    store.close()

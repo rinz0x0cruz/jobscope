@@ -17,8 +17,9 @@ class ApplicationsMixin:
             """
             INSERT INTO applications (job_id, status, package_dir, resume_path,
                 cover_path, applied_at, notes, updated, company, title, source,
-                outreach_at, outreach_to, interview_at, salary_offered, offer_accepted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                outreach_at, outreach_to, interview_at, salary_offered, offer_accepted,
+                referred_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_id) DO UPDATE SET
                 status=excluded.status, package_dir=excluded.package_dir,
                 resume_path=excluded.resume_path, cover_path=excluded.cover_path,
@@ -30,14 +31,16 @@ class ApplicationsMixin:
                 outreach_to=COALESCE(NULLIF(excluded.outreach_to, ''), applications.outreach_to),
                 interview_at=COALESCE(NULLIF(excluded.interview_at, ''), applications.interview_at),
                 salary_offered=COALESCE(NULLIF(excluded.salary_offered, ''), applications.salary_offered),
-                offer_accepted=COALESCE(NULLIF(excluded.offer_accepted, ''), applications.offer_accepted)
+                offer_accepted=COALESCE(NULLIF(excluded.offer_accepted, ''), applications.offer_accepted),
+                referred_by=COALESCE(NULLIF(excluded.referred_by, ''), applications.referred_by)
             """,
             (app.job_id, app.status, app.package_dir, app.resume_path,
              app.cover_path, app.applied_at, app.notes, now_iso(),
              getattr(app, "company", ""), getattr(app, "title", ""),
              getattr(app, "source", ""), getattr(app, "outreach_at", ""),
              getattr(app, "outreach_to", ""), getattr(app, "interview_at", ""),
-             getattr(app, "salary_offered", ""), getattr(app, "offer_accepted", "")),
+             getattr(app, "salary_offered", ""), getattr(app, "offer_accepted", ""),
+             getattr(app, "referred_by", "")),
         )
         if clear_tombstone:
             self.conn.execute(
@@ -152,7 +155,7 @@ class ApplicationsMixin:
         rows = self.conn.execute(
             "SELECT a.job_id, a.status, a.package_dir, a.resume_path, a.cover_path, "
             "a.applied_at, a.notes, a.updated, a.source, a.outreach_at, a.outreach_to, "
-            "a.interview_at, a.salary_offered, a.offer_accepted, "
+            "a.interview_at, a.salary_offered, a.offer_accepted, a.referred_by, "
             "a.tombstoned_at, a.tombstone_reason, a.reconciliation_run_id, "
             "a.reconciliation_exempt, "
             "COALESCE(NULLIF(j.company, ''), a.company) AS company, "

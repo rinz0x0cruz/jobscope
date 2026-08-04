@@ -339,7 +339,8 @@
       "additionalProperties": false,
       "required": [
         "job_id", "company", "title", "status", "applied_at", "updated",
-        "source", "interview_at", "salary_offered", "offer_accepted", "timeline"
+        "source", "interview_at", "salary_offered", "offer_accepted",
+        "referred_by", "timeline"
       ],
       "properties": {
         "job_id": {"type": "string"},
@@ -352,6 +353,7 @@
         "interview_at": {"type": "string"},
         "salary_offered": {"type": "string"},
         "offer_accepted": {"type": "string"},
+        "referred_by": {"type": "string"},
         "timeline": {"type": "array", "items": {"$ref": "#/definitions/ApplicationEvent"}}
       }
     },

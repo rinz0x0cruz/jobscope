@@ -402,6 +402,7 @@ def _application_records(store) -> list[dict[str, Any]]:
             "interview_at": a.get("interview_at") or "",
             "salary_offered": a.get("salary_offered") or "",
             "offer_accepted": a.get("offer_accepted") or "",
+            "referred_by": a.get("referred_by") or "",
             "timeline": timeline,
         })
     return out
