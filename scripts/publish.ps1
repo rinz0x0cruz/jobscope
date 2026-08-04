@@ -115,7 +115,7 @@ $StageDir = $null
 
 if (-not [string]::IsNullOrWhiteSpace($ExternalEncryptedJson)) {
     if (-not (Test-Path -LiteralPath $ExternalEncryptedJson -PathType Leaf)) {
-        throw "hosted encrypted payload not found: $ExternalEncryptedJson"
+        throw "external encrypted payload not found: $ExternalEncryptedJson"
     }
     if ($Refresh) { throw "-Refresh cannot be combined with JOBSCOPE_PUBLISH_ENCRYPTED_JSON" }
     $ExternalEncryptedJson = (Resolve-Path -LiteralPath $ExternalEncryptedJson).Path
@@ -148,7 +148,7 @@ if ($Refresh) {
 # 1. Emit the locked (empty) public payload and bake it into the web app.
 $PublicJson = Join-Path $StageDir "data\dashboard.public.json"
 if ($ExternalEncryptedJson) {
-    Write-Host "==> Building the locked public shell for the hosted encrypted payload"
+    Write-Host "==> Building the locked public shell for the external encrypted payload"
     & $Py -c "from jobscope.deliver.render import write_public_shell; import sys; write_public_shell(sys.argv[1])" $PublicJson
     if ($LASTEXITCODE -ne 0) { throw "building the public shell failed (exit $LASTEXITCODE)" }
 }
@@ -170,7 +170,7 @@ $SiteBlob  = Join-Path $StageDir "data\site.enc.json"
 $FullJson = ""
 if ($Encrypted) {
     if ($ExternalEncryptedJson) {
-        Write-Host "==> Using the hosted encrypted dashboard payload"
+        Write-Host "==> Using the external encrypted dashboard payload"
         Copy-Item -LiteralPath $ExternalEncryptedJson -Destination $SiteBlob
     }
     else {

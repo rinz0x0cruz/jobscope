@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import threading
 import time
@@ -233,11 +232,6 @@ def _post(cfg: dict, policy: _Policy, body: dict) -> Optional[str]:
 def _policy(cfg: dict, purpose: str) -> Optional[_Policy]:
     ai = cfg.get("ai", {}) or {}
     if not ai.get("enabled") or not purpose or not _valid_purpose(purpose):
-        return None
-    if (
-        (cfg.get("_runtime", {}) or {}).get("hosted")
-        or os.environ.get("JOBSCOPE_HOSTED", "").strip().lower() in {"1", "true", "yes"}
-    ):
         return None
     provider = str(ai.get("provider") or "").strip().lower()
     model = str(ai.get("model") or "").strip()

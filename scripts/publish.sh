@@ -53,7 +53,7 @@ fi
 export PYTHONPATH=.
 
 if [ -n "$EXTERNAL_ENCRYPTED_JSON" ]; then
-    [ -f "$EXTERNAL_ENCRYPTED_JSON" ] || { echo "error: hosted encrypted payload not found: $EXTERNAL_ENCRYPTED_JSON" >&2; exit 1; }
+    [ -f "$EXTERNAL_ENCRYPTED_JSON" ] || { echo "error: external encrypted payload not found: $EXTERNAL_ENCRYPTED_JSON" >&2; exit 1; }
     [ -z "$REFRESH" ] || { echo "error: --refresh cannot be combined with JOBSCOPE_PUBLISH_ENCRYPTED_JSON" >&2; exit 1; }
     EXTERNAL_ENCRYPTED_JSON="$(cd "$(dirname "$EXTERNAL_ENCRYPTED_JSON")" && pwd)/$(basename "$EXTERNAL_ENCRYPTED_JSON")"
 fi
@@ -123,7 +123,7 @@ fi
 # 1. Emit the locked (empty) public payload and bake it into the web app.
 PUBLIC_JSON="$STAGE_DIR/data/dashboard.public.json"
 if [ -n "$EXTERNAL_ENCRYPTED_JSON" ]; then
-    echo "==> Building the locked public shell for the hosted encrypted payload"
+    echo "==> Building the locked public shell for the external encrypted payload"
     "$PY" -c 'from jobscope.deliver.render import write_public_shell; import sys; write_public_shell(sys.argv[1])' "$PUBLIC_JSON"
 else
     echo "==> Emitting the locked (empty) public dashboard JSON (jobscope dashboard --emit-json --public)"
@@ -143,7 +143,7 @@ FULL_JSON=""
 if [ -n "${ENCRYPTED:-}" ]; then
     FULL_JSON="$STAGE_DIR/data/dashboard.json"
     if [ -n "$EXTERNAL_ENCRYPTED_JSON" ]; then
-        echo "==> Using the hosted encrypted dashboard payload"
+        echo "==> Using the external encrypted dashboard payload"
         cp "$EXTERNAL_ENCRYPTED_JSON" "$SITE_BLOB"
         FULL_JSON=""
     else

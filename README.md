@@ -17,9 +17,8 @@ Design principles:
   one-click link; **a human always clicks submit.** It never drives your logged-in
   LinkedIn/Indeed/Workday. An opt-in `--assist` mode can pre-fill *public* ATS forms
   (Greenhouse/Lever/Ashby) but always **stops before submit**.
-- **Local-first & private.** By default your resume, data, and secrets stay on your
-  machine (SQLite + gitignored files). An explicit private hosted mode moves that
-  trust boundary to one protected volume and secret manager. The published dashboard
+- **Local-first & private.** Your resume, data, and secrets stay on your
+  machine (SQLite + gitignored files). The published dashboard
   remains redacted. See [SECURITY.md](SECURITY.md).
 
 ## Review path (offline)
@@ -80,7 +79,7 @@ pip install playwright==1.40.0
 python -m playwright install chromium
 ```
 
-Run `serve` from this source checkout, where `web/` is available, or use the repository Docker image.
+Run `serve` from this source checkout, where `web/` is available.
 The Python wheel contains the CLI package but does not bundle the React source/build.
 
 ## Quick start
@@ -371,34 +370,6 @@ can upload or replace up to three résumés, select preferred job markets and wo
 or explicitly reset intent from the stored résumé; résumé-derived skills, seniority,
 and experience remain read-only facts.
 
-`python -m jobscope --config /data/config.yaml serve --hosted` is the opt-in
-container entry point for the same single-user workspace. It is **not** a public
-server: hosted mode requires `JOBSCOPE_PUBLIC_ORIGIN`, a Cloudflare Access JWT on
-every non-health request, an origin reachable only through a validating Cloudflare
-Tunnel, `JOBSCOPE_CF_ACCESS_TEAM_DOMAIN` plus `JOBSCOPE_CF_ACCESS_AUD` for
-in-process JWT signature/issuer/audience validation, one application replica, and
-a persistent `/data` volume. Hosted builds
-self-remove the Pages service worker and expose an explicit Access sign-out. Optional
-automation requires a separate 32+ character `JOBSCOPE_AUTOMATION_TOKEN`; the
-manual-only `hosted-ops.yml` and `hosted-publish.yml` workflows use fixed-purpose
-routes rather than the browser campaign API. The private service encrypts the Pages
-snapshot before returning it; GitHub Actions never receives the plaintext dashboard
-or its passphrase. See
-[OPERATIONS.md](OPERATIONS.md#private-hosted-control-plane) before deploying it.
-No hosted instance, schedule, secret, or data migration is created automatically.
-
-Accounts without a Cloudflare-managed custom zone can deploy the zero-dependency
-`cloudflare/worker.mjs` proxy to one stable `workers.dev` route, disable preview URLs,
-and enable Cloudflare Access on that route. The Worker requires the Access assertion,
-strips the Access cookie, and forwards the assertion to the Railway origin for full
-signature/issuer/audience verification.
-
-GitHub automation does not require a paid Access service token. Deploy the separate
-`cloudflare/automation-worker.mjs` on the Workers free allowance with preview URLs disabled. It
-accepts only the four fixed automation routes, validates the GitHub-held automation token, and adds
-a distinct Worker-to-Railway edge token. Railway requires both tokens and the exact automation
-Worker Origin; the browser workspace remains behind Access unchanged.
-
 GitHub Pages is an encrypted **read-only snapshot**, not the interactive backend.
 After unlock, Outreach can link to `VITE_JOBSCOPE_PRIVATE_ORIGIN`; mutations still run
 only in the Access-protected workspace. Actions remain useful for scheduled PC-off
@@ -556,8 +527,8 @@ ai:
 Every call names an exact purpose from `ai.local_purposes`, and one shared per-run budget bounds
 calls, input characters/tokens, reserved output tokens, retries, fan-out, and wall time. When the
 budget is exhausted, a route is disallowed, or output fails schema/length/grounding validation, the
-deterministic result is used and **no HTTP request is made**. Hosted `serve --hosted` disables AI
-outright, and quorum routes are rejected because their rounds/retries cannot share that budget.
+deterministic result is used and **no HTTP request is made**. Quorum routes are rejected
+because their rounds/retries cannot share that budget.
 
 Remote OpenRouter stays off until you add an explicit per-purpose model/provider allowlist under
 `ai.remote.purposes`; requests then pin `order`/`only`, `allow_fallbacks: false`,

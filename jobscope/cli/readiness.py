@@ -13,7 +13,6 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
-import os
 from pathlib import Path
 
 LANES = ("storage", "discovery", "inbox", "smtp", "outreach", "scheduler", "ai")
@@ -68,17 +67,6 @@ def _digest(payload: object) -> str:
     return hashlib.sha256(encoded).hexdigest()[:16]
 
 
-def artifact_id() -> str:
-    return os.environ.get("JOBSCOPE_ARTIFACT_ID", "").strip() or "local"
-
-
-def _hosted(cfg: dict) -> bool:
-    return bool(
-        (cfg.get("_runtime", {}) or {}).get("hosted")
-        or os.environ.get("JOBSCOPE_HOSTED", "").strip().lower() in {"1", "true", "yes"}
-    )
-
-
 def config_hash(cfg: dict, lane: str) -> str:
     """Hash a non-secret, non-PII projection of the lane's effective config."""
     ai = cfg.get("ai", {}) or {}
@@ -129,7 +117,6 @@ def record_canary(store, lane: str, cfg: dict, *, result: str) -> dict:
         "at": _now().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "result": result,
         "config_hash": config_hash(cfg, lane),
-        "artifact": artifact_id(),
     }
     store.meta_set(_CANARY_KEY + lane, json.dumps(evidence, sort_keys=True))
     return evidence
@@ -157,24 +144,14 @@ def _canary_evidence(store, cfg: dict, lane: str) -> tuple[dict, list[str]]:
         blockers.append("canary_stale")
     if evidence.get("config_hash") != config_hash(cfg, lane):
         blockers.append("canary_config_drift")
-    if evidence.get("artifact") != artifact_id():
-        blockers.append("canary_artifact_drift")
     return {"at": str(evidence.get("at") or ""), "age_days": age,
             "result": str(evidence.get("result") or "")}, blockers
 
 
 def _storage_lane(cfg: dict, store) -> tuple[bool, list[str], str]:
     from jobscope.core.snapshot import SnapshotValidationError, validate_sqlite_snapshot
-    from jobscope.core.sqlite_runtime import require_safe_sqlite
 
     blockers: list[str] = []
-    if _hosted(cfg):
-        # The pinned runtime identity gates hosted mutation only; a local
-        # deterministic install stays fully usable on the stock interpreter.
-        try:
-            require_safe_sqlite(verify_identity=True)
-        except RuntimeError:
-            blockers.append("sqlite_unsafe")
     db_path = Path((cfg.get("output", {}) or {}).get("db_path") or "data/jobscope.db")
     if not db_path.is_file():
         blockers.append("database_missing")
@@ -254,11 +231,8 @@ def _outreach_lane(cfg: dict, store) -> tuple[bool, list[str], str, bool]:
 
 
 def _scheduler_lane(store) -> tuple[bool, list[str], str]:
-    from jobscope.deliver import automation
-
     last = store.meta_get("campaign:replies:last_checked_at", "") or ""
     status = store.meta_get("campaign:replies:last_status", "") or ""
-    heartbeat = automation.status(store)
     blockers: list[str] = []
     if not last:
         blockers.append("never_ticked")
@@ -268,15 +242,7 @@ def _scheduler_lane(store) -> tuple[bool, list[str], str]:
             blockers.append("tick_stale")
     if status and status not in {"ok", "not_needed", "not_fetched"}:
         blockers.append("reply_sync_unhealthy")
-    # Only judge the scheduled clock once it has actually produced a slot.
-    if heartbeat["state"]:
-        if heartbeat["stale"]:
-            blockers.append("heartbeat_stale")
-        if heartbeat["state"] == "error":
-            blockers.append("last_slot_failed")
-    if heartbeat["disabled"]:
-        blockers.append("automation_disabled")
-    return bool(last or heartbeat["state"]), blockers, max(last, heartbeat["finished"])
+    return bool(last), blockers, last
 
 
 def _ai_lane(cfg: dict) -> tuple[bool, list[str], str]:
@@ -346,7 +312,7 @@ def report(cfg: dict, store) -> dict:
             "canary": evidence,
             "last_success_age_days": _age_days(last_success),
         }
-    return {"artifact": artifact_id(), "lanes": [lanes[lane] for lane in LANES]}
+    return {"lanes": [lanes[lane] for lane in LANES]}
 
 
 def _blocked(result: dict, lane: str) -> list[str]:
@@ -401,7 +367,6 @@ def run(cfg: dict, store, *, require: str = "", canary: str = "",
             print(f"  [{item['state'].upper():<16}] {item['lane']:<10} "
                   f"{'last success ' + str(age) + 'd' if age is not None else 'no runtime success'}"
                   f"  {detail}")
-        print(f"\n  readiness: artifact {result['artifact']}")
 
     if require:
         if require not in LANES:

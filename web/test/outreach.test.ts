@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  HOSTED_SESSION_EXPIRED_EVENT,
   profileUpdate,
   resetLocalServeToken,
 } from '@/lib/outreach'
@@ -33,24 +32,5 @@ describe('control-plane token recovery', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(new Headers(fetchMock.mock.calls[2][1]?.headers).get('X-Refresh-Token'))
       .toBe('fresh-token')
-  })
-
-  it('expires a hosted session instead of parsing an Access login page', async () => {
-    vi.stubEnv('VITE_JOBSCOPE_HOSTED', '1')
-    const expired = vi.fn()
-    window.addEventListener(HOSTED_SESSION_EXPIRED_EVENT, expired, { once: true })
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      redirected: true,
-      type: 'basic',
-      headers: new Headers({ 'Content-Type': 'text/html; charset=utf-8' }),
-      json: async () => { throw new Error('must not parse Access HTML') },
-    }) as Response))
-
-    await expect(profileUpdate('research', 'token', {
-      search_terms: [], locations: [], remote: false,
-    })).rejects.toThrow('Private session expired')
-    expect(expired).toHaveBeenCalledOnce()
   })
 })

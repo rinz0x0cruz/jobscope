@@ -51,9 +51,8 @@ export interface CompanyOutreach {
 
 const api = (path: string) => `${location.origin}/${path}`
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
-export const HOSTED_SESSION_EXPIRED_EVENT = 'jobscope:hosted-session-expired'
 
-// Probe the control plane once on loopback or in the explicit hosted build.
+// Probe the control plane once on loopback.
 let tokenProbe: Promise<string | null> | null = null
 let dashboardProbe: Promise<DashboardData> | null = null
 
@@ -62,27 +61,12 @@ export function resetLocalServeToken(): void {
   dashboardProbe = null
 }
 
-function requireHostedSession(response: Response): Response {
-  const contentType = response.headers?.get?.('Content-Type') || ''
-  if (
-    import.meta.env.VITE_JOBSCOPE_HOSTED === '1'
-    && (response.redirected || response.type === 'opaqueredirect' || contentType.includes('text/html'))
-  ) {
-    resetLocalServeToken()
-    window.dispatchEvent(new Event(HOSTED_SESSION_EXPIRED_EVENT))
-    throw new Error('Private session expired. Sign in again.')
-  }
-  return response
-}
-
 export function localServeToken(): Promise<string | null> {
-  const hostedBuild = import.meta.env.VITE_JOBSCOPE_HOSTED === '1'
-  if (!hostedBuild && !LOOPBACK_HOSTS.has(location.hostname.toLowerCase())) {
+  if (!LOOPBACK_HOSTS.has(location.hostname.toLowerCase())) {
     return Promise.resolve(null)
   }
   if (!tokenProbe) {
     tokenProbe = fetch(api('api/token'), { cache: 'no-store' })
-      .then(requireHostedSession)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => (j && typeof j.token === 'string' ? j.token : null))
       .catch(() => null)
@@ -98,7 +82,7 @@ export async function controlPlaneFetch(
   const request = (currentToken: string) => {
     const headers = new Headers(init.headers)
     headers.set('X-Refresh-Token', currentToken)
-    return fetch(api(path), { ...init, headers }).then(requireHostedSession)
+    return fetch(api(path), { ...init, headers })
   }
   const cachedToken = tokenProbe ? await tokenProbe : null
   const currentToken = cachedToken || token

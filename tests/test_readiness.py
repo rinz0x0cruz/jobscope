@@ -18,8 +18,6 @@ _SENDER = "sender.private@example.test"
 
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
-    monkeypatch.setenv("JOBSCOPE_ARTIFACT_ID", "artifact-under-test")
-    monkeypatch.delenv("JOBSCOPE_HOSTED", raising=False)
     # Build from DEFAULT_CONFIG so an ambient config.yaml cannot enable a lane.
     value = copy.deepcopy(DEFAULT_CONFIG)
     value["output"]["db_path"] = str(tmp_path / "readiness.db")
@@ -127,45 +125,6 @@ def test_a_retired_source_cannot_speak_for_the_discovery_lane(cfg, store):
     assert item["last_success_age_days"] is None
 
 
-def test_a_stale_or_failed_scheduled_slot_is_visible_to_the_observer(cfg, store):
-    from jobscope.deliver import automation
-
-    scheduled = 1_800_000_000_000
-    period = 30 * 60 * 1000
-    _, record = automation.claim(
-        store, operation="tick", scheduled_ms=scheduled,
-        period_ms=period, now_ms=scheduled,
-    )
-    automation.finish(store, record["slot"], state="ok", code="reconciliation_only")
-
-    fresh = _lane(readiness.report(cfg, store), "scheduler")
-    assert fresh["enabled"] is True
-    assert "heartbeat_stale" not in fresh["blockers"]
-
-    beat = json.loads(store.meta_get(automation.HEARTBEAT_KEY))
-    beat["finished_ms"] -= 4 * period
-    store.meta_set(automation.HEARTBEAT_KEY, json.dumps(beat))
-    assert "heartbeat_stale" in _lane(readiness.report(cfg, store), "scheduler")["blockers"]
-
-    beat["state"] = "error"
-    store.meta_set(automation.HEARTBEAT_KEY, json.dumps(beat))
-
-    item = _lane(readiness.report(cfg, store), "scheduler")
-    assert "last_slot_failed" in item["blockers"]
-
-
-def test_the_automation_kill_switch_is_reported_as_a_blocker(cfg, store, monkeypatch):
-    from jobscope.deliver import automation
-
-    monkeypatch.setenv("JOBSCOPE_AUTOMATION_DISABLED", "1")
-    store.meta_set("campaign:replies:last_checked_at", "2026-07-27T00:00:00Z")
-
-    item = _lane(readiness.report(cfg, store), "scheduler")
-
-    assert "automation_disabled" in item["blockers"]
-    assert automation.status(store)["disabled"] is True
-
-
 def test_missing_secret_blocks_by_reference_without_revealing_it(cfg, store, monkeypatch):
     _enable_inbox(cfg, monkeypatch)
     monkeypatch.delenv("JOBSCOPE_TEST_INBOX_PW", raising=False)
@@ -190,10 +149,6 @@ def test_canary_evidence_is_required_then_invalidated_by_drift(cfg, store, monke
 
     cfg["email"]["smtp_host"] = "smtp.elsewhere.test"
     assert "canary_config_drift" in _lane(readiness.report(cfg, store), "smtp")["blockers"]
-
-    cfg["email"]["smtp_host"] = "smtp.example.test"
-    monkeypatch.setenv("JOBSCOPE_ARTIFACT_ID", "a-different-image")
-    assert "canary_artifact_drift" in _lane(readiness.report(cfg, store), "smtp")["blockers"]
 
 
 def test_failed_and_stale_canaries_invalidate_readiness(cfg, store, monkeypatch):
@@ -260,7 +215,6 @@ def test_json_report_carries_the_documented_schema(cfg, store, capsys):
     assert readiness.run(cfg, store, as_json=True) == 0
     payload = json.loads(capsys.readouterr().out)
 
-    assert payload["artifact"] == "artifact-under-test"
     assert [item["lane"] for item in payload["lanes"]] == list(readiness.LANES)
     for item in payload["lanes"]:
         assert set(item) == {
@@ -326,7 +280,6 @@ def test_canary_flag_records_evidence_from_a_non_sending_preflight(
 
     evidence = json.loads(store.meta_get("readiness:canary:smtp"))
     assert evidence["result"] == "passed"
-    assert evidence["artifact"] == "artifact-under-test"
 
     monkeypatch.setattr(
         "jobscope.deliver.email.preflight",

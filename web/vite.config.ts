@@ -50,7 +50,6 @@ function jobscopeDataPlugin(): Plugin {
 
 // base: './' -> relative asset paths so the built app runs from both file://
 // (offline) and the GitHub Pages subpath, per plan/ui-upgrade.md.
-const hostedBuild = process.env.VITE_JOBSCOPE_HOSTED === '1'
 
 export default defineConfig({
   base: './',
@@ -58,10 +57,7 @@ export default defineConfig({
     jobscopeDataPlugin(),
     react(),
     tailwindcss(),
-    VitePWA(hostedBuild ? {
-      selfDestroying: true,
-      manifest: false,
-    } : {
+    VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg'],
       manifest: {

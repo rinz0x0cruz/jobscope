@@ -203,21 +203,11 @@ LOC are exact (source lines incl. comments). Grouped by concern (= sub-package o
 | [render.py](jobscope/deliver/render.py) | — | Encrypted dashboard contract: jobs, applications, monitor summaries, reviews, profile, and outreach; public mode emits an empty shell | companies, store | `build_data()`, `empty_public_data()`, `write_public_shell()`, `emit_json()` |
 | [pdf.py](jobscope/deliver/pdf.py) | 66 | Markdown → HTML → PDF (Playwright; degrades gracefully) | — | `markdown_to_html()`, `render_pdf()` |
 | [email.py](jobscope/deliver/email.py) | — | Optional SMTP delivery with stable Message-ID, RFC reply headers, and explicit pre-send vs unknown-outcome errors | config | `send()`, `EmailDeliveryError` |
-| [serve.py](jobscope/deliver/serve.py) | — | Live control plane: loopback-only by default; hosted mode validates Cloudflare Access JWT signature/issuer/audience and exact Origin. Durable run-correlated refresh state and fixed-purpose secret-gated automation routes support hosted refresh, one paced tick, and server-encrypted snapshot publication | access, render, site_crypto, store, feature services (lazy) | `run()`, `perform_refresh()` |
+| [serve.py](jobscope/deliver/serve.py) | — | Live control plane: loopback-only, token-guarded, with durable run-correlated refresh state | render, site_crypto, store, feature services (lazy) | `run()`, `perform_refresh()` |
 | [exporter.py](jobscope/deliver/exporter.py) | 22 | Export ranked jobs to JSON/CSV | — | `run()` |
 
 Plus [schema/dashboard.schema.json](jobscope/deliver/schema/dashboard.schema.json) — the JSON-Schema
 artifact for the emitted `dashboard.json`, cross-checked by [tests/test_dashboard_json.py](tests/test_dashboard_json.py).
-
-The optional [cloudflare/worker.mjs](cloudflare/worker.mjs) browser edge provides one
-Access-protected `workers.dev` hostname when no custom zone exists. It contains no
-business logic or state: it rejects missing Access assertions, strips Access cookies,
-and proxies to the single Railway origin, where `serve.py` performs cryptographic JWT
-validation and all browser authorization. The separate
-[cloudflare/automation-worker.mjs](cloudflare/automation-worker.mjs) edge is an exact-route proxy
-for GitHub operations: it validates the shared automation token, adds a different origin-only
-token, and cannot forward browser or generic API routes. Railway requires both tokens and the exact
-automation Worker Origin.
 
 > **Note:** `render.py` is the JSON emitter. The **React app in `web/`** is the single dashboard — served
 > privately by `jobscope serve`, or as an empty Pages shell plus encrypted whole-site payload — and owns
@@ -327,7 +317,7 @@ stage independently runnable from its own subcommand.
 ### Optional advisory AI overlay (`core/ai.py`)
 
 All AI paths call [core/ai.py](jobscope/core/ai.py). `available(cfg, purpose)` resolves one fail-closed
-route for an exact purpose, and `chat()` returns `None` on disabled config, hosted mode, policy mismatch,
+route for an exact purpose, and `chat()` returns `None` on disabled config, policy mismatch,
 exhausted budget, backend failure, or output that fails schema/length/grounding validation. Callers always
 keep a deterministic fallback.
 

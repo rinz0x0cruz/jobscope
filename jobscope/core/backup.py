@@ -21,7 +21,6 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from jobscope import __version__
 from jobscope.core.snapshot import validate_sqlite_snapshot
-from jobscope.core.sqlite_runtime import source_id
 
 MAGIC = b"JSDB"
 FORMAT_VERSION = 1
@@ -79,6 +78,11 @@ def decrypt_bytes(encrypted: bytes, key: str) -> bytes:
 
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _sqlite_source_id() -> str:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        return str(connection.execute("SELECT sqlite_source_id()").fetchone()[0])
 
 
 def _sha256_file(path: Path) -> str:
@@ -215,7 +219,7 @@ def create_generation(source: str | Path, output_dir: str | Path, key: str,
             "jobscope_version": __version__,
             "sqlite": {
                 "version": sqlite3.sqlite_version,
-                "source_id": source_id(),
+                "source_id": _sqlite_source_id(),
             },
             "database": database,
             "encrypted": {

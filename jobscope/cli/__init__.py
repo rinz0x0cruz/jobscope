@@ -360,7 +360,7 @@ def cmd_dashboard(args, cfg):
 
 def cmd_serve(args, cfg):
     from ..deliver import serve
-    return serve.run(cfg, port=args.port, open_browser=args.open, hosted=args.hosted)
+    return serve.run(cfg, port=args.port, open_browser=args.open)
 
 
 def cmd_refresh(args, cfg):
@@ -803,11 +803,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="(deprecated) view the dashboard with `jobscope serve`")
     sp.set_defaults(func=cmd_dashboard)
 
-    sp = sub.add_parser("serve", help="Serve the dashboard locally or behind a private tunnel")
+    sp = sub.add_parser("serve", help="Serve the dashboard locally")
     sp.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8799")))
     sp.add_argument("--open", action="store_true")
-    sp.add_argument("--hosted", action="store_true",
-                    help="Bind externally with fail-closed tunnel and HTTPS-origin guards")
     sp.set_defaults(func=cmd_serve)
 
     sp = sub.add_parser("refresh",

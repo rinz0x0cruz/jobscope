@@ -371,14 +371,3 @@ def test_remote_policy_mismatch_performs_zero_backend_calls(monkeypatch, mutatio
     assert ai.chat(cfg, None, "s", "u", purpose="company_brief") is None
     assert calls == []
 
-
-def test_hosted_runtime_kill_switch_performs_zero_backend_calls(monkeypatch):
-    monkeypatch.delenv("JOBSCOPE_AI_API_KEY", raising=False)
-    cfg = _cfg(enabled=True)
-    cfg["_runtime"] = {"hosted": True}
-    calls = []
-    monkeypatch.setattr(ai, "_post", lambda *_args: calls.append(True) or "ok")
-
-    assert ai.chat(cfg, None, "s", "u", purpose="company_brief") is None
-    assert calls == []
-

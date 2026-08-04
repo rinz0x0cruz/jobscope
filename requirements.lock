@@ -15,7 +15,7 @@ charset-normalizer==3.4.9
 colorama==0.4.6
     # via pytest
 cryptography==49.0.0
-    # via pyjwt
+    # via -r requirements.txt
 detect-secrets==1.5.0
     # via -r requirements.txt
 feedparser==6.0.11
@@ -52,8 +52,6 @@ pycparser==3.0
     # via cffi
 pygments==2.20.0
     # via pytest
-pyjwt==2.13.0
-    # via -r requirements.txt
 pypdf==6.14.2
     # via -r requirements.txt
 pytest==9.0.3

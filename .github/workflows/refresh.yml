@@ -14,9 +14,9 @@ name: refresh
 run-name: ${{ inputs.mutation_nonce && format('Monitoring sync {0}', inputs.mutation_nonce) || format('Refresh ({0})', github.event_name) }}
 
 on:
-  # No `schedule:` trigger. The Cloudflare `jobscope-automation` Worker is the
-  # only autonomous writer; a second mutating clock here would race it and
-  # break single-writer slot claiming. Run this manually only.
+  # No `schedule:` trigger. The local scheduled task is the only autonomous
+  # writer; a second mutating clock here would race it against the same
+  # single-writer database. Run this manually only.
   workflow_dispatch:           # manual "Run workflow" button -- works from the GitHub mobile app
     inputs:
       inbox_backfill:

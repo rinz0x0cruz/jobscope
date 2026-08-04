@@ -1,9 +1,8 @@
 # Security & Privacy
 
 jobscope is a **local-first** tool: it reads your Gmail (read-only) to track job applications,
-stores everything in SQLite, and can publish a **redacted** dashboard to GitHub Pages. An explicit
-hosted mode can move the private control plane and full data directory to one protected persistent
-volume. This document describes what data it holds, how it's protected, and how to harden your setup.
+stores everything in SQLite, and can publish a **redacted** dashboard to GitHub Pages.
+This document describes what data it holds, how it's protected, and how to harden your setup.
 
 ## What data jobscope holds, and where
 
@@ -14,52 +13,13 @@ volume. This document describes what data it holds, how it's protected, and how 
 | Referral contacts (names, public profile links) | `data/jobscope.db` | public-data leads only |
 | Application funnel + email events (recruiter name/domain, subject) | `data/jobscope.db` | see *Data minimization* |
 | Campaign ranks, recipients, subjects, state, schedules, delivery/reply summary | local SQLite; allowlisted read-only projection in encrypted snapshots | visible only after passphrase unlock; no bodies or mutation controls |
-| Campaign draft bodies, approval/resume hashes, résumé paths, raw message IDs, suppressions | `data/jobscope.db` or an opted-in private hosted volume | never added to Pages or cloud-refresh snapshots |
-| Secrets (Gmail app password, API keys) | OS keychain, `.env`, or hosted secret manager | never in `config.yaml`, never committed |
+| Campaign draft bodies, approval/resume hashes, résumé paths, raw message IDs, suppressions | `data/jobscope.db` | never added to Pages or cloud-refresh snapshots |
+| Secrets (Gmail app password, API keys) | OS keychain or `.env` | never in `config.yaml`, never committed |
 | Published dashboard | `gh-pages` branch → GitHub Pages | empty locked shell + encrypted full payload (see *Publication*) |
 | Cloud refresh database | private `data` branch | current + last-known-good JSDB v1 AES-GCM ciphertext; campaign tables stripped and vacuumed |
-| Optional hosted control plane | one private persistent volume | full SQLite/profile state is plaintext while the service runs; the provider becomes part of the trust boundary |
 
-In the default local mode, everything under `data/`, plus `.env` and `config.*`, is **gitignored**
+Everything under `data/`, plus `.env` and `config.*`, is **gitignored**
 and never leaves your machine except through the explicit encrypted publication/refresh paths.
-Opting into hosted mode deliberately moves the full `data/` state to the configured private volume.
-
-## Private hosted control plane
-
-Hosted mode is not safe on a directly public origin. It binds externally only after explicit
-`--hosted` selection and requires `JOBSCOPE_PUBLIC_ORIGIN` to be one HTTPS origin with no path.
-Every supported request except the non-sensitive `/healthz` probe must carry
-`Cf-Access-Jwt-Assertion`; unsafe API calls must also have that exact Origin and the existing
-per-process Jobscope token.
-
-The application validates every Access JWT against Cloudflare's rotating remote JWKS using exact
-RS256, issuer, audience, expiry, and issued-at checks. Hosted startup fails without the exact
-`JOBSCOPE_CF_ACCESS_TEAM_DOMAIN` and application `JOBSCOPE_CF_ACCESS_AUD`. Keep **Protect with
-Access** enabled as a second gate. The Railway service must have no generated/public domain, and
-Cloudflare Access must deny by default.
-Run one application replica because SQLite and refresh state remain single-writer. Keep AI, SMTP,
-and campaign ticking disabled during the empty canary and initial data cutover.
-
-Hosted automation is optional and fails closed without a 32+ character
-`JOBSCOPE_AUTOMATION_TOKEN`, a distinct 32+ character `JOBSCOPE_AUTOMATION_EDGE_TOKEN`, and the
-exact `JOBSCOPE_AUTOMATION_ORIGIN`. The free automation Worker accepts only four fixed routes,
-validates the GitHub-held token, strips untrusted forwarding headers, and adds the origin-only edge
-token. Those fixed routes can refresh,
-report status, run one paced tick, or return the already-encrypted Pages snapshot. Encryption uses
-the hosted `JOBSCOPE_APPS_PASSPHRASE`; GitHub Actions receives neither plaintext nor passphrase. They cannot
-accept campaign IDs, draft content, recipients, or generic campaign actions. Hosted builds deploy
-a self-destroying service worker, detect Access HTML/redirect responses, clear live state, and offer
-explicit Access logout. API and HTML responses remain `no-store` and deny framing.
-
-When no custom zone is available, `cloudflare/worker.mjs` is the browser edge. It runs at one
-Access-protected `workers.dev` route with preview URLs
-disabled, rejects requests that lack `Cf-Access-Jwt-Assertion`, strips the
-`CF_Authorization` cookie before proxying, and forwards the signed assertion to the
-origin. The browser Worker rejects service-token JWTs unless an explicit client identity is
-configured; the no-card topology leaves that binding absent. The separate
-`cloudflare/automation-worker.mjs` edge never receives browser data and cannot proxy non-automation
-paths. The Railway service may have a generated origin hostname, but every private
-route still fails closed unless the assertion validates for the exact Access audience.
 
 ## Secrets
 
@@ -132,21 +92,12 @@ route still fails closed unless the assertion validates for the exact Access aud
 - The cloud SQLite snapshot is separately encrypted as versioned JSDB AES-256-GCM. Restore and
   save fail closed, retain one validated fallback generation, validate SQLite before use, and use
   a guarded `force-with-lease` update. See [OPERATIONS.md](OPERATIONS.md) for recovery and rotation.
-- Hosted full backups use a separate `JOBSCOPE_BACKUP_KEY` and contain the complete writable SQLite
-  database. The private origin creates a consistent DELETE-journal copy with SQLite's online backup API,
-  validates full integrity and foreign keys, encrypts it with AES-256-GCM, verifies a round trip, and streams
-  only ciphertext plus a non-secret evidence manifest through the dual-token automation edge. Plaintext is
-  never uploaded as an artifact. Outreach remains disabled after process start or backup failure until the
-  workflow independently verifies and retains the exact generation, then acknowledges its ID and hash.
-- Restore drills run the pulled image digest with `JOBSCOPE_RECOVERY_MODE=1`. Health and encrypted read APIs
-  remain available, while every browser mutation, refresh, and outreach tick fails closed. The drill uses a
-  disposable database path and records backup identity, restored-data age, and measured recovery time.
 - Writable campaign tables are stripped and vacuumed from cloud SQLite. Before removal, Jobscope stores
   one fixed-field read-only projection under `campaign:snapshot:v1`; scheduled refreshes carry that
   projection forward and publish it only inside `site.enc.json`. Draft bodies, approval/resume hashes,
   résumé paths, raw message IDs, suppression internals, and mutation controls are excluded. Outreach APIs
   remain private-control-plane only; GitHub Pages and Actions never approve, mutate, schedule, or send mail.
-  Full campaign recovery still requires a local database or hosted-volume backup.
+  Full campaign recovery still requires a local database backup.
 - `GET /api/engagements` is token/origin guarded and derives an allowlisted correspondence view at read time.
   It emits recipient/subject/state/timestamps/follow-up counts and summaries only for retained inbound snippets.
   It cannot emit campaign bodies, résumé paths/hashes, approval hashes, suppression internals, or raw
@@ -179,7 +130,7 @@ still requires its own explicit approval and immutable content hash:
   carry the original thread identity. Application follow-ups reuse and lock a prior outreach recipient when
   one exists; otherwise they require a verified recruiter/company contact. A newer application action,
   response, terminal status, suppression, or changed source invalidates approval or blocks sending.
-- **No bulk approval.** Campaign edits clear approval. Scheduled and hosted ticks are reconciliation-only and
+- **No bulk approval.** Campaign edits clear approval. Scheduled ticks are reconciliation-only and
   never call SMTP. Manual delivery is one approved target at a time and enforces the local window, daily cap,
   minimum spacing, suppressions, reply state, attachment hash, contact provenance, and policy hash.
 - **Durable reply correlation.** Campaign mail carries a stable Message-ID. Read-only IMAP sync matches
@@ -210,7 +161,7 @@ still requires its own explicit approval and immutable content hash:
   called by automatic job scans. Unknown providers and Phenom are unsupported; arbitrary careers pages are
   not crawled. The shipped dependency graph contains no JobSpy, browser impersonation, CAPTCHA, or proxy-
   rotation stack, and assisted apply has no browser submit action.
-- **AI is advisory, local-first, and fail-closed.** It is off by default and hard-disabled in hosted mode.
+- **AI is advisory, local-first, and fail-closed.** It is off by default.
   Each call names an exact purpose; the first supported route is a pinned allowlisted model on loopback
   Ollama with no API key. Remote OpenRouter requires an explicit per-purpose model/provider allowlist and
   pins `allow_fallbacks: false`, `require_parameters: true`, `data_collection: deny`, and `zdr: true`;
@@ -239,7 +190,7 @@ still requires its own explicit approval and immutable content hash:
 4. Keep `data/` and `.env` owner-only; don't sync them to a shared/cloud drive unencrypted.
 5. Never commit `.env`, `config.yaml`, or `data/` (all gitignored); let the pre-commit/CI secret scan run.
 6. Run `jobscope doctor` before enabling schedules and after rotating keys or changing config.
-7. Before hosted scheduling, run `jobscope campaign ready`; it rejects unresolved delivery and approved
+7. Before enabling campaign scheduling, run `jobscope campaign ready`; it rejects unresolved delivery and approved
   targets whose résumé attachment is missing or changed after migration.
 
 ## Deferred (not implemented)
@@ -253,7 +204,6 @@ Intentionally out of scope for now, to stay portable and dependency-light:
 
 ## Reporting a vulnerability
 
-This is a personal, local-first tool. Its default HTTP control plane binds only to loopback and requires a
-per-process token plus same-origin checks. Optional hosted mode adds a private Tunnel/Access boundary but no
-public origin. If you find a security issue, open a GitHub issue without secret values or contact the
+This is a personal, local-first tool. Its HTTP control plane binds only to loopback and requires a
+per-process token plus same-origin checks. If you find a security issue, open a GitHub issue without secret values or contact the
 maintainer privately.

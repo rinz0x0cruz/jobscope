@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { AuthGate } from '@/app/AuthGate'
 import { UNLOCK_KEY } from '@/lib/unlock'
-import { HOSTED_SESSION_EXPIRED_EVENT, resetLocalServeToken } from '@/lib/outreach'
+import { resetLocalServeToken } from '@/lib/outreach'
 import type { DashboardData, JobRow } from '@/lib/schema'
 
 function makeData(over: Partial<DashboardData> = {}): DashboardData {
@@ -132,52 +132,5 @@ describe('AuthGate', () => {
 
     expect(screen.getByText('This dashboard is locked')).toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  it('loads the live API from a marked non-loopback hosted build', async () => {
-    const live = makeData({ generated: 'hosted', rows: [row('hosted')] })
-    vi.stubEnv('VITE_JOBSCOPE_HOSTED', '1')
-    vi.stubGlobal('location', new URL('https://jobs.example.com/'))
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.endsWith('/api/token')) {
-        return { ok: true, json: async () => ({ token: 'hosted-token' }) } as Response
-      }
-      if (url.endsWith('/api/dashboard')) {
-        return { ok: true, json: async () => ({ ok: true, data: live }) } as Response
-      }
-      throw new Error(`unexpected URL: ${url}`)
-    }))
-
-    render(
-      <AuthGate baked={makeData()} encrypted={null}>
-        {(data) => <div>hosted rows: {data.rows.length}</div>}
-      </AuthGate>,
-    )
-
-    expect(await screen.findByText('hosted rows: 1')).toBeInTheDocument()
-  })
-
-  it('clears hosted data and requests a fresh Access session after expiry', async () => {
-    const live = makeData({ generated: 'hosted', rows: [row('hosted')] })
-    vi.stubEnv('VITE_JOBSCOPE_HOSTED', '1')
-    vi.stubGlobal('location', new URL('https://jobs.example.com/'))
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.endsWith('/api/token')) {
-        return { ok: true, json: async () => ({ token: 'hosted-token' }) } as Response
-      }
-      return { ok: true, json: async () => ({ ok: true, data: live }) } as Response
-    }))
-    render(
-      <AuthGate baked={makeData()} encrypted={null}>
-        {(data) => <div>hosted rows: {data.rows.length}</div>}
-      </AuthGate>,
-    )
-    expect(await screen.findByText('hosted rows: 1')).toBeInTheDocument()
-
-    window.dispatchEvent(new Event(HOSTED_SESSION_EXPIRED_EVENT))
-
-    expect(await screen.findByText('Private session required')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Sign in again' })).toHaveAttribute('href', '/')
-    expect(screen.queryByText('hosted rows: 1')).not.toBeInTheDocument()
   })
 })

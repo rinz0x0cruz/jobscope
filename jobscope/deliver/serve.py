@@ -14,17 +14,14 @@ from __future__ import annotations
 import datetime as _dt
 import base64
 import binascii
-import copy
 import http.server
 import json
 import os
 import secrets
-import sqlite3
 import tempfile
 import threading
 import time
 import webbrowser
-import zipfile
 from dataclasses import asdict, dataclass
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
@@ -38,11 +35,6 @@ _MAX_API_REQUEST_BYTES = 256 * 1024
 _MAX_RESUME_BYTES = 5 * 1024 * 1024
 _MAX_RESUME_REQUEST_BYTES = 7 * 1024 * 1024
 _MAX_CAMPAIGN_REQUEST_BYTES = _MAX_API_REQUEST_BYTES
-_HOSTED_ACCESS_HEADER = "Cf-Access-Jwt-Assertion"
-_AUTOMATION_HEADER = "X-Jobscope-Automation"
-_AUTOMATION_EDGE_HEADER = "X-Jobscope-Edge"
-_SLOT_TIME_HEADER = "X-Jobscope-Slot-Time"
-_SLOT_PERIOD_HEADER = "X-Jobscope-Slot-Period"
 _MAX_PROFILE_REQUEST_BYTES = 32 * 1024
 _RESUME_EXTENSIONS = frozenset({".md", ".txt", ".json", ".pdf"})
 _REFRESH_STATE_META_KEY = "serve:refresh_state:v1"
@@ -56,7 +48,6 @@ _STATE: dict[str, object] = {
     "run_id": "",
     "stages": [],
 }
-_BACKUP_STATE = {"ready": False, "pending_id": "", "pending_sha256": ""}
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,23 +134,7 @@ def _dist_dir(cfg: dict) -> str:
     return os.path.abspath(override) if override else os.path.join(_repo_root(), "web", "dist")
 
 
-def _hosted_settings(hosted: bool) -> str:
-    if not hosted:
-        return ""
-    public_origin = os.environ.get("JOBSCOPE_PUBLIC_ORIGIN", "").strip().rstrip("/")
-    if not public_origin:
-        raise RuntimeError("JOBSCOPE_PUBLIC_ORIGIN is required in hosted mode")
-    parsed = urlparse(public_origin)
-    if (parsed.scheme != "https" or not parsed.hostname or parsed.path
-            or parsed.params or parsed.query or parsed.fragment
-            or parsed.username or parsed.password):
-        raise RuntimeError(
-            "JOBSCOPE_PUBLIC_ORIGIN must be an HTTPS origin without a path"
-        )
-    return public_origin
-
-
-def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier=None):
+def _build_server(cfg: dict, port: int):
     """Build (but do not start) the SPA HTTP server with the refresh API wired
     in. Serves ``web/dist`` (building it once, un-redacted, if absent); the React
     shell owns Gmail/refresh controls. Returns ``(httpd, page, token,
@@ -167,40 +142,9 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
     port."""
     from jobscope.core.store import Store
 
-    if hosted:
-        cfg = copy.deepcopy(cfg)
-        cfg.setdefault("_runtime", {})["hosted"] = True
-        cfg.setdefault("ai", {})["enabled"] = False
-        cfg.setdefault("quorum", {})["enabled"] = False
-
-    public_origin = _hosted_settings(hosted)
-    if hosted and access_verifier is None:
-        from jobscope.deliver.access import AccessJWTVerifier
-        access_verifier = AccessJWTVerifier.from_environment()
     directory = _dist_dir(cfg)
     serve_cfg = cfg.get("serve", {}) or {}
-    recovery_mode = hosted and os.environ.get("JOBSCOPE_RECOVERY_MODE", "") == "1"
-    refresh_on = bool(serve_cfg.get("refresh_enabled", True)) and not recovery_mode
-    automation_token = os.environ.get("JOBSCOPE_AUTOMATION_TOKEN", "").strip()
-    if automation_token and len(automation_token) < 32:
-        raise RuntimeError("JOBSCOPE_AUTOMATION_TOKEN must contain at least 32 characters")
-    automation_origin = os.environ.get("JOBSCOPE_AUTOMATION_ORIGIN", "").strip().rstrip("/")
-    automation_edge_token = os.environ.get("JOBSCOPE_AUTOMATION_EDGE_TOKEN", "").strip()
-    if hosted and automation_token:
-        parsed_automation_origin = urlparse(automation_origin)
-        if (parsed_automation_origin.scheme != "https"
-                or not parsed_automation_origin.hostname
-                or parsed_automation_origin.path or parsed_automation_origin.params
-                or parsed_automation_origin.query or parsed_automation_origin.fragment
-            or parsed_automation_origin.username or parsed_automation_origin.password
-            or automation_origin == public_origin):
-            raise RuntimeError(
-                "JOBSCOPE_AUTOMATION_ORIGIN must be an HTTPS origin without a path"
-            )
-        if len(automation_edge_token) < 32:
-            raise RuntimeError(
-                "JOBSCOPE_AUTOMATION_EDGE_TOKEN must contain at least 32 characters"
-            )
+    refresh_on = bool(serve_cfg.get("refresh_enabled", True))
 
     build_on_start = bool(serve_cfg.get("build_on_start", False))
     if build_on_start or not os.path.exists(os.path.join(directory, "index.html")):
@@ -300,49 +244,21 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
             self.end_headers()
             self.wfile.write(html)
 
-        def _tunnel_authorized(self) -> bool:
-            if not hosted:
-                return True
-            cached = getattr(self, "_access_authorized", None)
-            if cached is not None:
-                return bool(cached)
-            token_value = self.headers.get(_HOSTED_ACCESS_HEADER, "")
-            authorized = bool(access_verifier and access_verifier.verify(token_value))
-            self._access_authorized = authorized
-            return authorized
-
         def _authorized(self) -> bool:
             # CSRF/loopback guard: reject any cross-origin caller (Origin whose
             # hostname is not a loopback address), and require the per-run token
             # that only the same-origin page can read via /api/token (a
             # cross-origin site cannot read that response).
             origin = self.headers.get("Origin")
-            if hosted:
-                if self.command in {"POST", "PUT"} and origin != public_origin:
-                    return False
-                if origin and origin != public_origin:
-                    return False
-            elif origin:
+            if origin:
                 hostname = origin.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].lower()
                 if hostname not in ("127.0.0.1", "localhost", "[::1]", "::1"):
                     return False
             return self.headers.get("X-Refresh-Token") == token
 
-        def _automation_authorized(self) -> bool:
-            supplied = self.headers.get(_AUTOMATION_HEADER, "")
-            supplied_edge = self.headers.get(_AUTOMATION_EDGE_HEADER, "")
-            return bool(
-                hosted and automation_token and supplied and automation_edge_token
-                and supplied_edge
-                and self.headers.get("Origin") == automation_origin
-                and secrets.compare_digest(supplied, automation_token)
-                and secrets.compare_digest(supplied_edge, automation_edge_token)
-            )
-
-        def _start_refresh(self, opts: dict, slot: str = "") -> None:
+        def _start_refresh(self, opts: dict) -> None:
             unknown = set(opts) - {"force"}
             if unknown:
-                self._slot_finish(slot, state="skipped", code="invalid_options")
                 self._send_json(400, {
                     "state": "error",
                     "message": f"unknown refresh option(s): {', '.join(sorted(unknown))}",
@@ -351,8 +267,6 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
             force = bool(opts.get("force"))
             with _LOCK:
                 if _STATE["state"] == "running":
-                    # The claim must not outlive the request that cannot use it.
-                    self._slot_finish(slot, state="skipped", code="operation_busy")
                     self._send_json(200, {
                         "state": "busy", "run_id": _STATE.get("run_id", ""),
                     })
@@ -361,189 +275,9 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                 _STATE.update(state="running", step="starting", message="Starting\u2026",
                               started=_now(), finished="", run_id=run_id, stages=[])
                 _persist_refresh_state(cfg)
-            if slot:
-                self._slot_link(slot, run_id)
-            threading.Thread(target=_run_refresh, args=(cfg, force, run_id, slot),
+            threading.Thread(target=_run_refresh, args=(cfg, force, run_id),
                              daemon=True).start()
             self._send_json(200, {"state": "started", "run_id": run_id})
-
-        def _slot_claim(self, operation: str) -> tuple[bool, str]:
-            """Claim the scheduled slot, if this call carries one.
-
-            A request without slot headers is human-initiated and runs under the
-            operation lock alone. Returns whether the caller may proceed.
-            """
-            scheduled = self.headers.get(_SLOT_TIME_HEADER, "").strip()
-            if not scheduled:
-                return True, ""
-            from jobscope.core.store import Store
-            from jobscope.deliver import automation
-            with Store(cfg["output"]["db_path"]) as store:
-                outcome, record = automation.claim(
-                    store, operation=operation, scheduled_ms=scheduled,
-                    period_ms=self.headers.get(_SLOT_PERIOD_HEADER, "").strip() or 0,
-                )
-            if outcome == "claimed":
-                return True, str(record.get("slot") or "")
-            self._send_json({
-                "duplicate": 200, "superseded": 200, "stale": 200,
-                "busy": 409, "disabled": 503, "invalid": 400,
-            }[outcome], {
-                "ok": outcome in {"duplicate", "superseded", "stale"},
-                "sent": False,
-                "code": outcome,
-                "slot": str(record.get("slot") or ""),
-                "state": str(record.get("state") or ""),
-                "run_id": str(record.get("run_id") or ""),
-            })
-            return False, ""
-
-        def _slot_link(self, slot: str, run_id: str) -> None:
-            from jobscope.core.store import Store
-            from jobscope.deliver import automation
-            with Store(cfg["output"]["db_path"]) as store:
-                automation.link_run(store, slot, run_id)
-
-        def _slot_finish(self, slot: str, *, state: str, code: str) -> None:
-            if slot:
-                _finish_slot(cfg, slot, state=state, code=code, run_id="")
-
-        def _slot_status(self) -> dict:
-            from jobscope.core.store import Store
-            from jobscope.deliver import automation
-            with Store(cfg["output"]["db_path"]) as store:
-                return automation.status(store)
-
-        def _automation_tick(self, slot: str = "") -> None:
-            if not _OPERATION_LOCK.acquire(blocking=False):
-                self._slot_finish(slot, state="skipped", code="operation_busy")
-                self._send_json(409, {
-                    "ok": False, "sent": False, "code": "operation_busy",
-                })
-                return
-            try:
-                if not _BACKUP_STATE["ready"]:
-                    self._slot_finish(slot, state="skipped", code="backup_required")
-                    self._send_json(503, {
-                        "ok": False, "sent": False, "code": "backup_required",
-                        "tracking": {
-                            "inbox_status": "not_run", "replied": 0, "opted_out": 0,
-                        },
-                    })
-                    return
-                from jobscope.apply import campaigns
-                from jobscope.core.store import Store
-                from jobscope.deliver import automation
-                recorded = False
-                try:
-                    with Store(cfg["output"]["db_path"]) as store:
-                        result = campaigns.tick(cfg, store)
-                        if slot:
-                            automation.finish(
-                                store, slot,
-                                state="ok" if result.get("ok") else "error",
-                                code=str(result.get("code") or ""),
-                            )
-                            recorded = True
-                except Exception:
-                    # An unhandled failure must still close the slot, or the next
-                    # scheduled slot is deferred until the abandon window passes.
-                    if not recorded:
-                        self._slot_finish(slot, state="error", code="tick_failed")
-                    raise
-                tracking = result.get("tracking") or {}
-                self._send_json(200, {
-                    "ok": bool(result.get("ok")),
-                    "sent": bool(result.get("sent")),
-                    "code": str(result.get("code") or ""),
-                    "tracking": {
-                        "inbox_status": str(tracking.get("inbox_status") or ""),
-                        "replied": int(tracking.get("replied") or 0),
-                        "opted_out": int(tracking.get("opted_out") or 0),
-                    },
-                })
-            finally:
-                _OPERATION_LOCK.release()
-
-        def _automation_snapshot(self) -> None:
-            if not _OPERATION_LOCK.acquire(blocking=False):
-                self._send_json(409, {"ok": False, "code": "operation_busy"})
-                return
-            try:
-                passphrase = _apps_passphrase()
-                if len(passphrase) < 8:
-                    self._send_json(503, {
-                        "ok": False,
-                        "error": "hosted snapshot encryption is not configured",
-                    })
-                    return
-                from jobscope.core.store import Store
-                from jobscope.deliver import render
-                from jobscope.deliver.site_crypto import encrypt_dashboard
-                with Store(cfg["output"]["db_path"]) as store:
-                    data = render.build_data(cfg, store, public=False)
-                encrypted = encrypt_dashboard(data, passphrase)
-                self._send_json(200, {
-                    "ok": True,
-                    "encrypted": encrypted,
-                    "summary": {
-                        "roles": len(data.get("rows") or []),
-                        "applications": len(data.get("applications") or []),
-                    },
-                })
-            finally:
-                _OPERATION_LOCK.release()
-
-        def _automation_backup(self) -> None:
-            if not _OPERATION_LOCK.acquire(blocking=False):
-                self._send_json(409, {"ok": False, "code": "operation_busy"})
-                return
-            try:
-                key = os.environ.get("JOBSCOPE_BACKUP_KEY", "")
-                if len(key) < 12:
-                    self._send_json(503, {
-                        "ok": False,
-                        "error": "hosted full-backup encryption is not configured",
-                    })
-                    return
-                from jobscope.core.backup import (
-                    ENCRYPTED_NAME,
-                    MANIFEST_NAME,
-                    BackupError,
-                    create_generation,
-                )
-                try:
-                    with tempfile.TemporaryDirectory(prefix="jobscope-full-backup-") as tmp:
-                        generation = create_generation(
-                            cfg["output"]["db_path"], os.path.join(tmp, "generations"), key,
-                            artifact_identity=os.environ.get("JOBSCOPE_ARTIFACT_ID", "unknown"),
-                        )
-                        backup_id = generation.name
-                        archive = os.path.join(tmp, f"{backup_id}.zip")
-                        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
-                            bundle.write(generation / ENCRYPTED_NAME, ENCRYPTED_NAME)
-                            bundle.write(generation / MANIFEST_NAME, MANIFEST_NAME)
-                        with open(generation / MANIFEST_NAME, encoding="utf-8") as handle:
-                            manifest = json.load(handle)
-                        _BACKUP_STATE.update(
-                            ready=False,
-                            pending_id=backup_id,
-                            pending_sha256=manifest["encrypted"]["sha256"],
-                        )
-                        self._send_file(
-                            archive, content_type="application/zip",
-                            filename=f"jobscope-full-backup-{backup_id}.zip",
-                            backup_id=backup_id,
-                        )
-                except (BackupError, OSError):
-                    _BACKUP_STATE.update(
-                        ready=False, pending_id="", pending_sha256="",
-                    )
-                    self._send_json(500, {
-                        "ok": False, "error": "hosted full-backup generation failed",
-                    })
-            finally:
-                _OPERATION_LOCK.release()
 
         def _exclusive_operation(self, action: Callable[[], object]) -> tuple[bool, object]:
             if not _OPERATION_LOCK.acquire(blocking=False):
@@ -1201,41 +935,10 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
         # -- routes -------------------------------------------------------
-        def do_HEAD(self):  # noqa: N802 - http.server API
-            route = self.path.split("?", 1)[0].split("#", 1)[0]
-            if route != "/healthz" and not self._tunnel_authorized():
-                self.send_error(403)
-                return
-            super().do_HEAD()
-
         def do_GET(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0].split("#", 1)[0]
             if route == "/healthz":
                 self._send_json(200, {"ok": True})
-                return
-            if route == "/api/automation/status":
-                if not self._automation_authorized():
-                    self._send_json(403, {"ok": False, "error": "forbidden"})
-                else:
-                    self._send_json(200, {
-                        **_STATE, "backup_ready": bool(_BACKUP_STATE["ready"]),
-                        "heartbeat": self._slot_status(),
-                    })
-                return
-            if route == "/api/automation/snapshot":
-                if not self._automation_authorized():
-                    self._send_json(403, {"ok": False, "error": "forbidden"})
-                else:
-                    self._automation_snapshot()
-                return
-            if route == "/api/automation/backup":
-                if not self._automation_authorized():
-                    self._send_json(403, {"ok": False, "error": "forbidden"})
-                else:
-                    self._automation_backup()
-                return
-            if not self._tunnel_authorized():
-                self._send_json(403, {"ok": False, "error": "forbidden"})
                 return
             if route == "/api/token":
                 self._send_json(200, {"token": token, "enabled": refresh_on})
@@ -1270,72 +973,6 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
 
         def do_POST(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0]
-            if route in {"/api/automation/refresh", "/api/automation/tick"}:
-                if not self._automation_authorized():
-                    self._send_json(403, {"ok": False, "error": "forbidden"})
-                    return
-                if recovery_mode:
-                    self._send_json(503, {
-                        "ok": False, "sent": False, "code": "recovery_mode",
-                    })
-                    return
-                opts = self._json_request(_MAX_API_REQUEST_BYTES)
-                if opts is None:
-                    return
-                operation = "refresh" if route == "/api/automation/refresh" else "tick"
-                if route == "/api/automation/refresh":
-                    if not refresh_on:
-                        self._send_json(403, {
-                            "state": "error", "message": "refresh disabled",
-                        })
-                        return
-                    proceed, slot = self._slot_claim(operation)
-                    if proceed:
-                        self._start_refresh(opts, slot)
-                    return
-                if opts:
-                    self._send_json(400, {
-                        "ok": False, "error": "automation tick accepts no options",
-                    })
-                    return
-                proceed, slot = self._slot_claim(operation)
-                if proceed:
-                    self._automation_tick(slot)
-                return
-            if route == "/api/automation/backup/ack":
-                if not self._automation_authorized():
-                    self._send_json(403, {"ok": False, "error": "forbidden"})
-                    return
-                if recovery_mode:
-                    self._send_json(503, {"ok": False, "code": "recovery_mode"})
-                    return
-                value = self._json_request(_MAX_API_REQUEST_BYTES)
-                if value is None:
-                    return
-                backup_id = str(value.get("backup_id") or "")
-                encrypted_sha256 = str(value.get("encrypted_sha256") or "")
-                if (set(value) != {"backup_id", "encrypted_sha256"}
-                        or not secrets.compare_digest(
-                            backup_id, str(_BACKUP_STATE["pending_id"]),
-                        )
-                        or not secrets.compare_digest(
-                            encrypted_sha256, str(_BACKUP_STATE["pending_sha256"]),
-                        )):
-                    self._send_json(409, {
-                        "ok": False, "code": "backup_ack_mismatch",
-                    })
-                    return
-                _BACKUP_STATE.update(
-                    ready=True, pending_id="", pending_sha256="",
-                )
-                self._send_json(200, {"ok": True, "backup_id": backup_id})
-                return
-            if not self._tunnel_authorized():
-                self._send_json(403, {"ok": False, "error": "forbidden"})
-                return
-            if recovery_mode:
-                self._send_json(503, {"ok": False, "error": "recovery_mode"})
-                return
             if route == "/api/outreach":
                 self._outreach()
                 return
@@ -1385,12 +1022,6 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
 
         def do_PUT(self):  # noqa: N802 - http.server API
             route = self.path.split("?", 1)[0]
-            if not self._tunnel_authorized():
-                self._send_json(403, {"ok": False, "error": "forbidden"})
-                return
-            if recovery_mode:
-                self._send_json(503, {"ok": False, "error": "recovery_mode"})
-                return
             if route == "/api/profile":
                 self._profile_update()
                 return
@@ -1400,34 +1031,18 @@ def _build_server(cfg: dict, port: int, *, hosted: bool = False, access_verifier
         allow_reuse_address = True
         daemon_threads = True
 
-    bind_host = "0.0.0.0" if hosted else "127.0.0.1"
+    bind_host = "127.0.0.1"
     return Server((bind_host, port), Handler), "index.html", token, refresh_on
 
 
-def run(cfg: dict, port: int = 8799, open_browser: bool = False,
-        hosted: bool = False) -> int:
-    if hosted:
-        from jobscope.core.snapshot import validate_sqlite_snapshot
-        from jobscope.core.sqlite_runtime import require_safe_sqlite, source_id
-        require_safe_sqlite(verify_identity=True)
-        db_path = (cfg.get("output", {}) or {}).get("db_path") or "data/jobscope.db"
-        if os.path.isfile(db_path):
-            validate_sqlite_snapshot(db_path)
-        artifact = os.environ.get("JOBSCOPE_ARTIFACT_ID", "unknown")
-        archive = os.environ.get("JOBSCOPE_SQLITE_ARCHIVE_SHA256", "unknown")
-        print(
-            f"  hosted artifact={artifact} sqlite={sqlite3.sqlite_version} "
-            f"source={source_id()} archive={archive}"
-        )
-    httpd, page, _token, refresh_on = _build_server(cfg, port, hosted=hosted)
+def run(cfg: dict, port: int = 8799, open_browser: bool = False) -> int:
+    httpd, page, _token, refresh_on = _build_server(cfg, port)
     port = httpd.server_address[1]
     with httpd:
-        url = ((os.environ.get("JOBSCOPE_PUBLIC_ORIGIN", "").strip().rstrip("/") + "/")
-               if hosted else f"http://127.0.0.1:{port}/{page}")
+        url = f"http://127.0.0.1:{port}/{page}"
         print(f"  serving dashboard at {url}  (Ctrl+C to stop)")
         if refresh_on:
-            scope = "hosted" if hosted else "local"
-            print(f"  {scope} Gmail scan and profile upload APIs enabled")
+            print("  local Gmail scan and profile upload APIs enabled")
         if open_browser:
             webbrowser.open(url)
         try:
@@ -1552,15 +1167,13 @@ def perform_refresh(cfg: dict, *, force: bool = False,
             "degraded": degraded, "stages": [asdict(stage) for stage in stages]}
 
 
-def _run_refresh(cfg: dict, force: bool, run_id: str = "", slot: str = "") -> None:
+def _run_refresh(cfg: dict, force: bool, run_id: str = "") -> None:
     """Server background worker: run :func:`perform_refresh`, mirroring progress
     and the outcome into the shared ``_STATE`` for /api/status polling."""
     def on_step(name: str, message: str) -> None:
         _STATE.update(step=name, message=message)
         _persist_refresh_state(cfg)
 
-    state = "error"
-    code = ""
     try:
         with _OPERATION_LOCK:
             res = perform_refresh(cfg, force=force, publish_site=False, on_step=on_step)
@@ -1568,23 +1181,11 @@ def _run_refresh(cfg: dict, force: bool, run_id: str = "", slot: str = "") -> No
                   stages=res.get("stages", []),
                       last_date=res.get("last_date") or _STATE.get("last_date", ""),
                       finished=_now(), run_id=run_id or _STATE.get("run_id", ""))
-        state = "ok" if res["state"] == "done" else "error"
-        code = str(res["state"])
     except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
         _STATE.update(state="error", step="error", message=str(exc)[:300],
                       finished=_now(), run_id=run_id or _STATE.get("run_id", ""))
-        code = "refresh_failed"
     finally:
         _persist_refresh_state(cfg)
-        if slot:
-            _finish_slot(cfg, slot, state=state, code=code, run_id=run_id)
-
-
-def _finish_slot(cfg: dict, slot: str, *, state: str, code: str, run_id: str) -> None:
-    from jobscope.core.store import Store
-    from jobscope.deliver import automation
-    with Store(cfg["output"]["db_path"]) as store:
-        automation.finish(store, slot, state=state, code=code, run_id=run_id)
 
 
 def _build_local_spa(cfg: dict, store) -> None:
