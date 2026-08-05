@@ -93,7 +93,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
   Cold campaigns show factor evidence and contact source/confidence. Both expose one editable approval at a time.
   Approval hashes the exact recipient/subject/body/attachment; edits clear it. There is no approve-all action.
   Static Pages exposes an allowlisted read-only encrypted snapshot and can deep-link the selected campaign
-  to a configured Access-protected private origin; it never receives mutation or SMTP controls.
+  back to your local workspace (`http://127.0.0.1:8799` by default); it never receives mutation or SMTP controls.
 - **Reconciliation-only scheduler:** `register-outreach-task.ps1` calls `campaign tick` hourly under the
   interactive user. Each invocation checks replies, opt-outs, bounces, and complaints and reports due work;
   it never sends. Manual delivery uses a global SQLite claim, and unresolved outcomes halt every later send.

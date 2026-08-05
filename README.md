@@ -365,21 +365,39 @@ and geo-restricted cards show a `Remote · <region>` badge. Set `match.remote_sc
 true` to down-rank geo-restricted remote whose region isn't in your `prefer_locations`
 or search country (off by default; global remote is never penalized).
 
-## Local workspace, optional private host, and published snapshot
+## Runs entirely on your machine
 
-`python -m jobscope serve --open` is the canonical local control plane. It reads current
-SQLite data through a loopback-only, token-guarded API by default, so profile edits, company
-actions, campaigns, and refreshed matches appear without rebuilding Vite. Settings
-can upload or replace up to three résumés, select preferred job markets and worldwide-remote intent,
-or explicitly reset intent from the stored résumé; résumé-derived skills, seniority,
-and experience remain read-only facts.
+There is no service to deploy, host, or pay for. `python -m jobscope serve --open` is the
+canonical workspace: it binds `127.0.0.1` only and guards every mutation with a per-run
+token, reading live SQLite so profile edits, company actions, captures, and refreshed
+matches appear without rebuilding Vite. Settings can upload or replace up to three résumés
+and set target roles, preferred job markets, and worldwide-remote intent; résumé-derived
+skills, seniority, and experience stay read-only facts.
 
-GitHub Pages is an encrypted **read-only snapshot**, not the interactive backend.
-After unlock, Outreach can link to `VITE_JOBSCOPE_PRIVATE_ORIGIN`; mutations still run
-only in the Access-protected workspace. Actions remain useful for scheduled PC-off
-inbox scans, encrypted database backup, queued Pages mutations, and publication. Local
-Scan Gmail updates SQLite only; publication is an explicit script or `jobscope refresh`
-operation.
+Nothing reaches the network until you ask it to. These ship **off**:
+
+| Default | What it means |
+|---|---|
+| `ai.enabled: false` | Every AI feature is optional enrichment. The deterministic core never depends on a model, and behaves identically without one. |
+| `inbox.enabled: false` | No mailbox is read until you configure Gmail and run `inbox`. |
+| `email.enabled: false` | Nothing is ever sent. |
+| `apply.outreach.enabled: false` | The outreach lane stays inert. |
+| `search.companies: []` | No company is scanned until you add one. |
+
+Scanning a board or reading Gmail does use the network, but the request goes from your
+machine straight to that source. There is no jobscope server in between, and your résumé,
+applications, and mail never leave `data/jobscope.db`.
+
+GitHub Pages is an optional, encrypted, **read-only snapshot** that you publish explicitly
+with `scripts/publish.ps1` (or `publish.sh`). It cannot mutate anything; its Outreach view
+deep-links back to your local workspace at `http://127.0.0.1:8799`, overridable at build
+time with `VITE_JOBSCOPE_PRIVATE_ORIGIN` (loopback or HTTPS origins only).
+
+The repository's GitHub Actions are maintenance, not runtime: `ci` validates pushes, and a
+weekly `ATS canary` re-probes the curated company boards so you find out when an employer
+switches ATS provider. The cloud `refresh` workflow is disabled; data stays current through
+local scheduled tasks instead (`scripts/register-refresh-task.ps1` and
+`scripts/register-outreach-task.ps1`).
 
 ## Publish to GitHub Pages (view on mobile)
 
