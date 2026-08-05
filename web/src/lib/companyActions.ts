@@ -25,10 +25,6 @@ export interface ScanDecisionFunnel {
   board: number
   geo_eligible: number
   title_eligible: number
-  details_attempted: number
-  details_hydrated: number
-  details_failed: number
-  details_truncated: number
   experience_eligible: number
   matched: number
   skip_reasons: Record<string, number>

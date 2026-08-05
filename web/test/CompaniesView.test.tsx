@@ -116,8 +116,6 @@ describe('CompaniesView', () => {
       scanFunnels={{
         [item.id]: {
           board: 76, geo_eligible: 11, title_eligible: 11,
-          details_attempted: 11, details_hydrated: 11,
-          details_failed: 0, details_truncated: 0,
           experience_eligible: 4, matched: 4,
           skip_reasons: { geography: 65, experience_cap: 7 },
         },
@@ -129,7 +127,6 @@ describe('CompaniesView', () => {
     expect(funnel).toHaveTextContent('Geo11')
     expect(funnel).toHaveTextContent('Experience4')
     expect(funnel).toHaveTextContent('Matched4')
-    expect(funnel).toHaveTextContent('Full details hydrated 11/11')
     expect(funnel).toHaveTextContent('Geography 65 · Experience cap 7')
   })
   it('renders monitored companies and status filters', () => {

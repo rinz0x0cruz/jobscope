@@ -257,7 +257,6 @@ def resolve_company(cfg: dict, store, *, company: str, careers_url: str = "",
         response["ok"] = False
         return response
     candidates = ats.filter_profile_jobs(cfg, store, fetch.jobs)
-    candidates = ats.hydrate_company_jobs(resolution.provider, candidates)
     scored = score_jobs(cfg, store, candidates)
     matches = [item for item in scored if item.tier != "Skip"][:max(1, min(int(limit), 50))]
     response["matched"] = len(matches)

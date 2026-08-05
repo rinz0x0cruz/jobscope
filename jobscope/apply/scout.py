@@ -50,7 +50,6 @@ def scout(cfg: dict, store, company: str, *, provider: Optional[str] = None,
 
     try:
         candidates = ats.filter_profile_jobs(cfg, store, board)
-        ats.hydrate_company_jobs(prov, candidates)
         scored = score_jobs(cfg, store, board)
         candidate_ids = {job.id for job in candidates}
         for item in scored:

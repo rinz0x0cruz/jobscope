@@ -210,10 +210,6 @@ def scan_monitor(
             "board": 0,
             "geo_eligible": 0,
             "title_eligible": 0,
-            "details_attempted": 0,
-            "details_hydrated": 0,
-            "details_failed": 0,
-            "details_truncated": 0,
             "experience_eligible": 0,
             "matched": 0,
             "skip_reasons": {},
@@ -274,14 +270,6 @@ def scan_monitor(
             cfg, store, fetch.jobs,
         )
         result["funnel"].update(filter_funnel)
-        hydration: dict[str, int] = {}
-        candidates = ats.hydrate_company_jobs(
-            monitor["provider"], candidates, stats=hydration,
-        )
-        result["funnel"]["details_attempted"] = hydration.get("attempted", 0)
-        result["funnel"]["details_hydrated"] = hydration.get("hydrated", 0)
-        result["funnel"]["details_failed"] = hydration.get("failed", 0)
-        result["funnel"]["details_truncated"] = 0
         scored = score_jobs(cfg, store, candidates)
     except ValueError as exc:
         result["error"] = str(exc)

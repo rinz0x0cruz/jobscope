@@ -444,13 +444,6 @@ function DecisionFunnel({ funnel }: { funnel: ScanDecisionFunnel }) {
           </span>
         ))}
       </div>
-      {funnel.details_attempted > 0 && (
-        <p className="mt-2 text-[11px] text-ink-3">
-          Full details hydrated {funnel.details_hydrated}/{funnel.details_attempted}
-          {funnel.details_failed > 0 ? ` · ${funnel.details_failed} failed` : ''}
-          {funnel.details_truncated > 0 ? ` · ${funnel.details_truncated} not attempted` : ''}
-        </p>
-      )}
       {reasons.length > 0 && (
         <p className="mt-1 text-[11px] text-ink-3">
           Excluded: {reasons.map(([reason, count]) => `${SKIP_LABELS[reason] || reason} ${count}`).join(' · ')}

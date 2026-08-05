@@ -696,12 +696,3 @@ def filter_profile_jobs_with_funnel(
         "geo_eligible": len(geo_jobs),
         "title_eligible": len(candidates),
     }
-
-
-def hydrate_company_jobs(
-    provider: str, jobs: list[Job], *, stats: dict[str, int] | None = None,
-) -> list[Job]:
-    """Compatibility hook; reviewed adapters already return posting details."""
-    if stats is not None:
-        stats.update(attempted=0, hydrated=0, failed=0)
-    return jobs
