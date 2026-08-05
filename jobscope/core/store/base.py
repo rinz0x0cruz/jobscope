@@ -101,6 +101,29 @@ CREATE TABLE IF NOT EXISTS applications (
     reconciliation_run_id TEXT,
     reconciliation_exempt INTEGER NOT NULL DEFAULT 0
 );
+-- Written once when an application first reaches `applied`. Job rows are reconciled
+-- and can vanish, so the context an outcome is judged against is copied here and
+-- never rewritten -- a later rescore must not change what was actually submitted.
+CREATE TABLE IF NOT EXISTS submission_snapshots (
+    job_id TEXT PRIMARY KEY,
+    company TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    score REAL,
+    tier TEXT NOT NULL DEFAULT '',
+    rationale TEXT NOT NULL DEFAULT '',
+    resume_base TEXT NOT NULL DEFAULT '',
+    date_posted TEXT NOT NULL DEFAULT '',
+    job_first_seen TEXT NOT NULL DEFAULT '',
+    applied_at TEXT NOT NULL DEFAULT '',
+    resume_path TEXT NOT NULL DEFAULT '',
+    resume_sha256 TEXT NOT NULL DEFAULT '',
+    cover_path TEXT NOT NULL DEFAULT '',
+    cover_sha256 TEXT NOT NULL DEFAULT '',
+    package_dir TEXT NOT NULL DEFAULT '',
+    captured_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS reconciliation_runs (
     id TEXT PRIMARY KEY,
     action TEXT NOT NULL CHECK (action IN ('recompute', 'reclassify', 'restore')),
@@ -444,6 +467,12 @@ class _StoreBase:
             "CREATE INDEX IF NOT EXISTS idx_applications_tombstone "
             "ON applications(tombstoned_at, reconciliation_exempt)"
         )
+        snaps = {r["name"] for r in self.conn.execute("PRAGMA table_info(submission_snapshots)")}
+        for col in ("resume_sha256", "cover_sha256"):
+            if col not in snaps:
+                self.conn.execute(
+                    f"ALTER TABLE submission_snapshots ADD COLUMN {col} TEXT NOT NULL DEFAULT ''"
+                )
         campaign_target = {
             r["name"] for r in self.conn.execute(
                 "PRAGMA table_info(outreach_campaign_targets)"

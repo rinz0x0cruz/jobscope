@@ -1,15 +1,36 @@
 """Application tracking: prepped/applied status joined back to jobs."""
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Optional
 
 from .base import now_iso
 
 
+def _file_sha256(path: str) -> str:
+    """Fingerprint a submitted artifact, or "" when it is absent or unreadable."""
+    if not path:
+        return ""
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(65536), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
 class ApplicationsMixin:
     def _set_application(self, app: Any, *, clear_tombstone: bool = False,
                          reconciliation_run_id: str = "") -> None:
+        # Read the prior status before the upsert: only a transition INTO `applied`
+        # captures a snapshot, so a background re-save of a long-applied row cannot
+        # backfill context that was never recorded at submission time.
+        previous = self.conn.execute(
+            "SELECT status FROM applications WHERE job_id = ?", (app.job_id,),
+        ).fetchone()
         # Empty company/title/source never clobber existing values (an email sync
         # can enrich a prepped app, and a manual status change must not wipe a
         # previously parsed company); non-empty values overwrite.
@@ -48,6 +69,56 @@ class ApplicationsMixin:
                 "reconciliation_run_id = ?, reconciliation_exempt = 0 WHERE job_id = ?",
                 (reconciliation_run_id or None, app.job_id),
             )
+        if app.status == "applied" and (previous is None or previous["status"] != "applied"):
+            self._capture_submission(app)
+
+    def _capture_submission(self, app: Any) -> None:
+        """Copy the context this outcome will be judged against. The first write wins:
+        a later rescore must never change what was actually submitted."""
+        job = self.conn.execute(
+            "SELECT company, title, url, source, score, tier, rationale, resume_base,"
+            " date_posted, first_seen FROM jobs WHERE id = ?",
+            (app.job_id,),
+        ).fetchone()
+
+        def from_job(column: str) -> str:
+            return (job[column] if job else "") or ""
+
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO submission_snapshots (
+                job_id, company, title, url, source, score, tier, rationale,
+                resume_base, date_posted, job_first_seen, applied_at,
+                resume_path, resume_sha256, cover_path, cover_sha256, package_dir, captured_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                app.job_id,
+                from_job("company") or getattr(app, "company", "") or "",
+                from_job("title") or getattr(app, "title", "") or "",
+                from_job("url"),
+                from_job("source") or getattr(app, "source", "") or "",
+                job["score"] if job else None,
+                from_job("tier"),
+                from_job("rationale"),
+                from_job("resume_base"),
+                from_job("date_posted"),
+                from_job("first_seen"),
+                getattr(app, "applied_at", "") or "",
+                getattr(app, "resume_path", "") or "",
+                _file_sha256(getattr(app, "resume_path", "") or ""),
+                getattr(app, "cover_path", "") or "",
+                _file_sha256(getattr(app, "cover_path", "") or ""),
+                getattr(app, "package_dir", "") or "",
+                now_iso(),
+            ),
+        )
+
+    def submission_snapshot(self, job_id_: str) -> Optional[dict[str, Any]]:
+        row = self.conn.execute(
+            "SELECT * FROM submission_snapshots WHERE job_id = ?", (job_id_,),
+        ).fetchone()
+        return dict(row) if row else None
 
     def set_application(self, app: Any) -> None:
         self._set_application(app)
