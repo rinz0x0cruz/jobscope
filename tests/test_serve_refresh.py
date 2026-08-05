@@ -371,6 +371,51 @@ def test_api_outreach_preview_and_csrf():
             thread.join(timeout=3)
 
 
+def test_api_capture_previews_then_saves_and_requires_token():
+    posting = (
+        "Security Analyst\n"
+        "Company: Acme Security\n"
+        "Location: Bengaluru, India\n\n"
+        "Run SIEM detections, threat hunting, incident response and vulnerability "
+        "management across the estate using python and linux.\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with Store(cfg["output"]["db_path"]) as store:
+            store.save_resume(Resume(titles=["Security Analyst"], seniority="junior",
+                                     skills=["SIEM", "python", "linux"]), "default")
+        httpd, port, token, thread = _serve_bg(cfg)
+        base = f"http://127.0.0.1:{port}"
+        auth = {"Content-Type": "application/json", "X-Refresh-Token": token}
+        try:
+            code, _ = _req("POST", base + "/api/capture",
+                           headers={"Content-Type": "application/json"},
+                           data=json.dumps({"text": posting}))
+            assert code == 403
+
+            code, res = _req("POST", base + "/api/capture", headers=auth,
+                             data=json.dumps({"text": posting}))
+            assert code == 200 and res["ok"] is True
+            assert res["title"] == "Security Analyst" and res["company"] == "Acme Security"
+            assert res["saved"] is False and res["duplicate_of"] == ""
+            with Store(cfg["output"]["db_path"]) as store:
+                assert store.jobs() == []
+
+            code, res = _req("POST", base + "/api/capture", headers=auth,
+                             data=json.dumps({"text": posting, "save": True}))
+            assert code == 200 and res["saved"] is True and res["is_new"] is True
+            with Store(cfg["output"]["db_path"]) as store:
+                assert [job.id for job in store.jobs()] == [res["job_id"]]
+
+            code, _ = _req("POST", base + "/api/capture", headers=auth,
+                           data=json.dumps({"url": "https://www.linkedin.com/jobs/view/1"}))
+            assert code == 400
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=3)
+
+
 def test_json_api_rejects_invalid_content_length_without_dropping_connection():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _cfg(tmp)

@@ -892,6 +892,45 @@ def _build_server(cfg: dict, port: int):
             except Exception as exc:  # noqa: BLE001 - surface to the UI
                 self._send_json(500, {"ok": False, "error": str(exc)[:200]})
 
+        def _capture(self) -> None:
+            if not self._authorized():
+                self._send_json(403, {"ok": False, "error": "forbidden"})
+                return
+            data = self._json_request(_MAX_API_REQUEST_BYTES)
+            if data is None:
+                return
+            from jobscope.core.store import Store
+            from jobscope.ingest import capture
+            try:
+                with Store(cfg["output"]["db_path"]) as store:
+                    found = capture.preview(
+                        cfg, store,
+                        url=str(data.get("url") or ""),
+                        text=str(data.get("text") or ""),
+                    )
+                    payload = {
+                        "ok": True,
+                        "job_id": found.job.id,
+                        "title": found.job.title,
+                        "company": found.job.company,
+                        "location": found.job.location,
+                        "url": found.job.url,
+                        "source": found.source,
+                        "score": round(found.score, 1),
+                        "tier": found.tier,
+                        "rationale": found.rationale,
+                        "duplicate_of": found.duplicate_of,
+                        "warnings": found.warnings,
+                        "saved": False,
+                    }
+                    if data.get("save"):
+                        payload.update(capture.save(cfg, store, found), saved=True)
+                self._send_json(200, payload)
+            except capture.NeedsPastedText as exc:
+                self._send_json(400, {"ok": False, "needs_text": True, "error": str(exc)[:200]})
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)[:200]})
+
         def _company_resolve(self) -> None:
             if not self._authorized():
                 self._send_json(403, {"ok": False, "error": "forbidden"})
@@ -993,6 +1032,9 @@ def _build_server(cfg: dict, port: int):
                 return
             if route == "/api/scout":
                 self._scout()
+                return
+            if route == "/api/capture":
+                self._capture()
                 return
             if route == "/api/companies/resolve":
                 self._company_resolve()

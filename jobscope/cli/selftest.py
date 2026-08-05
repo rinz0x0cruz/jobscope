@@ -44,8 +44,47 @@ def _stub_ats_http(ats, fetch):
           ats.httpx.get_json_result = original
 
 
+def _selftest_capture(c: "_Check") -> None:
+    from ..core.config import load_config
+    from ..core.model import Resume
+    from ..core.store import Store
+    from ..ingest import capture
+
+    posting = (
+        "Security Analyst\n"
+        "Company: Acme Security\n"
+        "Location: Bengaluru, India\n\n"
+        "Run SIEM detections, threat hunting, incident response and vulnerability "
+        "management across the estate using python and linux.\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = load_config(None)
+        cfg["output"]["db_path"] = os.path.join(tmp, "capture.db")
+        with Store(cfg["output"]["db_path"]) as store:
+            store.save_resume(Resume(titles=["Security Analyst"], seniority="junior",
+                                     skills=["SIEM", "python", "linux"]))
+            found = capture.preview(cfg, store, text=posting)
+            c.ok(
+                "capture parses a pasted posting",
+                found.job.title == "Security Analyst" and found.job.company == "Acme Security",
+            )
+            c.ok("capture preview writes nothing", store.jobs() == [])
+
+            capture.save(cfg, store, found)
+            again = capture.preview(cfg, store, text=posting)
+            c.ok("capture reports a duplicate", again.duplicate_of == found.job.id)
+
+            try:
+                capture.preview(cfg, store, url="https://www.linkedin.com/jobs/view/1")
+                refused = False
+            except capture.NeedsPastedText:
+                refused = True
+            c.ok("capture refuses an unsupported url", refused)
+
+
 def _selftest_ingest(c):
      _selftest_inbox(c)
+     _selftest_capture(c)
      from ..core.config import load_config
      from ..core.store import Store
      from ..ingest import ats

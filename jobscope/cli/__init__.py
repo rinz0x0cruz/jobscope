@@ -81,6 +81,61 @@ def cmd_scout(args, cfg):
                          limit=getattr(args, "limit", 20))
 
 
+def cmd_actions(args, cfg):
+    from ..apply import actions
+    with _store(args, cfg) as store:
+        queue = actions.next_actions(cfg, store)
+        if not queue:
+            print("  nothing needs chasing: every submitted application is inside its window "
+                  "or has already had a reply.")
+            return 0
+        wanted = getattr(args, "reason", "") or ""
+        if wanted:
+            queue = [item for item in queue if item.reason == wanted]
+        print(f"  {len(queue)} action(s):\n")
+        print(f"  {'REASON':<10} {'AGE':>5}  {'COMPANY':<24} {'TITLE':<32} JOB_ID")
+        print("  " + "-" * 88)
+        for item in queue:
+            print(f"  {item.reason:<10} {str(item.age_days) + 'd':>5}  "
+                  f"{(item.company or '?')[:23]:<24} {(item.title or '?')[:31]:<32} {item.job_id}")
+        return 0
+
+
+def cmd_capture(args, cfg):
+    from ..ingest import capture
+
+    text = getattr(args, "text", "") or ""
+    path = getattr(args, "file", "") or ""
+    if path:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    with _store(args, cfg) as store:
+        try:
+            found = capture.preview(cfg, store, url=getattr(args, "url", "") or "", text=text)
+        except capture.NeedsPastedText as exc:
+            print(f"  {exc}")
+            return 2
+        except ValueError as exc:
+            print(f"  {exc}")
+            return 1
+        print(f"  title    : {found.job.title or '(none)'}")
+        print(f"  company  : {found.job.company or '(none)'}")
+        print(f"  location : {found.job.location or '(none)'}")
+        print(f"  source   : {found.source}")
+        if found.tier:
+            print(f"  score    : {found.score:.0f} {found.tier}")
+        if found.duplicate_of:
+            print(f"  duplicate: already stored as {found.duplicate_of}")
+        for warning in found.warnings:
+            print(f"  warning  : {warning}")
+        if not getattr(args, "save", False):
+            print("  preview only -- re-run with --save to add it to your pipeline")
+            return 0
+        saved = capture.save(cfg, store, found)
+        print(f"  saved {saved['job_id']} ({'new' if saved['is_new'] else 'updated'})")
+        return 0
+
+
 def cmd_companies(args, cfg):
     from ..ingest import monitor
     with _store(args, cfg) as store:
@@ -699,6 +754,21 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--save", action="store_true", help="Save matching openings into your pipeline")
     sp.add_argument("--limit", type=int, default=20, help="Max openings to show (default 20)")
     sp.set_defaults(func=cmd_scout)
+
+    sp = sub.add_parser("actions",
+                        help="Applications that have gone quiet and need chasing")
+    sp.add_argument("--reason", default="", choices=["", "follow_up", "ghosted"],
+                    help="Show only one kind of action")
+    sp.set_defaults(func=cmd_actions)
+
+    sp = sub.add_parser("capture",
+                        help="Capture one posting from a URL or pasted description")
+    sp.add_argument("--url", default="", help="Public job posting URL")
+    sp.add_argument("--text", default="", help="Pasted job description")
+    sp.add_argument("--file", default="", help="Read the job description from a file")
+    sp.add_argument("--save", action="store_true",
+                    help="Persist the capture after reviewing the preview")
+    sp.set_defaults(func=cmd_capture)
 
     sp = sub.add_parser("companies", help="Manage persistent company monitors")
     sp.add_argument("action", nargs="?",
