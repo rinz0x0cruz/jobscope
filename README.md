@@ -96,6 +96,8 @@ python -m jobscope reviews sync                   # monitored/discovery roles en
 python -m jobscope enrich                         # comp / stock / reddit / news / contacts (top N)
 python -m jobscope tailor <job_id>                # tailored resume + cover letter (PDF)
 python -m jobscope prep   <job_id>                # full review-ready application package
+python -m jobscope capture --url <posting-url>    # a role you found yourself; add --save to keep it
+python -m jobscope actions                        # applications that went quiet and need chasing
 python -m jobscope serve --open                   # live local workspace + profile editor
 ```
 
@@ -117,6 +119,7 @@ work/professional experience section; headingless education/project dates are ig
 | `profile [build\|show] [--resume N] [--force]` | Editable search profile (target roles, preferred job markets, worldwide remote) that drives `scan`; résumé facts stay derived |
 | `companies [seed\|list\|scan\|apply]` | Persistent company watchlist. A targeted scan fetches supported official-portal jobs; **Find recruiter** is a separate explicit action. |
 | `scout <company> [--provider P --slug S]` | Preview one company's public ATS board and profile-ranked openings without monitoring it. |
+| `capture [--url U \| --text T \| --file F] [--save]` | Preview one posting from a public board URL or a pasted description as a scored, deduplicated review item. Nothing is stored until `--save`. |
 | `scan [--mode all\|monitored]` | Scan active user-selected company monitors through reviewed Greenhouse, Lever, or Ashby public APIs. |
 | `reviews [sync\|list] [--state S]` | Build/inspect the durable `pending` / `saved` / `dismissed` review queue without resetting prior decisions. |
 | `match` | Fit scoring + tiers, **multi-resume selection**, and **filters** (clearance/sponsorship/block-list) |
@@ -139,6 +142,7 @@ work/professional experience section; headingless education/project dates are ig
 | `new` | New Strong/Good jobs since you last reviewed |
 | `dashboard [--open] [--public]` / `serve` | Emit/serve the dashboard; `--public` writes the empty schema-valid shell used by encrypted publication |
 | `track [--set job_id=status] [--timeline job_id]` | Application funnel, rates, follow-up reminders, and a per-application email timeline |
+| `actions [--reason follow_up\|ghosted]` | Submitted applications that have gone quiet. Silence is the trigger, so anything that already had a real reply is left out; past `apply.ghost_days` (21) an item reads `ghosted` rather than `follow_up`. |
 | `applications [audit\|recover]` | Inspect reconciliation counts/decisions or explicitly restore a recoverable application |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E]` | Sync Gmail over read-only IMAP and auto-advance the funnel from application emails |
 | `inbox-canary --account E` | Classify one configured account over verified TLS in a no-send, read-only throwaway database; deletes the database on exit. |

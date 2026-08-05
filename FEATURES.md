@@ -35,6 +35,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `profile [build\|show] [--resume N] [--force]` | Builds/shows a named **search profile** (`data/profiles/<name>.yaml`): target roles, preferred job markets, and worldwide-remote intent drive `scan`; résumé facts remain derived. |
 | `companies [seed\|list\|scan\|apply]` | Persistent explicit watchlist and official-portal scans. `seed` imports configured monitors and softly archives legacy application-only monitors; application/collected companies remain visible as **Known** until explicitly promoted. `apply` consumes the validated workflow action file. |
 | `scout <company>` | Ephemeral ATS resolution/ranked preview. The durable workflow is to monitor the company. |
+| `capture [--url\|--text\|--file] [--save]` | Previews one posting from a public board URL or pasted description, scores it through the normal filters, and reports a duplicate before saving. Preview never writes; unsupported or auth-walled URLs ask for pasted text rather than bypassing access controls. |
 | `scan [--mode all\|monitored]` | Scan active user-selected monitors through reviewed Greenhouse, Lever, or Ashby public APIs. |
 | `reviews [sync\|list]` | Durable pending/saved/dismissed review decisions with monitored/discovery provenance. |
 | `match` | Scores every stored job, applies **filters**, and records the best-fit resume per job. Prints tier counts + filtered count. |
@@ -49,6 +50,7 @@ Invoke as `python -m jobscope <command>`. Global flags: `--version`, `--config <
 | `serve [--port 8799] [--open]` | Serves the live workspace, binding only to 127.0.0.1. Uses one persistent SQLite writer. |
 | `refresh [--local-only] [--force]` | Runs the refresh pipeline. `--local-only` stops after SQLite sync/rescore; the compatibility default also publishes the encrypted Pages snapshot. |
 | `track [--set job_id=status] [--timeline job_id]` | Shows the application funnel + response/interview/offer rates + follow-up reminders. `--set` updates a status; `--timeline` prints one application's email history. |
+| `actions [--reason follow_up\|ghosted]` | The chase queue: submitted applications with no genuine reply yet. A recruiter/assessment/interview/offer/rejection email counts as a reply and removes the row; past `apply.ghost_days` (default 21) the reason becomes `ghosted`. Longest silence first. |
 | `inbox [--dry-run] [--backfill] [--since D] [--account E] [--include-spam] [--reclassify]` | Syncs configured Gmail inbox(es) over **read-only IMAP** and auto-advances the funnel from application emails (see Inbox). `--dry-run` classifies without writing; `--backfill`/`--since` widen the scan; `--account` limits to one mailbox; `--include-spam` also sweeps the `[Gmail]/Spam` folder this run (overrides `inbox.include_spam`), catching a real application email Gmail misfiled as spam; `--reclassify` is an **offline** repair — re-check stored mail with the current rules + rebuild the funnel (instance-split), with no Gmail sync. |
 | `inbox-canary --account E` | Verified-TLS, no-send activation canary for one configured account. Uses `dry_run`, snippets off, outbound effects off, and an automatically deleted throwaway SQLite database. |
 | `new` | Lists new Strong/Good jobs since your last review, then advances the review marker. |
@@ -350,6 +352,18 @@ Per company, best-effort and non-blocking (`enrich` toggles):
 - `track --set job_id=status` updates a status.
 - `track --timeline <job_id>` prints one application's email history (each `mail_event` with date + signal).
 - `new` lists new Strong/Good jobs since the stored `last_review` marker, then advances it.
+- `actions` is the chase queue. Silence is the trigger, not age: a `recruiter`, `assessment`,
+  `interview`, `offer`, or `rejection` email counts as a genuine reply and removes the row, so a
+  thread that is already moving is never nudged. Past `apply.ghost_days` (default 21, mirroring
+  `GHOST_DAYS` in `web/src/lib/pipeline.ts`) the reason becomes `ghosted` instead of `follow_up`.
+- **Submission snapshots.** The moment an application first becomes `applied`, the context that
+  outcome will be judged against is copied into `submission_snapshots`: company/title/URL/source,
+  score, tier, rationale, résumé base, posting and first-seen dates, plus SHA-256 fingerprints of
+  the résumé and cover letter that were actually sent. It is written **once** -- re-scoring a job or
+  re-running `tailor` can never rewrite what was submitted -- and only on the transition into
+  `applied`, so applications that were already submitted before this existed stay honestly unknown
+  rather than being back-filled with guesses. Job rows are reconciled and can disappear; the
+  snapshot is what survives.
 
 ## Inbox — Gmail application tracking
 
