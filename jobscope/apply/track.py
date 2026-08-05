@@ -43,7 +43,7 @@ def run(store, set_expr: Optional[str] = None, cfg: Optional[dict] = None,
         print(f"  {a['status']:<10} {(a.get('company') or '?')[:23]:<24} "
               f"{(a.get('title') or '?')[:33]:<34} {a['job_id']}")
 
-    _print_reminders(apps, (cfg or {}).get("apply", {}).get("followup_days", 7))
+    _print_reminders(store, cfg or {})
     _print_referrals_to_update(apps)
     return 0
 
@@ -66,27 +66,25 @@ def _print_funnel(apps: list) -> None:
               f"(base: {applied} submitted)")
 
 
-def _print_reminders(apps: list, followup_days: int) -> None:
-    now = _dt.datetime.now(_dt.UTC).replace(tzinfo=None)
-    due = []
-    for a in apps:
-        if a["status"] != "applied" or not a.get("applied_at"):
+def _print_reminders(store, cfg: dict) -> None:
+    """One chase queue, shared with `jobscope actions`, so the two can never disagree
+    about which applications have gone quiet."""
+    from .actions import next_actions
+
+    window = int((cfg.get("apply", {}) or {}).get("followup_days", 7) or 7)
+    queue = next_actions(cfg, store)
+    headings = {
+        "follow_up": f"Follow-up due ({{count}}, applied >= {window}d ago, no reply):",
+        "ghosted": "Likely ghosted ({count}, silent long past the follow-up window):",
+    }
+    for reason in ("follow_up", "ghosted"):
+        rows = [item for item in queue if item.reason == reason]
+        if not rows:
             continue
-        try:
-            when = _dt.datetime.strptime(a["applied_at"][:19], "%Y-%m-%dT%H:%M:%S")
-        except (ValueError, TypeError):
-            continue
-        age = (now - when).days
-        if age >= followup_days:
-            due.append((age, a))
-    if due:
-        print(f"\n  Follow-up due ({len(due)}, applied >= {followup_days}d ago, no reply):")
-        # Sort on the age and company only. Sorting the bare tuples fell through to
-        # comparing the application dicts whenever two shared an age, which raises
-        # TypeError -- and with dozens of applications a tie is a certainty.
-        for age, a in sorted(due, key=lambda item: (-item[0], (item[1].get("company") or ""))):
-            print(f"    - {(a.get('company') or '?')} / {(a.get('title') or '?')[:40]} "
-                  f"({age}d) [{a['job_id']}]")
+        print("\n  " + headings[reason].format(count=len(rows)))
+        for item in rows:
+            print(f"    - {(item.company or '?')} / {(item.title or '?')[:40]} "
+                  f"({item.age_days}d) [{item.job_id}]")
 
 
 def _print_referrals_to_update(apps: list) -> None:

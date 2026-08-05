@@ -34,7 +34,7 @@ def test_follow_up_reminders_survive_applications_of_equal_age(capsys):
         assert track.run(store, cfg={"apply": {"followup_days": 7}}) == 0
 
         out = capsys.readouterr().out
-        assert "Follow-up due (3," in out
+        assert "Likely ghosted (3," in out
         # Same age, so the company name breaks the tie deterministically.
         assert out.index("Acme /") < out.index("Globex /") < out.index("Initech /")
         store.close()
