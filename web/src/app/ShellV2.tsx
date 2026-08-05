@@ -9,6 +9,7 @@ import { AnalyticsView, type AnalyticsMode } from '@/features/analytics'
 import { PipelinePreview } from '@/features/pipeline'
 import { Settings } from '@/features/settings'
 import { CommandPalette } from '@/features/command'
+import { CaptureDialog } from '@/features/capture/CaptureDialog'
 import { ApplicationReader, JobDrawer, RoleReader } from '@/components/JobDrawer'
 import type { ApplicationOfferUpdate } from '@/components/OfferEditor'
 import { buildBoard } from '@/lib/board'
@@ -18,6 +19,7 @@ import { filterData } from '@/lib/viewFilter'
 import { listEngagements, type EngagementThread } from '@/lib/campaigns'
 import { activeView, type SearchState, type ViewValue } from '@/lib/urlState'
 import { scanNewMail, syncMonitoringQueue } from '@/lib/refresh'
+import { localDashboard, localServeToken } from '@/lib/outreach'
 import { viewTransition } from '@/ui'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import type { DashboardData } from '@/lib/schema'
@@ -59,6 +61,7 @@ function toggleTheme() {
 
 export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange, onLock }: ShellV2Props) {
   const [commandOpen, setCommandOpen] = useState(false)
+  const [captureOpen, setCaptureOpen] = useState(false)
   const [pendingChanges, setPendingChanges] = useState(() => queuedMonitoringActions().length)
   const [scanFunnels, setScanFunnels] = useState<Record<string, ScanDecisionFunnel>>({})
   const [engagements, setEngagements] = useState<EngagementThread[]>([])
@@ -124,6 +127,14 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
   const refresh = useCallback(() => void scanNewMail((fresh) => {
     setWorkingData(projectMonitoringActions(fresh, queuedMonitoringActions()))
   }), [])
+  // A capture only writes one row, so re-read the live payload instead of rescanning mail.
+  // `localDashboard` memoises its probe, so the refresh flag is required to bypass it.
+  const reloadLive = useCallback(() => void (async () => {
+    const token = await localServeToken()
+    if (!token) return
+    const fresh = await localDashboard(token, true)
+    setWorkingData(projectMonitoringActions(fresh, queuedMonitoringActions()))
+  })().catch(() => toast.error('Captured, but the view could not reload')), [])
   const acceptApplicationUpdate = useCallback((updated: ApplicationOfferUpdate) => {
     setWorkingData((current) => ({
       ...current,
@@ -378,9 +389,12 @@ export function ShellV2({ data, mode = 'baked', serveToken, state, onStateChange
         onOpenJob={open}
         onRefresh={refresh}
         onToggleTheme={toggleTheme}
+        onCapture={() => setCaptureOpen(true)}
         onLock={sessionAction}
         lockLabel={'Lock dashboard'}
       />
+
+      <CaptureDialog open={captureOpen} onOpenChange={setCaptureOpen} onSaved={reloadLive} />
 
       <JobDrawer
         job={selectedJob}

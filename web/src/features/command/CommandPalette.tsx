@@ -10,6 +10,7 @@ import {
   Briefcase,
   Building2,
   ChartNoAxesCombined,
+  ClipboardPlus,
   Home,
   Inbox,
   Lock,
@@ -30,6 +31,7 @@ export interface CommandPaletteProps {
   onOpenJob: (id: string) => void
   onRefresh: () => void
   onToggleTheme: () => void
+  onCapture?: () => void
   onLock?: () => void
   lockLabel?: string
 }
@@ -54,6 +56,7 @@ export function CommandPalette({
   onOpenJob,
   onRefresh,
   onToggleTheme,
+  onCapture,
   onLock,
   lockLabel = 'Lock dashboard',
 }: CommandPaletteProps) {
@@ -71,6 +74,7 @@ export function CommandPalette({
   const matches = (value: string) => !query || value.toLowerCase().includes(query)
   const lenses = LENSES.filter(({ label }) => matches(`go ${label}`))
   const showRefresh = matches('refresh scan mail')
+  const showCapture = Boolean(onCapture) && matches('capture role paste url job')
   const showTheme = matches('toggle theme dark light')
   const showLock = Boolean(onLock) && matches('lock dashboard sign out')
 
@@ -120,10 +124,14 @@ export function CommandPalette({
                 ))}
               </Command.Group>}
 
-              {(showRefresh || showTheme || showLock) && <Command.Group heading="Actions">
+              {(showRefresh || showCapture || showTheme || showLock) && <Command.Group heading="Actions">
                 {showRefresh && <Command.Item value="refresh scan mail" onSelect={() => run(onRefresh)} className={ITEM}>
                   <RefreshCw size={16} aria-hidden="true" className="text-ink-3" />
                   <span>Refresh · scan mail</span>
+                </Command.Item>}
+                {showCapture && <Command.Item value="capture role paste url job" onSelect={() => run(onCapture!)} className={ITEM}>
+                  <ClipboardPlus size={16} aria-hidden="true" className="text-ink-3" />
+                  <span>Capture role · paste a URL or description</span>
                 </Command.Item>}
                 {showTheme && <Command.Item value="toggle theme dark light" onSelect={() => run(onToggleTheme)} className={ITEM}>
                   <SunMedium size={16} aria-hidden="true" className="text-ink-3" />
