@@ -20,7 +20,7 @@ const BASE =
   'outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1'
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: 'bg-brand text-white hover:bg-brand-strong',
+  primary: 'bg-brand text-on-brand hover:bg-brand-strong',
   secondary: 'bg-panel border border-line text-ink hover:bg-inset',
   ghost: 'text-ink-2 hover:bg-inset',
 }

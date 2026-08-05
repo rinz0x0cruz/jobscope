@@ -92,7 +92,7 @@ function LockScreen({
     <div className="flex min-h-screen items-center justify-center bg-paper px-6 font-sans text-ink">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center text-center">
-          <span className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-card bg-brand text-white">
+          <span className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-card bg-brand text-on-brand">
             <Compass size={22} aria-hidden="true" />
           </span>
           <h1 className="font-display text-xl font-semibold text-ink">jobscope</h1>

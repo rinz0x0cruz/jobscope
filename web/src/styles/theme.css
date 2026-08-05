@@ -46,6 +46,7 @@
   --color-ink-2: var(--ink-2);
   --color-ink-3: var(--ink-3);
   --color-brand: var(--brand-coral);
+  --color-on-brand: var(--on-brand);
   --color-brand-weak: var(--brand-weak);
   --color-brand-strong: var(--brand-strong);
 
@@ -60,7 +61,7 @@
 /* Graphite and mineral surfaces: quiet fields, crisp work regions, sparse coral actions. */
 :root {
   --bg: #0e1210; --bg2: #141a17; --card: #19201c; --card-h: #222b26;
-  --border: #2c3630; --border-h: #455249; --fg: #f0f3ef; --dim: #b6c0b8; --mute: #7f8b82;
+  --border: #2c3630; --border-h: #455249; --fg: #f0f3ef; --dim: #b6c0b8; --mute: #8b968d;
 
   /* warm terminal signature — accents, CTAs, status warmth */
   --accent: #e36f56; --accent-dim: rgba(227, 111, 86, .16);
@@ -94,18 +95,20 @@
   /* Feed + Reader surfaces; light mode overrides these below. */
   --paper: #0e1210; --panel: #151b18; --inset: #202823;
   --line: #2c3630; --line-strong: #455249;
-  --ink: #f0f3ef; --ink-2: #b6c0b8; --ink-3: #7f8b82;
+  --ink: #f0f3ef; --ink-2: #b6c0b8; --ink-3: #8b968d;
   --brand-coral: #e36f56; --brand-weak: #3b261f; --brand-strong: #f08b73;
+  /* Dark mode's brand is a LIGHT coral, so text sitting on a brand fill must be dark. */
+  --on-brand: #0e1210;
   --shadow-panel: 0 1px 2px rgba(0, 0, 0, .32);
 }
 
 html.light {
   --bg: #edf1ec; --bg2: #e6ebe5; --card: #fbfcfa; --card-h: #f3f6f2;
-  --border: #d2d9d1; --border-h: #aeb9af; --fg: #172019; --dim: #465149; --mute: #6f7b72;
-  --accent: #c6533c; --accent-dim: rgba(198, 83, 60, .12);
-  --hot: #d92d55; --cool: #087f9f; --signal: #0b7fa8; --teal: #138b79;
+  --border: #d2d9d1; --border-h: #aeb9af; --fg: #172019; --dim: #465149; --mute: #5f6a62;
+  --accent: #a84230; --accent-dim: rgba(168, 66, 48, .12);
+  --hot: #d92d55; --cool: #087f9f; --signal: #0a789f; --teal: #138b79;
   --neon-cyan: #0891b2; --neon-blue: #0284c7; --neon-violet: #7c3aed; --neon-emerald: #0d9488;
-  --strong: #18865b; --good: #3175ad; --stretch: #a96f13; --skip: #727d74;
+  --strong: #178057; --good: #3175ad; --stretch: #96640f; --skip: #727d74;
   /* Retained for the pure overview model and its tests. */
   --chart-indigo: #6366f1; --chart-teal: #0d9488; --chart-amber: #d97706; --chart-slate: #94a3b8;
   --score-1: #c7d2fe; --score-2: #a5b4fc; --score-3: #818cf8; --score-4: #6366f1; --score-5: #4f46e5;
@@ -114,8 +117,9 @@ html.light {
   /* Light-first neutral surfaces with terracotta actions. */
   --paper: #edf1ec; --panel: #fbfcfa; --inset: #e6ebe5;
   --line: #d2d9d1; --line-strong: #aeb9af;
-  --ink: #172019; --ink-2: #465149; --ink-3: #6f7b72;
-  --brand-coral: #c6533c; --brand-weak: #f7e4df; --brand-strong: #a84230;
+  --ink: #172019; --ink-2: #465149; --ink-3: #5f6a62;
+  --brand-coral: #a84230; --brand-weak: #f7e4df; --brand-strong: #8c3626;
+  --on-brand: #ffffff;
   --shadow-panel: 0 1px 2px rgba(23, 32, 25, .08);
 }
 

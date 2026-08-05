@@ -321,7 +321,7 @@ function FeedRow({ item, selected, onSelect, onReviewState, onMonitorCompany }: 
           <span className="font-mono text-lg font-semibold tabular-nums" style={{ color: TIER_COLOR[row.tier] }}>
             {format === 'grade' ? scoreToGrade(row.score) : Math.round(row.score)}
           </span>
-          <span className="mt-1 text-[9px] font-semibold uppercase" style={{ color: TIER_COLOR[row.tier] }}>
+          <span className="mt-1 text-[10px] font-semibold uppercase" style={{ color: TIER_COLOR[row.tier] }}>
             {row.tier}
           </span>
         </span>

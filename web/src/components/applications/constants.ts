@@ -24,14 +24,13 @@ export const STATUS_LABEL: Record<string, string> = {
   skipped: 'Skipped',
 }
 
-// Status accent colors. Theme tokens where they exist; a semantic red for
-// rejected (legible on both light and dark) since there is no danger token.
+// Status accent colors, all from theme tokens so both themes stay legible.
 export const STATUS_COLOR: Record<string, string> = {
   new: 'var(--skip)',
   prepared: 'var(--accent)',
   applied: 'var(--good)',
   interview: 'var(--stretch)',
-  rejected: '#ef4444',
+  rejected: 'var(--danger)',
   offer: 'var(--strong)',
   skipped: 'var(--mute)',
 }
@@ -43,7 +42,7 @@ export const SIGNAL_COLOR: Record<string, string> = {
   assessment: 'var(--accent)',
   interview: 'var(--stretch)',
   offer: 'var(--strong)',
-  rejection: '#ef4444',
+  rejection: 'var(--danger)',
   manual: 'var(--accent)',
   other: 'var(--mute)',
 }

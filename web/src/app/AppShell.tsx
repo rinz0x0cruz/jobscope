@@ -74,7 +74,7 @@ function DesktopSidebar({
         className="flex h-16 shrink-0 items-center gap-3 border-b border-line px-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
         aria-label="Open review"
       >
-        <span className="grid h-9 w-9 place-items-center rounded-md bg-brand text-white shadow-sm">
+        <span className="grid h-9 w-9 place-items-center rounded-md bg-brand text-on-brand shadow-sm">
           <Compass size={18} strokeWidth={2} aria-hidden="true" />
         </span>
         <span className="min-w-0">
@@ -227,7 +227,7 @@ export function AppShell({
             aria-label="Open review"
             className="flex shrink-0 items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-brand lg:hidden"
           >
-            <span className="grid h-8 w-8 place-items-center rounded-md bg-brand text-white">
+            <span className="grid h-8 w-8 place-items-center rounded-md bg-brand text-on-brand">
               <Compass size={17} strokeWidth={2} aria-hidden="true" />
             </span>
           </button>
@@ -251,7 +251,7 @@ export function AppShell({
                 type="button"
                 onClick={onOpenCommand}
                 aria-label="Open command menu"
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-line px-1.5 py-0.5 font-mono text-[9px] text-ink-3 hover:text-ink"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-line px-2 py-1 font-mono text-[11px] text-ink-3 hover:text-ink"
               >
                 ⌘K
               </button>
@@ -268,7 +268,7 @@ export function AppShell({
               >
                 <CloudUpload size={16} aria-hidden="true" />
                 <span className="hidden sm:inline">Sync {pendingChanges}</span>
-                <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[9px] text-white sm:hidden">{pendingChanges}</span>
+                <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[10px] text-on-brand sm:hidden">{pendingChanges}</span>
               </button>
             )}
             <button

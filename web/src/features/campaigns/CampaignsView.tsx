@@ -246,7 +246,7 @@ export function CampaignsView({ token, selectedId, onSelect, onOpenApplications 
             <button
               type="submit"
               disabled={creating || !name.trim() || count < 1}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-brand-strong disabled:opacity-50 md:col-span-5 xl:col-span-1"
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-on-brand shadow-sm transition-colors hover:bg-brand-strong disabled:opacity-50 md:col-span-5 xl:col-span-1"
             >
               {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
               Create batch
@@ -471,7 +471,7 @@ function CampaignDetail({
 
       <div className="overflow-x-auto border-b border-line">
         <table className={`w-full border-collapse text-left ${campaign.purpose === 'followup' ? 'min-w-[680px]' : 'min-w-[760px]'}`}>
-          <thead className="bg-inset text-[9px] font-semibold uppercase text-ink-3">
+          <thead className="bg-inset text-[10px] font-semibold uppercase text-ink-3">
             <tr>
               <th className="w-16 px-4 py-2">{campaign.purpose === 'followup' ? 'Age' : 'Rank'}</th>
               <th className="px-3 py-2">Company</th>
@@ -528,7 +528,7 @@ function DeliveryHistory({ items, lastCheckedAt, lastStatus }: { items: Campaign
       </header>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] border-collapse text-left">
-          <thead className="text-[9px] font-semibold uppercase text-ink-3">
+          <thead className="text-[10px] font-semibold uppercase text-ink-3">
             <tr>
               <th className="px-5 py-2 sm:px-7">Company</th>
               <th className="px-3 py-2">Sent</th>
@@ -980,7 +980,7 @@ function TargetRow({ target, followup, selected, onSelect }: { target: CampaignT
       </td>
       <td className="max-w-44 px-3 py-3 text-[11px] text-ink-3">
         <span className="block truncate">{target.selected_email || `${target.contacts.length} candidate${target.contacts.length === 1 ? '' : 's'}`}</span>
-        {followup && <span className="block text-[9px] font-semibold uppercase text-ink-3">{recipientStatus}</span>}
+        {followup && <span className="block text-[10px] font-semibold uppercase text-ink-3">{recipientStatus}</span>}
       </td>
       <td className="px-3 py-3"><StateBadge state={targetDisplayState(target)} /></td>
     </tr>
@@ -994,7 +994,7 @@ function CampaignRow({ campaign, selected, onSelect }: { campaign: CampaignSumma
         <span className="min-w-0">
           <span className="mb-1 flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: campaign.purpose === 'followup' ? 'var(--signal)' : 'var(--brand-coral)' }} aria-hidden="true" />
-            <span className="text-[9px] font-semibold uppercase" style={{ color: campaign.purpose === 'followup' ? 'var(--signal)' : 'var(--brand-coral)' }}>
+            <span className="text-[10px] font-semibold uppercase" style={{ color: campaign.purpose === 'followup' ? 'var(--signal)' : 'var(--brand-coral)' }}>
               {campaign.purpose === 'followup' ? 'Follow-up' : 'Cold'}
             </span>
           </span>
@@ -1011,7 +1011,7 @@ function Evidence({ label, score, lines = [] }: { label: string; score: number; 
   return (
     <section className="border-b border-line px-5 py-4 last:border-b-0 md:border-b-0 md:border-r md:last:border-r-0">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[9px] font-semibold uppercase text-ink-3">{label}</p>
+        <p className="text-[10px] font-semibold uppercase text-ink-3">{label}</p>
         <strong className="font-mono text-[14px] text-ink">{(score * 100).toFixed(0)}</strong>
       </div>
       <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-ink-3">{lines[0] || 'No direct evidence available'}</p>
@@ -1053,7 +1053,7 @@ function StateBadge({ state }: { state: string }) {
   const positive = ['active', 'approved', 'sent', 'replied'].includes(state)
   const warning = ['failed', 'opted_out', 'cancelled'].includes(state)
   return (
-    <span className={`inline-flex w-fit whitespace-nowrap rounded-full px-2 py-1 text-[9px] font-semibold uppercase ${positive ? 'bg-[color-mix(in_srgb,var(--strong)_14%,transparent)] text-strong' : warning ? 'bg-[color-mix(in_srgb,var(--hot)_10%,transparent)] text-hot' : 'bg-inset text-ink-3'}`}>
+    <span className={`inline-flex w-fit whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-semibold uppercase ${positive ? 'bg-[color-mix(in_srgb,var(--strong)_14%,transparent)] text-strong' : warning ? 'bg-[color-mix(in_srgb,var(--hot)_10%,transparent)] text-hot' : 'bg-inset text-ink-3'}`}>
       {state.replaceAll('_', ' ')}
     </span>
   )
@@ -1061,7 +1061,7 @@ function StateBadge({ state }: { state: string }) {
 
 function ActionButton({ label, onClick, busy, Icon, primary = false, danger = false }: { label: string; onClick: () => void; busy: boolean; Icon: typeof Send; primary?: boolean; danger?: boolean }) {
   return (
-    <button type="button" onClick={onClick} disabled={busy} className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[11px] font-medium disabled:opacity-50 ${primary ? 'border-brand bg-brand text-white' : danger ? 'border-line text-hot' : 'border-line text-ink-2 hover:border-line-strong hover:text-ink'}`}>
+    <button type="button" onClick={onClick} disabled={busy} className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[11px] font-medium disabled:opacity-50 ${primary ? 'border-brand bg-brand text-on-brand' : danger ? 'border-line text-hot' : 'border-line text-ink-2 hover:border-line-strong hover:text-ink'}`}>
       {busy ? <Loader2 size={13} className="animate-spin" /> : <Icon size={13} />}{label}
     </button>
   )
@@ -1069,7 +1069,7 @@ function ActionButton({ label, onClick, busy, Icon, primary = false, danger = fa
 
 function NumberInput({ label, value, onChange, min, max }: { label: string; value: number; onChange: (value: number) => void; min: number; max: number }) {
   return (
-    <label className="text-[9px] font-semibold uppercase text-ink-3">
+    <label className="text-[10px] font-semibold uppercase text-ink-3">
       <span className="mb-1 block">{label}</span>
       <input type="number" aria-label={label} min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} className="h-9 w-full rounded-md border border-line bg-inset px-2 font-mono text-[12px] font-normal normal-case text-ink outline-none focus:border-line-strong" />
     </label>
@@ -1077,7 +1077,7 @@ function NumberInput({ label, value, onChange, min, max }: { label: string; valu
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
-  return <div><span className="block text-[9px] uppercase text-ink-3">{label}</span><strong className="font-mono text-lg text-ink">{value}</strong></div>
+  return <div><span className="block text-[10px] uppercase text-ink-3">{label}</span><strong className="font-mono text-lg text-ink">{value}</strong></div>
 }
 
 function Loading({ label }: { label: string }) {
@@ -1116,7 +1116,7 @@ function fileName(path: string): string {
 function FollowupFact({ label, value }: { label: string; value: string }) {
   return (
     <div className="border-b border-line px-5 py-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0 sm:px-7">
-      <p className="text-[9px] font-semibold uppercase text-ink-3">{label}</p>
+      <p className="text-[10px] font-semibold uppercase text-ink-3">{label}</p>
       <p className="mt-1 text-[12px] font-medium text-ink">{value}</p>
     </div>
   )
@@ -1198,7 +1198,7 @@ export function CampaignsSnapshotView({
               </header>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[680px] border-collapse text-left">
-                  <thead className="bg-inset text-[9px] font-semibold uppercase text-ink-3">
+                  <thead className="bg-inset text-[10px] font-semibold uppercase text-ink-3">
                     <tr><th className="px-5 py-2 sm:px-7">Company</th><th className="px-3 py-2">Recipient</th><th className="px-3 py-2">Subject</th><th className="px-3 py-2">Schedule</th><th className="px-3 py-2">State</th></tr>
                   </thead>
                   <tbody>{(detail?.targets ?? []).map((target) => (

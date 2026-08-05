@@ -149,7 +149,7 @@ export function RecruiterOutreach({ jobId, followup = false }: { jobId: string; 
               type="button"
               disabled={sending || !preview.sendable || !to}
               onClick={send}
-              className="inline-flex items-center gap-1.5 rounded-[10px] bg-accent px-3.5 py-2 text-[13px] font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-[10px] bg-accent px-3.5 py-2 text-[13px] font-semibold text-on-brand transition hover:opacity-90 disabled:opacity-50"
             >
               {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Send
             </button>

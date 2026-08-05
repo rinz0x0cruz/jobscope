@@ -446,7 +446,7 @@ export function RoleReader({
           href={safeExternalUrl(job.url)}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-[10px] bg-accent px-3.5 py-2 text-[13px] font-semibold text-white transition hover:opacity-90"
+          className="inline-flex items-center gap-1.5 rounded-[10px] bg-accent px-3.5 py-2 text-[13px] font-semibold text-on-brand transition hover:opacity-90"
         >
           Apply on {job.source || 'source'} <ExternalLink size={14} />
         </a>
@@ -714,7 +714,7 @@ function EngagementReader({
         <OutreachTimeline engagement={engagement} />
         {engagement.campaign_id && onOpenOutreach && (
           <div className="border-t border-border px-5 py-4 sm:px-6">
-            <button type="button" onClick={() => onOpenOutreach(engagement.campaign_id)} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-semibold text-white transition-transform hover:-translate-y-px">
+            <button type="button" onClick={() => onOpenOutreach(engagement.campaign_id)} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-[12px] font-semibold text-on-brand transition-transform hover:-translate-y-px">
               Open in Outreach <ArrowRight size={13} aria-hidden="true" />
             </button>
           </div>

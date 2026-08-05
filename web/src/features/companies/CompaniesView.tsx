@@ -117,7 +117,7 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
         <input value={careersUrl} onChange={(event) => setCareersUrl(event.target.value)} aria-label="Careers portal URL" placeholder="Official careers URL (optional)" className="h-9 rounded-md border border-line bg-inset px-3 text-[13px] text-ink outline-none focus:border-line-strong" />
         <div className="flex gap-2">
           {onScout && !editingId && (
-            <button type="button" onClick={runScout} disabled={scouting || !company.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-white disabled:opacity-50">{scouting ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} Find jobs</button>
+            <button type="button" onClick={runScout} disabled={scouting || !company.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-brand px-4 text-[12px] font-semibold text-on-brand disabled:opacity-50">{scouting ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} Find jobs</button>
           )}
           <button type="submit" disabled={saving || !company.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-line bg-inset px-4 text-[12px] font-semibold text-ink disabled:opacity-50">{saving ? <Loader2 size={14} className="animate-spin" /> : exactCompany ? <ArrowRight size={14} /> : <Building2 size={14} />} {editingId ? 'Save portal' : exactCompany ? 'View company' : 'Add company'}</button>
         </div>
@@ -197,7 +197,7 @@ export function CompaniesView({ model, filter, selectedId, onFilter, onSelect, o
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
-  return <div><span className="block text-[9px] uppercase text-ink-3">{label}</span><strong className="font-mono text-lg text-ink">{value}</strong></div>
+  return <div><span className="block text-[10px] uppercase text-ink-3">{label}</span><strong className="font-mono text-lg text-ink">{value}</strong></div>
 }
 
 function CompanyRow({ company, selected, onSelect }: { company: CompanyItem; selected: boolean; onSelect: () => void }) {
@@ -408,7 +408,7 @@ function CompanyDetail({ company, funnel, onBack, onEdit, onOpenJob, onActions }
   )
 }
 
-function MetricCell({ label, value }: { label: string; value: number }) { return <div className="border-r border-line py-3 last:border-r-0"><span className="block text-[9px] uppercase text-ink-3">{label}</span><strong className="font-mono text-lg text-ink">{value}</strong></div> }
+function MetricCell({ label, value }: { label: string; value: number }) { return <div className="border-r border-line py-3 last:border-r-0"><span className="block text-[10px] uppercase text-ink-3">{label}</span><strong className="font-mono text-lg text-ink">{value}</strong></div> }
 const SKIP_LABELS: Record<string, string> = {
   geography: 'Geography',
   title: 'Title family',
