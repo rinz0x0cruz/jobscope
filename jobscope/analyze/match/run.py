@@ -8,7 +8,7 @@ so keeping the import lazy is what avoids the match<->classify cycle.
 from __future__ import annotations
 
 from .experience import required_experience_years
-from .filters import apply_filters
+from .filters import apply_filters, blocked_rationale
 from .routing import select_base
 
 
@@ -28,7 +28,7 @@ def run(cfg: dict, store) -> int:
         s, t, r, b = select_base(job, resumes, match_cfg)
         blocked = apply_filters(job, fcfg)
         if blocked:
-            return s, "Skip", f"⛔ {blocked[1]} | {r}", b, True
+            return s, "Skip", blocked_rationale(blocked[1], r), b, True
         return s, t, r, b, False
 
     # Optional seniority opinion for ambiguous postings. It is displayed as advice

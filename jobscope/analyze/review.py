@@ -32,7 +32,7 @@ def active_resume(cfg: dict, store):
 
 def score_jobs(cfg: dict, store, jobs: list[Job]) -> list[ScoredJob]:
     """Score jobs against the active profile using the normal filters and router."""
-    from jobscope.analyze.match.filters import apply_filters
+    from jobscope.analyze.match.filters import apply_filters, blocked_rationale
     from jobscope.analyze.match.routing import select_base
 
     profile, resume = active_resume(cfg, store)
@@ -52,7 +52,7 @@ def score_jobs(cfg: dict, store, jobs: list[Job]) -> list[ScoredJob]:
         skip_code = ""
         if blocked:
             skip_code, reason = blocked
-            tier, rationale = "Skip", f"{reason} | {rationale}"
+            tier, rationale = "Skip", blocked_rationale(reason, rationale)
         scored.append(ScoredJob(job, float(score), tier, rationale, resume_base, skip_code))
     scored.sort(key=lambda item: item.score, reverse=True)
     return scored

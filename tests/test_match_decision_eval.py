@@ -46,9 +46,9 @@ def _reason(cfg: dict, store, job: Job) -> tuple[bool, str]:
     scored = score_jobs(cfg, store, candidates)[0]
     if scored.tier != "Skip":
         return True, "matched"
-    if scored.rationale.startswith("needs ~"):
+    if scored.skip_code == "experience_cap":
         return False, "experience_cap"
-    if " | top:" in scored.rationale:
+    if scored.skip_code:
         return False, "other_filter"
     return False, "below_threshold"
 

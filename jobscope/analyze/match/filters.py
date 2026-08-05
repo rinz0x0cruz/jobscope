@@ -76,6 +76,11 @@ def _age_days(job: Job) -> Optional[int]:
     return None
 
 
+def blocked_rationale(reason: str, rationale: str) -> str:
+    """The one Skip rationale both scoring paths persist, so a job reads the same either way."""
+    return f"\u26d4 {reason} | {rationale}"
+
+
 def apply_filters(job: Job, fcfg: dict) -> Optional[tuple[str, str]]:
     """Return ``(code, reason)`` if the job should be filtered to Skip, else ``None``.
 

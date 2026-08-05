@@ -82,6 +82,28 @@ def test_match_run_forces_skip_on_filter():
         store.close()
 
 
+def test_both_scoring_paths_agree_on_a_blocked_rationale():
+    """Both paths run the same filters, so one blocked job must read the same either way."""
+    from jobscope.analyze.review import score_jobs
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _mcfg(exclude_clearance=True)
+        cfg["output"]["db_path"] = os.path.join(tmp, "agree.db")
+        with Store(cfg["output"]["db_path"]) as store:
+            store.save_resume(Resume(skills=["python", "aws", "iam"], seniority="mid",
+                                     titles=["Security Engineer"]))
+            cleared = _job(desc="python aws iam " * 10 + " active security clearance required",
+                           url="c")
+            store.upsert_job(cleared)
+
+            match.run(cfg, store)
+            from_run = store.get_job(cleared.id).rationale
+            scored = score_jobs(cfg, store, [store.get_job(cleared.id)])[0]
+
+    assert scored.skip_code == "clearance"
+    assert scored.rationale == from_run
+
+
 def test_multi_resume_selects_best_base():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = load_config(None)
