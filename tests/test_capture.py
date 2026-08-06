@@ -157,3 +157,54 @@ def test_instruction_like_content_stays_inert_data():
             assert (preview.score, preview.tier, preview.skip_code) == (
                 again.score, again.tier, again.skip_code)
             assert store.jobs() == []
+
+
+@pytest.mark.parametrize(("url", "provider", "slug"), [
+    ("https://jobs.lever.co/acme/1a2b3c", "lever", "acme"),
+    ("https://jobs.ashbyhq.com/acme/9f8e7d", "ashby", "acme"),
+    ("https://job-boards.greenhouse.io/acme/jobs/7", "greenhouse", "acme"),
+])
+def test_each_supported_board_is_recognized_from_its_real_url(monkeypatch, url, provider, slug):
+    """Only the network is stubbed, so this exercises the real URL recognition."""
+    job = Job(source=provider, title="Security Analyst", company="Acme", url=url,
+              description=DESCRIPTION, location="Bengaluru, India").ensure_id()
+    seen = {}
+
+    def fetch(*args, **kwargs):
+        seen["provider"], seen["slug"] = args[1], args[2]
+        return [job]
+
+    monkeypatch.setattr(capture.ats, "fetch_company", fetch)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with _store(cfg) as store:
+            preview = capture.preview(cfg, store, url=url)
+
+            assert seen == {"provider": provider, "slug": slug}
+            assert preview.source == "url"
+            assert preview.job.url == url
+
+
+@pytest.mark.parametrize("url", [
+    "https://acme.example.com/careers/security-analyst",
+    "https://www.indeed.com/viewjob?jk=abc123",
+])
+def test_a_generic_public_url_asks_for_the_description(url):
+    """Nothing here is a readable public board, so capture asks rather than guesses."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with _store(cfg) as store:
+            with pytest.raises(capture.NeedsPastedText):
+                capture.preview(cfg, store, url=url)
+
+
+def test_a_posting_missing_from_its_board_asks_for_the_description(monkeypatch):
+    """A closed or pulled role resolves to a board that no longer lists it."""
+    monkeypatch.setattr(capture.ats, "fetch_company", lambda *a, **k: [])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _cfg(tmp)
+        with _store(cfg) as store:
+            with pytest.raises(capture.NeedsPastedText):
+                capture.preview(cfg, store, url="https://jobs.lever.co/acme/gone")
