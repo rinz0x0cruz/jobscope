@@ -486,7 +486,8 @@ def cmd_track(args, cfg):
     from ..apply import track
     with _store(args, cfg) as store:
         return track.run(store, set_expr=getattr(args, "set", None), cfg=cfg,
-                         timeline=getattr(args, "timeline", None))
+                         timeline=getattr(args, "timeline", None),
+                         referred_by=getattr(args, "referred_by", None))
 
 
 def cmd_applications(args, cfg):
@@ -956,6 +957,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("track", help="View / update application status")
     sp.add_argument("--set", default=None, help="job_id=status")
+    sp.add_argument("--referred-by", default=None, metavar="JOB_ID=NAME",
+                    help="Record who referred you in (e.g. 1a2b3c=Priya Nair)")
     sp.add_argument("--timeline", default=None, metavar="JOB_ID",
                     help="Show the email timeline (mail_events) for an application")
     sp.set_defaults(func=cmd_track)

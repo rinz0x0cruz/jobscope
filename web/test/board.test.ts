@@ -74,6 +74,23 @@ describe('buildBoard', () => {
     expect(flags).toEqual({ due: 'due', ghost: 'ghosted', fresh: undefined })
   })
 
+  it('carries the referrer without moving the card out of its stage', () => {
+    const data = makeData({
+      applications: [
+        app({ job_id: 'referred', status: 'interview', referred_by: 'Priya Nair' }),
+        app({ job_id: 'cold', status: 'interview' }),
+      ],
+    })
+
+    const cards = col(buildBoard(data, NOW), 'interview').cards
+
+    // A referral rides alongside the funnel rather than being a stage of its own,
+    // so the card stays wherever its status puts it.
+    expect(cards.map((c) => c.id).sort()).toEqual(['cold', 'referred'])
+    expect(cards.find((c) => c.id === 'referred')!.referredBy).toBe('Priya Nair')
+    expect(cards.find((c) => c.id === 'cold')!.referredBy).toBeUndefined()
+  })
+
   it('marks cards whose company has ready HR outreach contacts', () => {
     const data = makeData({
       applications: [app({ job_id: 'a', company: 'Globex' })],
@@ -109,5 +126,21 @@ describe('filterBoard', () => {
 
   it('returns columns unchanged for an empty query', () => {
     expect(filterBoard(base, '   ')).toBe(base)
+  })
+
+  it('finds a role by who referred you into it', () => {
+    const cols = buildBoard(
+      makeData({
+        applications: [
+          app({ job_id: 'referred', company: 'Globex', referred_by: 'Priya Nair' }),
+          app({ job_id: 'cold', company: 'Initech' }),
+        ],
+      }),
+      NOW,
+    )
+
+    // The referrer is the thing you remember when the company name has gone.
+    expect(col(filterBoard(cols, 'priya'), 'applied').cards.map((c) => c.id))
+      .toEqual(['referred'])
   })
 })

@@ -24,11 +24,13 @@ class DigestResult:
 
 
 def run(store, set_expr: Optional[str] = None, cfg: Optional[dict] = None,
-        timeline: Optional[str] = None) -> int:
+        timeline: Optional[str] = None, referred_by: Optional[str] = None) -> int:
     if timeline:
         return _print_timeline(store, timeline)
     if set_expr:
         return _set_status(store, set_expr)
+    if referred_by:
+        return _set_referral(store, referred_by)
 
     apps = store.applications()
     if not apps:
@@ -455,9 +457,49 @@ def _set_status(store, expr: str) -> int:
     return 0
 
 
+def _set_referral(store, expr: str) -> int:
+    """Record who referred you into a role.
+
+    Until now the only writer was the `mailrules` regex, which fires only when a
+    stranger happens to name the referrer in an email. A referral someone made for
+    you in person was unrecordable, so the field stayed empty and no cohort could
+    ever be measured from it.
+    """
+    if "=" not in expr:
+        print("  use --referred-by job_id=name  (e.g. --referred-by 1a2b3c=\"Priya Nair\")")
+        return 1
+    job_id, _, name = expr.partition("=")
+    job_id, name = job_id.strip(), name.strip()
+    if not name:
+        print("  a referrer name is required: an empty value would silently keep the old one.")
+        return 1
+    existing = store.get_application(job_id)
+    if not existing:
+        print(f"  no application for {job_id}. Prepare or apply to it first.")
+        return 1
+    # status, applied_at and notes are overwritten by the upsert rather than
+    # coalesced, so they must be carried forward or recording a referral erases them.
+    store.set_application(Application(
+        job_id=job_id,
+        status=existing.get("status", ""),
+        package_dir=existing.get("package_dir", ""),
+        resume_path=existing.get("resume_path", ""),
+        cover_path=existing.get("cover_path", ""),
+        applied_at=existing.get("applied_at", ""),
+        notes=existing.get("notes", ""),
+        referred_by=name,
+    ))
+    previous = (existing.get("referred_by") or "").strip()
+    label = existing.get("company") or job_id
+    if previous and previous != name:
+        print(f"  {label}: referral corrected, {previous} -> {name}")
+    else:
+        print(f"  {label}: referred in by {name}")
+    return 0
+
+
 def _pct(n: int, d: int) -> str:
     return f"{(100 * n / d):.0f}%" if d else "n/a"
-
 
 def _print_timeline(store, job_id: str) -> int:
     """Show the email history (mail_events) behind one application's status."""

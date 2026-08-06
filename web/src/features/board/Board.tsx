@@ -3,7 +3,7 @@
 // `@/lib/board`) and reports card opens upward. No data fetching, no mutation.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlarmClock, ArchiveRestore, ArrowRight, Check, ChevronDown, Clock, Copy, Mail, MapPin, Reply, Send } from 'lucide-react'
+import { AlarmClock, ArchiveRestore, ArrowRight, Check, ChevronDown, Clock, Copy, Mail, MapPin, Reply, Send, UserRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { Segmented, animate, prefersReducedMotion, viewTransition } from '@/ui'
 import type { BoardCard, BoardColumn, BoardStage } from '@/lib/board'
@@ -531,6 +531,14 @@ function TableSignals({ card, engagement }: { card: BoardCard; engagement?: Enga
       </span>,
     )
   }
+  if (card.referredBy) {
+    items.push(
+      <span key="referral" className="inline-flex items-center gap-1 text-strong">
+        <UserRound size={13} aria-hidden="true" />
+        {card.referredBy}
+      </span>,
+    )
+  }
   if (card.emails && card.emails > 0) {
     items.push(
       <span key="mail" className="inline-flex items-center gap-1 text-ink-3">
@@ -633,6 +641,14 @@ function BoardCardButton({ card, onOpen }: BoardCardButtonProps) {
       className: 'bg-brand-weak text-brand',
       icon: <Mail size={12} aria-hidden="true" />,
       label: 'HR contact',
+    })
+  }
+  if (card.referredBy) {
+    flags.push({
+      key: 'referral',
+      className: 'bg-inset text-strong',
+      icon: <UserRound size={12} aria-hidden="true" />,
+      label: card.referredBy,
     })
   }
   if (card.emails && card.emails > 0) {

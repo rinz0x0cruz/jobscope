@@ -97,6 +97,15 @@ describe('Board', () => {
     expect(screen.getByRole('button', { name: 'Needs attention: 1' })).toBeInTheDocument()
   })
 
+  it('names who referred you in, on the card itself', () => {
+    const columns = makeColumns()
+    columns[0].cards[0].referredBy = 'Priya Nair'
+
+    render(<Board columns={columns} onOpen={() => {}} />)
+
+    expect(screen.getByText(/Priya Nair/)).toBeInTheDocument()
+  })
+
   it('opens a row when clicked', () => {
     const onOpen = vi.fn()
     render(<Board columns={makeColumns()} onOpen={onOpen} />)
@@ -195,6 +204,17 @@ describe('Board', () => {
     expect(screen.getByText('Follow up')).toBeInTheDocument()
     expect(screen.getByText('HR contact')).toBeInTheDocument()
     expect(screen.getByText('Nothing here yet')).toBeInTheDocument()
+  })
+
+  it('keeps the referrer visible after switching to the Kanban view', () => {
+    const columns = makeColumns()
+    columns[0].cards[0].referredBy = 'Priya Nair'
+    render(<Board columns={columns} onOpen={() => {}} />)
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Board' }))
+
+    // Switching view must not lose the referral: it is the same card either way.
+    expect(screen.getByText(/Priya Nair/)).toBeInTheDocument()
   })
 
   it('keeps conversion analysis out of Applications', () => {

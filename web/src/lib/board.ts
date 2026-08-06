@@ -43,6 +43,9 @@ export interface BoardCard {
   salaryOffered?: string
   offerAccepted?: string
   interviewAt?: string
+  /** Who referred you in. A referral can arrive at any stage, so it travels with
+   *  the card rather than being a stage of its own. */
+  referredBy?: string
 }
 
 export interface BoardColumn {
@@ -110,6 +113,7 @@ export function buildBoard(data: DashboardData, now = Date.now()): BoardColumn[]
       salaryOffered: app.salary_offered || undefined,
       offerAccepted: app.offer_accepted || undefined,
       interviewAt: app.interview_at || undefined,
+      referredBy: app.referred_by || undefined,
     })
   }
 
@@ -128,15 +132,17 @@ export function buildBoard(data: DashboardData, now = Date.now()): BoardColumn[]
   }))
 }
 
-/** Case-insensitive substring filter across company / title / location, applied
- *  to every column (empty query returns the columns unchanged). */
+/** Case-insensitive substring filter across company / title / location / referrer,
+ *  applied to every column (empty query returns the columns unchanged). */
 export function filterBoard(columns: BoardColumn[], query: string): BoardColumn[] {
   const q = query.trim().toLowerCase()
   if (!q) return columns
   return columns.map((col) => ({
     ...col,
     cards: col.cards.filter((c) =>
-      `${c.company} ${c.title} ${c.location ?? ''}`.toLowerCase().includes(q),
+      `${c.company} ${c.title} ${c.location ?? ''} ${c.referredBy ?? ''}`
+        .toLowerCase()
+        .includes(q),
     ),
   }))
 }
