@@ -22,6 +22,7 @@ from .base import SCHEMA, _row_to_job, _StoreBase, now_iso
 from .enrichment import EnrichmentMixin
 from .jobs import JobsMixin
 from .mail import MailMixin
+from .manual_actions import ManualActionsMixin
 from .meta import MetaMixin
 from .monitoring import MonitoringMixin
 from .outreach_campaigns import OutreachCampaignsMixin
@@ -31,7 +32,7 @@ from .reconciliation_audit import ReconciliationAuditMixin
 
 class Store(JobsMixin, EnrichmentMixin, ApplicationsMixin, MailMixin,
             ProfileMixin, MetaMixin, MonitoringMixin, ReconciliationAuditMixin,
-            OutreachCampaignsMixin, _StoreBase):
+            OutreachCampaignsMixin, ManualActionsMixin, _StoreBase):
     """One SQLite database behind a single shared connection.
 
     Composes the per-concern mixins over :class:`~jobscope.store.base._StoreBase`,

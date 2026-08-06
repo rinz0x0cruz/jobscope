@@ -124,6 +124,21 @@ CREATE TABLE IF NOT EXISTS submission_snapshots (
     package_dir TEXT NOT NULL DEFAULT '',
     captured_at TEXT NOT NULL
 );
+-- The few next actions that cannot be derived: a date someone promised, or a step the
+-- user decided on. Derived chases stay derived and are never copied in here, so the
+-- queue cannot show the same work twice.
+CREATE TABLE IF NOT EXISTS manual_actions (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL DEFAULT '',
+    company TEXT NOT NULL DEFAULT '',
+    label TEXT NOT NULL,
+    due_at TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'open'
+        CHECK (state IN ('open', 'completed', 'cancelled')),
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS reconciliation_runs (
     id TEXT PRIMARY KEY,
     action TEXT NOT NULL CHECK (action IN ('recompute', 'reclassify', 'restore')),

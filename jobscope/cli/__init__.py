@@ -84,21 +84,76 @@ def cmd_scout(args, cfg):
 def cmd_actions(args, cfg):
     from ..apply import actions
     with _store(args, cfg) as store:
-        queue = actions.next_actions(cfg, store)
-        if not queue:
-            print("  nothing needs chasing: every submitted application is inside its window "
-                  "or has already had a reply.")
+        label = getattr(args, "add", "") or ""
+        if label:
+            due = getattr(args, "due", "") or ""
+            if due and actions.as_date(due) is None:
+                print(f"  '{due}' is not a date. Use YYYY-MM-DD.")
+                return 2
+            row = store.add_manual_action(
+                label, due_at=due, job_id=getattr(args, "job", "") or "",
+                note=getattr(args, "note", "") or "")
+            print(f"  added {row['id']}: {row['label']}" + (f" (due {due})" if due else ""))
             return 0
-        wanted = getattr(args, "reason", "") or ""
-        if wanted:
-            queue = [item for item in queue if item.reason == wanted]
-        print(f"  {len(queue)} action(s):\n")
-        print(f"  {'REASON':<10} {'AGE':>5}  {'COMPANY':<24} {'TITLE':<32} JOB_ID")
-        print("  " + "-" * 88)
-        for item in queue:
-            print(f"  {item.reason:<10} {str(item.age_days) + 'd':>5}  "
-                  f"{(item.company or '?')[:23]:<24} {(item.title or '?')[:31]:<32} {item.job_id}")
+
+        for flag, state in (("complete", "completed"), ("cancel", "cancelled"),
+                            ("reopen", "open")):
+            target = getattr(args, flag, "") or ""
+            if target:
+                if not store.set_manual_action_state(target, state):
+                    print(f"  no manual action with id {target}")
+                    return 1
+                print(f"  {target} -> {state}")
+                return 0
+
+        return _list_actions(args, cfg, store, actions)
+
+
+def _list_actions(args, cfg, store, actions):
+    import datetime as _dt
+
+    today = _dt.datetime.now(_dt.UTC).date()
+    wanted_view = getattr(args, "view", "") or ""
+    queue = actions.next_actions(cfg, store)
+    wanted = getattr(args, "reason", "") or ""
+    if wanted:
+        queue = [item for item in queue if item.reason == wanted]
+    # Derived chases are due by definition, so they only belong to today's view.
+    if wanted_view and wanted_view != actions.TODAY:
+        queue = []
+
+    manual = [row for row in store.manual_actions()
+              if not wanted_view or actions.bucket_of(row, today) == wanted_view]
+
+    if not queue and not manual:
+        print("  nothing needs chasing: every submitted application is inside its window "
+              "or has already had a reply.")
         return 0
+
+    if queue:
+        print(f"  {len(queue)} derived action(s):\n")
+        print(f"  {'REASON':<10} {'AGE':>5}  {'DUE':<10} {'COMPANY':<24} {'TITLE':<32} JOB_ID")
+        print("  " + "-" * 100)
+        for item in queue:
+            print(f"  {item.reason:<10} {str(item.age_days) + 'd':>5}  {item.due_at:%Y-%m-%d}  "
+                  f"{(item.company or '?')[:23]:<24} {(item.title or '?')[:31]:<32} {item.job_id}")
+
+    for view in (actions.TODAY, actions.UPCOMING, actions.DONE, actions.CANCELLED):
+        rows = [row for row in manual if actions.bucket_of(row, today) == view]
+        if not rows:
+            continue
+        print(f"\n  {view.upper()} ({len(rows)}):")
+        for row in rows:
+            when = row["due_at"] or "no date"
+            where = f"  [{row['company'] or row['job_id']}]" if (row["company"] or row["job_id"]) else ""
+            print(f"    {row['id']}  {when:<12} {row['label']}{where}")
+
+    path = getattr(args, "ics", "") or ""
+    if path:
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(actions.to_ics(queue))
+        print(f"\n  wrote {len(queue)} dated action(s) to {path}")
+    return 0
 
 
 def cmd_capture(args, cfg):
@@ -758,7 +813,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("actions",
                         help="Applications that have gone quiet and need chasing")
     sp.add_argument("--reason", default="", choices=["", "follow_up", "ghosted"],
-                    help="Show only one kind of action")
+                    help="Show only one kind of derived action")
+    sp.add_argument("--view", default="",
+                    choices=["", "today", "upcoming", "done", "cancelled"],
+                    help="Show only one view")
+    sp.add_argument("--ics", default="", metavar="PATH",
+                    help="Also write the listed actions to a calendar file")
+    sp.add_argument("--add", default="", metavar="LABEL",
+                    help="Record a step that cannot be derived")
+    sp.add_argument("--due", default="", metavar="YYYY-MM-DD", help="Due date for --add")
+    sp.add_argument("--job", default="", metavar="JOB_ID", help="Link --add to a job")
+    sp.add_argument("--note", default="", help="Optional note for --add")
+    sp.add_argument("--complete", default="", metavar="ID", help="Mark a manual action done")
+    sp.add_argument("--cancel", default="", metavar="ID", help="Cancel a manual action")
+    sp.add_argument("--reopen", default="", metavar="ID", help="Reopen a manual action")
     sp.set_defaults(func=cmd_actions)
 
     sp = sub.add_parser("capture",
