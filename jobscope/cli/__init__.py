@@ -363,6 +363,17 @@ def cmd_campaign(args, cfg):
                           f"{target['state']:<13} {recipient}  {schedule}")
                 return 0
             if action == "discover":
+                if not args.target_id:
+                    # No target named: run the bounded batch the web button runs.
+                    # Demanding an id meant unsticking a campaign one lookup at a time.
+                    batch = campaigns.discover_pending_targets(
+                        cfg, store, args.campaign_id, fetch=not args.no_fetch,
+                    )
+                    print(f"  discovery: {batch['processed']} processed, "
+                          f"{batch['drafted']} drafted, "
+                          f"{batch['needs_contact']} still need a contact, "
+                          f"{batch['failed']} failed")
+                    return 0
                 target = campaigns.discover_target(
                     cfg, store, args.target_id, force=args.force,
                     fetch=not args.no_fetch,

@@ -101,3 +101,59 @@ def test_campaign_cli_builds_application_followup_queue(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "Application follow-ups" in output
     assert "[application] recruiter@acme.example" in output
+
+def test_campaign_cli_discovers_a_batch_when_no_target_is_named(tmp_path, capsys, monkeypatch):
+    """Nine targets parked at needs_contact should not mean nine lookups by hand. The
+    bounded batch the web button uses already exists; it was simply unreachable from a
+    terminal, because discover always demanded one target id."""
+    path = tmp_path / "campaign-discover.db"
+    assert main([
+        "--db", str(path), "campaign", "create", "--name", "batch", "--count", "3",
+    ]) == 0
+    capsys.readouterr()
+
+    with Store(str(path)) as store:
+        campaign_id = store.outreach_campaigns()[0]["id"]
+
+    seen = {}
+
+    def fake_batch(_cfg, _store, campaign, *, limit=5, fetch=True):
+        seen.update(campaign=campaign, limit=limit, fetch=fetch)
+        return {"ok": True, "processed": 3, "drafted": 1,
+                "needs_contact": 2, "failed": 0, "remaining": 0}
+
+    monkeypatch.setattr(campaigns, "discover_pending_targets", fake_batch)
+
+    assert main([
+        "--db", str(path), "campaign", "discover",
+        "--campaign-id", campaign_id, "--no-fetch",
+    ]) == 0
+
+    # --no-fetch has to reach the batch, or an offline run quietly hits the network
+    assert seen == {"campaign": campaign_id, "limit": 5, "fetch": False}
+    out = capsys.readouterr().out
+    assert "1 drafted" in out
+    assert "2 still need a contact" in out
+
+
+def test_campaign_cli_still_discovers_one_named_target(tmp_path, capsys, monkeypatch):
+    """Regression guard: the batch branch now sits in front of this path, and the CLI
+    side of single-target discovery had no test of its own."""
+    path = tmp_path / "campaign-one.db"
+    Store(str(path)).close()
+    seen = {}
+
+    def fake_single(_cfg, _store, target_id, *, force=False, fetch=True):
+        seen.update(target_id=target_id, force=force, fetch=fetch)
+        return {"company": "Cognite", "state": "draft",
+                "selected_email": "recruiter@cognite.example", "leads": []}
+
+    monkeypatch.setattr(campaigns, "discover_target", fake_single)
+
+    assert main([
+        "--db", str(path), "campaign", "discover",
+        "--target-id", "target:one", "--no-fetch",
+    ]) == 0
+
+    assert seen == {"target_id": "target:one", "force": False, "fetch": False}
+    assert "Cognite" in capsys.readouterr().out
