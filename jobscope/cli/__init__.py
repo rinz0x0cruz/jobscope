@@ -124,8 +124,11 @@ def _list_actions(args, cfg, store, actions):
 
     manual = [row for row in store.manual_actions()
               if not wanted_view or actions.bucket_of(row, today) == wanted_view]
+    # Blocked outreach is work waiting on you now, so it belongs to today's view only.
+    blockers = ([] if wanted_view and wanted_view != actions.TODAY
+                else actions.outreach_blockers(store))
 
-    if not queue and not manual:
+    if not queue and not manual and not blockers:
         print("  nothing needs chasing: every submitted application is inside its window "
               "or has already had a reply.")
         return 0
@@ -147,6 +150,15 @@ def _list_actions(args, cfg, store, actions):
             when = row["due_at"] or "no date"
             where = f"  [{row['company'] or row['job_id']}]" if (row["company"] or row["job_id"]) else ""
             print(f"    {row['id']}  {when:<12} {row['label']}{where}")
+
+    if blockers:
+        oldest = max(item.age_days for item in blockers)
+        print(f"\n  OUTREACH STALLED ({len(blockers)}, oldest {oldest}d):")
+        print("    contact discovery runs only when asked, so these will not move on their own.")
+        for item in blockers[:10]:
+            print(f"    {(item.company or '?')[:30]:<32} {item.reason:<26} {item.age_days}d")
+        if len(blockers) > 10:
+            print(f"    ... and {len(blockers) - 10} more")
 
     path = getattr(args, "ics", "") or ""
     if path:

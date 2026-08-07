@@ -253,3 +253,81 @@ def test_a_long_line_is_folded_on_octet_width():
     assert all(len(line.encode()) <= 75 for line in lines)
     # a folded continuation is marked by the single leading space
     assert any(line.startswith(" ") for line in lines)
+
+
+# --- stalled outreach ------------------------------------------------------------
+
+
+def _campaign(store, name, status):
+    campaign = store.create_outreach_campaign(name, 3)
+    if status != "draft":
+        store.set_outreach_campaign_status(campaign["id"], status)
+    return campaign["id"]
+
+
+def _target(store, campaign_id, company, state="needs_contact", error_code=""):
+    target = store.upsert_outreach_campaign_target(
+        campaign_id, company, company.lower(), state=state)
+    if error_code:
+        store.set_outreach_campaign_target_state(
+            target["id"], state, error_code=error_code)
+    return target["id"]
+
+
+def test_outreach_waiting_on_a_contact_is_surfaced():
+    """`campaign tick` reconciles replies but never runs contact discovery, so a target
+    parked here waits forever with nothing pointing at it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with _store(tmp) as store:
+            campaign = _campaign(store, "live", "active")
+            _target(store, campaign, "Cognite")
+
+            blocked = actions.outreach_blockers(store)
+
+            assert [item.company for item in blocked] == ["Cognite"]
+            assert blocked[0].reason == "needs_contact"
+
+
+def test_a_draft_campaign_is_not_blocking_anything():
+    """Nobody started it, so listing its targets would bury the ones that are stuck."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with _store(tmp) as store:
+            _target(store, _campaign(store, "unstarted", "draft"), "Cognite")
+
+            assert actions.outreach_blockers(store) == []
+
+
+def test_a_failed_discovery_still_needs_a_person():
+    with tempfile.TemporaryDirectory() as tmp:
+        with _store(tmp) as store:
+            campaign = _campaign(store, "live", "active")
+            _target(store, campaign, "Cyble", state="failed",
+                    error_code="contact_discovery_failed")
+
+            assert [item.reason for item in actions.outreach_blockers(store)] == [
+                "contact_discovery_failed"]
+
+
+def test_a_target_that_moved_on_is_not_listed():
+    with tempfile.TemporaryDirectory() as tmp:
+        with _store(tmp) as store:
+            campaign = _campaign(store, "live", "active")
+            _target(store, campaign, "Moved", state="draft")
+
+            assert actions.outreach_blockers(store) == []
+
+
+def test_the_age_says_how_long_it_has_been_stuck():
+    with tempfile.TemporaryDirectory() as tmp:
+        with _store(tmp) as store:
+            campaign = _campaign(store, "live", "active")
+            target_id = _target(store, campaign, "Stale")
+            store.conn.execute(
+                "UPDATE outreach_campaign_targets SET created_at = ? WHERE id = ?",
+                ("2026-01-01T00:00:00Z", target_id))
+            store.conn.commit()
+
+            blocked = actions.outreach_blockers(
+                store, now=dt.datetime(2026, 1, 9, 0, 0))
+
+            assert blocked[0].age_days == 8

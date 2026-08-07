@@ -79,6 +79,35 @@ def configured_zone(cfg: dict):
         return _dt.UTC
 
 
+@dataclass(frozen=True)
+class OutreachBlocker:
+    target_id: str
+    company: str
+    reason: str
+    age_days: int
+
+
+def outreach_blockers(store, *, now: _dt.datetime | None = None) -> list[OutreachBlocker]:
+    """Outreach that has stopped and will not restart on its own.
+
+    `campaign tick` reconciles replies and reports due work; it never runs contact
+    discovery, which only happens when someone asks for it. A target parked at
+    needs_contact therefore waits indefinitely, and until now the only evidence was
+    its absence from every other view.
+    """
+    current = now or _dt.datetime.now(_dt.UTC).replace(tzinfo=None)
+    blocked = []
+    for row in store.blocked_outreach_campaign_targets():
+        created = _parse(row.get("created_at"))
+        blocked.append(OutreachBlocker(
+            target_id=row["id"],
+            company=row.get("company") or "",
+            reason=row.get("error_code") or row.get("state") or "",
+            age_days=(current - created).days if created else 0,
+        ))
+    return blocked
+
+
 def _has_reply(store, job_id: str) -> bool:
     return any(event.get("signal") in _RESPONSE_SIGNALS for event in store.mail_events(job_id))
 

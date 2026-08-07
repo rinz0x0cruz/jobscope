@@ -265,6 +265,22 @@ class OutreachCampaignsMixin:
         ).fetchone()
         return _hydrate(row)
 
+    def blocked_outreach_campaign_targets(self) -> list[dict]:
+        """Targets in a running campaign that cannot move until someone finds a contact.
+
+        Draft campaigns are excluded: a campaign nobody has started is not blocked, and
+        listing its targets would bury the ones that really are.
+        """
+        rows = self.conn.execute(
+            "SELECT t.id, t.campaign_id, t.company, t.state, t.error_code, t.created_at "
+            "FROM outreach_campaign_targets t "
+            "JOIN outreach_campaigns c ON c.id = t.campaign_id "
+            "WHERE c.status = 'active' AND (t.state = 'needs_contact' "
+            "  OR (t.state = 'failed' AND t.error_code = 'contact_discovery_failed')) "
+            "ORDER BY t.created_at, t.company COLLATE NOCASE"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def followup_source_ids(self) -> tuple[set[str], set[str]]:
         rows = self.conn.execute(
             "SELECT t.application_job_id, t.source_target_id "
