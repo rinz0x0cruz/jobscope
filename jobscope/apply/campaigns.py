@@ -866,6 +866,9 @@ def discover_pending_targets(
            and target.get("error_code") == "contact_discovery_failed"]
     )[:limit]
     drafted = needs_contact = failed = 0
+    # A count alone tells the operator nothing to do next, which is the whole reason
+    # discover_target hands back sourcing leads. Bounded so a wide batch stays readable.
+    pending_leads: list[dict] = []
     for target in candidates:
         try:
             result = discover_target(
@@ -876,6 +879,8 @@ def discover_pending_targets(
                 drafted += 1
             else:
                 needs_contact += 1
+                for lead in (result.get("leads") or [])[:3]:
+                    pending_leads.append({"company": target["company"], **lead})
         except Exception as exc:  # noqa: BLE001 - one company never stops the batch
             store.set_outreach_campaign_target_state(
                 target["id"], "failed", error_code="contact_discovery_failed",
@@ -889,6 +894,7 @@ def discover_pending_targets(
     return {
         "ok": True, "processed": len(candidates), "drafted": drafted,
         "needs_contact": needs_contact, "failed": failed, "remaining": remaining,
+        "leads": pending_leads,
     }
 
 

@@ -738,7 +738,7 @@ def test_bounded_discovery_prepares_ranked_targets_without_approval(seeded, monk
 
     assert result == {
         "ok": True, "processed": 1, "drafted": 1,
-        "needs_contact": 0, "failed": 0, "remaining": 0,
+        "needs_contact": 0, "failed": 0, "remaining": 0, "leads": [],
     }
     target = store.outreach_campaign_targets(created["campaign"]["id"])[0]
     assert target["state"] == "draft" and target["approval_hash"] == ""
@@ -775,7 +775,7 @@ def test_bounded_discovery_retries_needs_contact_with_forced_refresh(seeded, mon
 
     assert result == {
         "ok": True, "processed": 1, "drafted": 1,
-        "needs_contact": 0, "failed": 0, "remaining": 0,
+        "needs_contact": 0, "failed": 0, "remaining": 0, "leads": [],
     }
     assert calls == [{"url": "https://acme.example", "force": True, "fetch": False}]
     assert store.get_outreach_campaign_target(target["id"])["selected_email"] == (

@@ -373,6 +373,15 @@ def cmd_campaign(args, cfg):
                           f"{batch['drafted']} drafted, "
                           f"{batch['needs_contact']} still need a contact, "
                           f"{batch['failed']} failed")
+                    leads = batch.get("leads") or []
+                    if leads:
+                        print("\n  where to look (sourcing stays human -- these are"
+                              " links, never harvested addresses):")
+                        for lead in leads:
+                            label = lead.get("name") or lead.get("source") or "lead"
+                            detail = f" - {lead['title']}" if lead.get("title") else ""
+                            print(f"    {lead.get('company', '?')}: {label}{detail}")
+                            print(f"      {lead.get('url', '')}")
                     return 0
                 target = campaigns.discover_target(
                     cfg, store, args.target_id, force=args.force,

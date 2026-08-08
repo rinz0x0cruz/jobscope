@@ -157,3 +157,39 @@ def test_campaign_cli_still_discovers_one_named_target(tmp_path, capsys, monkeyp
 
     assert seen == {"target_id": "target:one", "force": False, "fetch": False}
     assert "Cognite" in capsys.readouterr().out
+
+
+def test_campaign_cli_batch_hands_back_where_to_look(tmp_path, capsys, monkeypatch):
+    """The batch computed sourcing leads and dropped them, so a run reported "still
+    need a contact" without saying what to do about it -- the opposite of what
+    _sourcing_leads exists for."""
+    path = tmp_path / "campaign-leads.db"
+    assert main([
+        "--db", str(path), "campaign", "create", "--name", "leads", "--count", "1",
+    ]) == 0
+    capsys.readouterr()
+
+    with Store(str(path)) as store:
+        campaign_id = store.outreach_campaigns()[0]["id"]
+        # the label comes from the stored target, not from whatever discovery returned
+        company = store.outreach_campaign_targets(campaign_id)[0]["company"]
+
+    def fake_target(_cfg, _store, target_id, *, force=False, fetch=True):
+        return {
+            "id": target_id, "state": "needs_contact", "selected_email": "",
+            "leads": [{
+                "name": "Find a recruiter on LinkedIn", "title": "Recruiter",
+                "source": "linkedin", "url": "https://example.invalid/recruiter",
+            }],
+        }
+
+    monkeypatch.setattr(campaigns, "discover_target", fake_target)
+
+    assert main([
+        "--db", str(path), "campaign", "discover", "--campaign-id", campaign_id,
+    ]) == 0
+
+    out = capsys.readouterr().out
+    assert "1 still need a contact" in out
+    assert company in out
+    assert "https://example.invalid/recruiter" in out
