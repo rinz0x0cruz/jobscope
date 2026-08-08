@@ -193,3 +193,18 @@ def test_campaign_cli_batch_hands_back_where_to_look(tmp_path, capsys, monkeypat
     assert "1 still need a contact" in out
     assert company in out
     assert "https://example.invalid/recruiter" in out
+def test_campaign_cli_names_the_unknown_id(tmp_path, capsys):
+    """A bare KeyError repr prints just the quoted key, which reads as a malformed
+    command rather than a wrong id -- it cost two failed runs to tell the difference."""
+    path = tmp_path / "campaign-unknown.db"
+    Store(str(path)).close()
+
+    assert main([
+        "--db", str(path), "campaign", "discover",
+        "--campaign-id", "campaign:nope", "--no-fetch",
+    ]) == 2
+
+    err = capsys.readouterr().err
+    assert "no campaign or target with id" in err
+    assert "campaign:nope" in err
+

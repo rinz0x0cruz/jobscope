@@ -474,7 +474,13 @@ def cmd_campaign(args, cfg):
                       f"{tracking['replied']} replied; "
                       f"{delivery.get('code') or ('sent' if delivery.get('sent') else 'no send')}")
                 return 0 if result["ok"] else 1
-    except (KeyError, ValueError) as exc:
+    except KeyError as exc:
+        # str(KeyError) is just the quoted key, which reads as a malformed command
+        # rather than an id that does not exist.
+        print(f"  campaign error: no campaign or target with id {exc.args[0]!r}",
+              file=sys.stderr)
+        return 2
+    except ValueError as exc:
         print(f"  campaign error: {exc}", file=sys.stderr)
         return 2
     return 2
