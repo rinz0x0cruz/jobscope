@@ -1790,10 +1790,10 @@ def sync_replies(cfg: dict, store, *, fetch: bool = True) -> dict:
     }
 
 
-def tick(cfg: dict, store, *, campaign_id: str = "",
+def tick(cfg: dict, store, *, campaign_id: str = "", fetch: bool = True,
          now: Optional[datetime] = None) -> dict:
     """Reconcile replies and report due work without sending email."""
-    tracking = sync_replies(cfg, store, fetch=True)
+    tracking = sync_replies(cfg, store, fetch=fetch)
     due = store.due_outreach_campaign_targets(
         _iso(_utc(now)), campaign_id=campaign_id,
     )

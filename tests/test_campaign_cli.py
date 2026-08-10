@@ -208,3 +208,115 @@ def test_campaign_cli_names_the_unknown_id(tmp_path, capsys):
     assert "no campaign or target with id" in err
     assert "campaign:nope" in err
 
+
+
+def test_campaign_cli_batch_accepts_a_larger_limit(tmp_path, capsys, monkeypatch):
+    """Nine stalled targets took two runs because the batch always used the default
+    five, even though discover_pending_targets already accepts 1-10."""
+    path = tmp_path / "campaign-limit.db"
+    assert main([
+        "--db", str(path), "campaign", "create", "--name", "limit", "--count", "2",
+    ]) == 0
+    capsys.readouterr()
+
+    with Store(str(path)) as store:
+        campaign_id = store.outreach_campaigns()[0]["id"]
+
+    seen = {}
+
+    def fake_batch(_cfg, _store, campaign, *, limit=5, fetch=True):
+        seen.update(campaign=campaign, limit=limit, fetch=fetch)
+        return {"ok": True, "processed": 2, "drafted": 0, "needs_contact": 2,
+                "failed": 0, "remaining": 0, "leads": []}
+
+    monkeypatch.setattr(campaigns, "discover_pending_targets", fake_batch)
+
+    assert main([
+        "--db", str(path), "campaign", "discover", "--campaign-id", campaign_id,
+        "--limit", "9", "--no-fetch",
+    ]) == 0
+
+    assert seen["limit"] == 9
+
+
+@pytest.mark.parametrize("limit", ["0", "99"])
+def test_campaign_cli_refuses_a_batch_limit_out_of_range(tmp_path, capsys, limit):
+    """Guard: the 1-10 bound lives inside discover_pending_targets, and --limit now
+    exposes it to users. Clamping it in the CLI instead would silently shrink a batch
+    and hide the refusal."""
+    path = tmp_path / "campaign-limit-range.db"
+    assert main([
+        "--db", str(path), "campaign", "create", "--name", "range", "--count", "1",
+    ]) == 0
+    capsys.readouterr()
+
+    with Store(str(path)) as store:
+        campaign_id = store.outreach_campaigns()[0]["id"]
+
+    assert main([
+        "--db", str(path), "campaign", "discover", "--campaign-id", campaign_id,
+        "--limit", limit, "--no-fetch",
+    ]) == 2
+
+    assert "between 1 and 10" in capsys.readouterr().err
+
+
+def test_campaign_cli_tick_reports_the_work_that_is_due(tmp_path, capsys, monkeypatch):
+    """tick already counts due work and the hourly task already runs it, but the count
+    never reached the terminal, so a queue building up looked exactly like an idle one."""
+    path = tmp_path / "campaign-tick.db"
+    with Store(str(path)) as store:
+        campaign = store.create_outreach_campaign("Due work", 1)
+        store.set_outreach_campaign_status(campaign["id"], "active")
+        store.upsert_outreach_campaign_target(campaign["id"], "Acme", "acme")
+        target_id = store.outreach_campaign_targets(campaign["id"])[0]["id"]
+        store.set_outreach_campaign_draft(
+            target_id, selected_email="recruiter@acme.example",
+            subject="Hello", body="Body",
+        )
+        store.set_outreach_campaign_policy(target_id, {"reviewed": True})
+        store.approve_outreach_campaign_target(target_id)
+        store.schedule_outreach_campaign_target(target_id, "2020-01-01T00:00:00Z")
+
+    monkeypatch.setattr(campaigns, "sync_replies", lambda *_args, **_kwargs: {
+        "ok": True, "inbox_status": "ok", "pending": 0, "replied": 0, "opted_out": 0,
+    })
+
+    assert main(["--db", str(path), "campaign", "tick"]) == 0
+    assert "1 due" in capsys.readouterr().out
+
+
+def test_campaign_cli_tick_no_fetch_skips_inbox_access(tmp_path, capsys, monkeypatch):
+    from jobscope.ingest import inbox
+
+    path = tmp_path / "campaign-tick-no-fetch.db"
+    config = tmp_path / "config.json"
+    config.write_text(
+        '{"inbox":{"enabled":true,"accounts":[{"email":"me@example.com"}]}}',
+        encoding="utf-8",
+    )
+    with Store(str(path)) as store:
+        campaign = store.create_outreach_campaign("Replies", 1)
+        target = store.upsert_outreach_campaign_target(
+            campaign["id"], "Acme", "acme",
+        )
+        store.set_outreach_campaign_draft(
+            target["id"], selected_email="recruiter@acme.example",
+            subject="Hello", body="Body",
+        )
+        store.set_outreach_campaign_policy(target["id"], {"reviewed": True})
+        approved = store.approve_outreach_campaign_target(target["id"])
+        assert store.claim_outreach_campaign_target_send(
+            target["id"], expected_approval_hash=approved["approval_hash"],
+        )
+        store.mark_outreach_campaign_target_sent(target["id"])
+
+    calls = []
+    monkeypatch.setattr(inbox, "run", lambda *_args, **_kwargs: calls.append("inbox") or 0)
+
+    assert main([
+        "--config", str(config), "--db", str(path),
+        "campaign", "tick", "--no-fetch",
+    ]) == 1
+    assert calls == []
+    assert "inbox not_fetched" in capsys.readouterr().out

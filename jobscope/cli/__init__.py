@@ -304,7 +304,14 @@ def cmd_outreach_scan(args, cfg):
 
 def cmd_inbox_canary(args, cfg):
     from . import inbox_canary
-    return inbox_canary.run(cfg, args.account)
+    code = inbox_canary.run(cfg, args.account)
+    # Deliberately no canary record: this is a diagnostic, and letting a casual check
+    # grant activation evidence would defeat the point of binding it to the config.
+    if code == 0:
+        print("  this records no activation evidence. To bind a passing canary to the "
+              "current config, run:\n"
+              "    jobscope readiness --canary inbox --account <address>")
+    return code
 
 
 def cmd_campaign(args, cfg):
@@ -367,7 +374,9 @@ def cmd_campaign(args, cfg):
                     # No target named: run the bounded batch the web button runs.
                     # Demanding an id meant unsticking a campaign one lookup at a time.
                     batch = campaigns.discover_pending_targets(
-                        cfg, store, args.campaign_id, fetch=not args.no_fetch,
+                        cfg, store, args.campaign_id,
+                        limit=args.limit,
+                        fetch=not args.no_fetch,
                     )
                     print(f"  discovery: {batch['processed']} processed, "
                           f"{batch['drafted']} drafted, "
@@ -459,7 +468,7 @@ def cmd_campaign(args, cfg):
                 return 0 if result.get("ok") else 1
             if action == "replies":
                 result = campaigns.sync_replies(
-                    cfg, store, fetch=not getattr(args, "no_fetch", False),
+                    cfg, store, fetch=not args.no_fetch,
                 )
                 print(f"  campaign replies: {result['replied']} replied, "
                       f"{result['opted_out']} opted out; inbox {result['inbox_status']}")
@@ -467,11 +476,13 @@ def cmd_campaign(args, cfg):
             if action == "tick":
                 result = campaigns.tick(
                     cfg, store, campaign_id=args.campaign_id or "",
+                    fetch=not args.no_fetch,
                 )
                 tracking = result["tracking"]
                 delivery = result["delivery"]
                 print(f"  campaign tick: inbox {tracking['inbox_status']}; "
                       f"{tracking['replied']} replied; "
+                      f"{delivery.get('due_count', 0)} due; "
                       f"{delivery.get('code') or ('sent' if delivery.get('sent') else 'no send')}")
                 return 0 if result["ok"] else 1
     except KeyError as exc:
@@ -953,6 +964,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("--campaign-id", default="", help="Campaign id for show/start/pause/delete/send")
     sp.add_argument("--target-id", default="", help="Target id for discover/draft/approve/skip")
+    sp.add_argument("--limit", type=int, default=5,
+                    help="Targets per discovery batch (1-10) when no --target-id is given")
     sp.add_argument("--name", default="India cybersecurity outreach", help="New campaign name")
     sp.add_argument("--count", type=int, default=10, help="Unique companies to rank for a new campaign")
     sp.add_argument("--resume", default="", help="Named résumé to attach (default: active résumé)")

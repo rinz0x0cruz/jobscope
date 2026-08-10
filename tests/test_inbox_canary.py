@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from jobscope.cli import inbox_canary
+from jobscope.cli import inbox_canary, main
 from jobscope.core.config import load_config
+from jobscope.core.store import Store
 
 
 def _cfg():
@@ -85,3 +86,19 @@ def test_canary_fails_if_sync_writes_events_or_markers(tmp_path):
 def test_canary_requires_one_classified_message():
     with pytest.raises(RuntimeError, match="expected benign message"):
         inbox_canary.run(_cfg(), "canary@example.com", sync=lambda *_args, **_kwargs: 0)
+
+
+def test_standalone_canary_says_it_records_no_activation_evidence(tmp_path, capsys,
+                                                                  monkeypatch):
+    """This command is a diagnostic, not activation evidence: it never writes the
+    canary record, so a lane stays drifted afterwards. Printing only "canary passed"
+    reads as success and sends you round the loop again."""
+    path = tmp_path / "canary-cli.db"
+    Store(str(path)).close()
+    monkeypatch.setattr(inbox_canary, "run", lambda *_args, **_kwargs: 0)
+
+    assert main(["--db", str(path), "inbox-canary", "--account", "me@example.com"]) == 0
+
+    output = capsys.readouterr().out
+    assert "this records no activation evidence" in output
+    assert "jobscope readiness --canary inbox --account <address>" in output
