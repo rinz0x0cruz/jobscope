@@ -17,7 +17,7 @@ dependencies = [
     "cryptography==50.0.0",
     "feedparser==6.0.11",
     "yfinance==0.2.40",
-    "pypdf==6.14.2",
+    "pypdf==6.19.0",
     "markdown==3.8.1",
 ]
 
